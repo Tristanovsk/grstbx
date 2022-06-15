@@ -39,7 +39,20 @@ class l2grs():
         product['x'] = np.arange(x0 + res / 2, x1 - 1, res)
         product['y'] = np.arange(y0 - res / 2, y1 + 1, -res)
         return product
+    
+    @staticmethod
+    def assign_coords_pyproj(product, epsg_in=4326,epsg_out=3857):
+     
+        transformer = ppj.Transformer.from_crs(epsg_in, epsg_out, always_xy=True)
+        nx,ny = product.lon.shape
+        # TODO try to get lat lon min max differently, here it is inefficient 
+        x, y = transformer.transform([product.lon.min(), product.lon.max()],
+                                     [product.lat.min(), product.lat.max()] )
+        product['x'] = np.linspace(x[0], x[1], nx)
+        product['y'] = np.linspace(y[0], y[1], ny)
 
+        return product
+    
     @staticmethod
     def add_time_dim(xda):
         time = [dt.strptime(xda.attrs['start_date'], '%d-%b-%Y %H:%M:%S.%f')]
@@ -62,16 +75,17 @@ class l2grs():
                                       decode_coords='all')
             product = self.add_time_dim(product)
 
-            crs = ppj.CRS.from_wkt(product.crs.wkt)
+            epsg = ppj.CRS.from_wkt(product.crs.wkt).to_epsg()
             # product = product.metpy.assign_crs(crs.to_cf()).metpy.assign_y_x()
-            product.rio.write_crs(crs, inplace=True)
+            product.rio.write_crs(epsg, inplace=True)
+            #product = self.assign_coords_pyproj(product,epsg_out=32631)
             product = self.assign_coords(product)
 
             if subset is not None:
                 product = self.subset_xy(product, *subset)
             products.append(product)
         product = xr.concat(products,dim='time')
-        self.datacube = product.rio.write_coordinate_system()
+        self.datacube = product#.rio.write_coordinate_system()
 
     def reshape_datacube(self, bands=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4', 'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',
                                       'Rrs_B8A'],

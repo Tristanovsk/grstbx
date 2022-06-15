@@ -14,13 +14,15 @@ files = glob.glob(opj(satdir, image))
 ust = grstbx.utils.spatiotemp()
 box = ust.wktbox(6.6, 46.45, width=1000, height=1000, ellps='WGS84')
 bbox = gpd.GeoSeries.from_wkt([box]).set_crs(epsg=4326)
-
+print(bbox.bounds)
 bbox = bbox.to_crs(epsg=32631)
-print(bbox)
-bbox.to_crs(epsg=3857)
-
+print(bbox.bounds)
 dc = grstbx.l2grs(files,)
 dc.load(subset=bbox.bounds.values[0])
+bbox = bbox.to_crs(epsg=3857)
+print(bbox.bounds)
+dc2 = grstbx.l2grs(files,)
+dc2.load(reproject=True,subset=bbox.bounds.values[0])
 
 dc.Rrs.Rrs.plot(col='wl',row='time',vmin=0)
 

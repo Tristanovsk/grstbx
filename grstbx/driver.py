@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import rioxarray  # activate the rio accessor
+import geopandas as gpd
 
 # just to make sure that with the good format for month:
 import locale
@@ -17,27 +18,38 @@ class l2grs():
     def __init__(self, files):
         self.files = files
 
-    def load(self, subset=None):
+    def load(self, reproject=False,subset=None):
         '''
-
+        :param reproject: if True reproject in geodetic coordinates, keep native projection otherwise 
         :param subset: None for no subset or [minx, miny, maxx, maxy] in the appropriate crs
         :return:
         '''
-        self.get_datacube(subset=subset)
+        self.get_datacube(reproject=reproject,subset=subset)
         self.reshape_datacube()
 
-    @staticmethod
-    def assign_coords(product, res=None):
+    #@staticmethod
+    def assign_coords(self, product, reproject=False, epsg_in=4326,epsg_out=3857, res=None):
         if res == None:
             res = float(product.metadata.attrs['Processing_Graph:node_1:parameters:resolution'])
         i2m = np.array((product.crs.i2m.split(','))).astype(float)
         geotransform = (i2m[4], i2m[0], i2m[1], i2m[5], i2m[2], i2m[3])
         fwd = Affine.from_gdal(*geotransform)
+        nx, ny = len(product.x), len(product.y)
         x0, y0 = fwd * (0, 0)
-        x1, y1 = fwd * (product.x.values[-1] + 1, product.y.values[-1] + 1)
+        x1, y1 = fwd * (nx, ny)
+        wkt_poly = 'POLYGON (( %.6f %.6f, %.6f %.6f, %.6f %.6f, %.6f %.6f, %.6f %.6f ))' % (
+        x0, y0, x0, y1, x1, y1, x1, y0,x0,y0)
+        bbox = gpd.GeoSeries.from_wkt([wkt_poly]).set_crs(epsg=epsg_in)
+        if reproject:            
+            bbox = bbox.to_crs(epsg=epsg_out)
+            x0,y0,x1,y1 = bbox.bounds.values[0]
+            product['x'] = np.linspace(x0, x1, nx)
+            product['y'] = np.linspace(y1, y0, ny)
 
-        product['x'] = np.arange(x0 + res / 2, x1 - 1, res)
-        product['y'] = np.arange(y0 - res / 2, y1 + 1, -res)
+        else:
+            product['x'] = np.arange(x0 + res / 2, x1 - 1, res)
+            product['y'] = np.arange(y0 - res / 2, y1 + 1, -res)
+        self.bbox=bbox
         return product
     
     @staticmethod
@@ -64,7 +76,7 @@ class l2grs():
     def subset_xy(ds, minx, miny, maxx, maxy):
         return ds.sel(x=slice(minx, maxx), y=slice(maxy, miny))
 
-    def get_datacube(self, subset=None):
+    def get_datacube(self, subset=None,reproject=False):
         # product = xr.open_mfdataset(self.files, chunks={'x': 512, 'y': 512},
         #                     decode_coords='all',combine='nested',
         #                     concat_dim="time",preprocess = self.add_time_dim,
@@ -76,15 +88,14 @@ class l2grs():
             product = self.add_time_dim(product)
 
             epsg = ppj.CRS.from_wkt(product.crs.wkt).to_epsg()
-            # product = product.metpy.assign_crs(crs.to_cf()).metpy.assign_y_x()
-            product.rio.write_crs(epsg, inplace=True)
+            # product = product.metpy.assign_crs(crs.to_cf()).metpy.assign_y_x()            
             #product = self.assign_coords_pyproj(product,epsg_out=32631)
-            product = self.assign_coords(product)
-
+            product = self.assign_coords(product,reproject=reproject, epsg_in=epsg)
+            #product.rio.write_crs(epsg, inplace=True)
             if subset is not None:
                 product = self.subset_xy(product, *subset)
             products.append(product)
-        product = xr.concat(products,dim='time')
+        product = xr.concat(products,dim='time').sortby('time')
         self.datacube = product#.rio.write_coordinate_system()
 
     def reshape_datacube(self, bands=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4', 'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',

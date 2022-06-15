@@ -4,6 +4,10 @@ import pandas as pd
 import xarray as xr
 import rioxarray  # activate the rio accessor
 
+# just to make sure that with the good format for month:
+import locale
+locale.setlocale(locale.LC_ALL, 'en_US.utf8')
+
 import pyproj as ppj
 from affine import Affine
 from datetime import datetime as dt

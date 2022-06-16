@@ -76,7 +76,7 @@ class l2grs():
     def subset_xy(ds, minx, miny, maxx, maxy):
         return ds.sel(x=slice(minx, maxx), y=slice(maxy, miny))
 
-    def get_datacube(self, subset=None,reproject=False):
+    def get_datacube(self, subset=None,reproject=False,compat='override'):
         # product = xr.open_mfdataset(self.files, chunks={'x': 512, 'y': 512},
         #                     decode_coords='all',combine='nested',
         #                     concat_dim="time",preprocess = self.add_time_dim,
@@ -95,7 +95,7 @@ class l2grs():
             if subset is not None:
                 product = self.subset_xy(product, *subset)
             products.append(product)
-        product = xr.concat(products,dim='time').sortby('time')
+        product = xr.concat(products,dim='time',compat=compat).sortby('time')
         self.datacube = product#.rio.write_coordinate_system()
 
     def reshape_datacube(self, bands=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4', 'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',

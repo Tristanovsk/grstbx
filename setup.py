@@ -26,8 +26,8 @@ setup(
                       'holoviews','hvplot','colorcet','panel','datashader','netcdf4'],
 
 
-    entry_points={
-          'console_scripts': [
-              'grstbx = TODO'
-          ]}
+    # entry_points={
+    #       'console_scripts': [
+    #           'grstbx = TODO'
+    #       ]}
 )

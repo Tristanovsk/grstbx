@@ -20,9 +20,6 @@ class select_files():
         :return:
         '''
         nb_rep = len(self.root.split('/'))
-        product = 'S2-L2GRS'
-        tile = '31TEJ'
-        pattern = '*.nc'
         list_ = pd.DataFrame(glob.glob(opj(self.root, product, tile, '*', '*', '*', pattern)))
 
         list = list_[0].str.split('/', expand=True).iloc[:, nb_rep:]

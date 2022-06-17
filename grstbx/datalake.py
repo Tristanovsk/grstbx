@@ -36,7 +36,8 @@ class select_files():
 
     def list_file_path(self,date_startend):
         startdate,enddate = date_startend
-        return self.list[startdate:enddate].abspath.values
+        self.files=self.list[startdate:enddate].abspath.values
+        return self.files
 
 
 

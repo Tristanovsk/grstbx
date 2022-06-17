@@ -13,6 +13,7 @@ import pyproj as ppj
 from affine import Affine
 from datetime import datetime as dt
 
+from .masking import masking 
 
 class l2grs():
     def __init__(self, files):
@@ -72,11 +73,13 @@ class l2grs():
         # xda = xda.expand_dims('time')
         return xda
 
-    @staticmethod
-    def subset_xy(ds, minx, miny, maxx, maxy):
+    
+    def subset_xy(self,ds, bbox):
+        bbox.to_crs(epsg=self.epsg)
+        minx, miny, maxx, maxy = bbox.bounds.values[0]
         return ds.sel(x=slice(minx, maxx), y=slice(maxy, miny))
 
-    def get_datacube(self, subset=None,reproject=False,compat='override'):
+    def get_datacube(self, subset=None,reproject=False):
         # product = xr.open_mfdataset(self.files, chunks={'x': 512, 'y': 512},
         #                     decode_coords='all',combine='nested',
         #                     concat_dim="time",preprocess = self.add_time_dim,
@@ -85,18 +88,46 @@ class l2grs():
         for file in self.files:
             product = xr.open_dataset(file, chunks={'x': 512, 'y': 512},
                                       decode_coords='all')
-            product = self.add_time_dim(product)
 
-            epsg = ppj.CRS.from_wkt(product.crs.wkt).to_epsg()
+
+                
+            # add time dimension    
+            product = self.add_time_dim(product)
+            
+            # set CRS 
+            self.epsg = ppj.CRS.from_wkt(product.crs.wkt).to_epsg()
             # product = product.metpy.assign_crs(crs.to_cf()).metpy.assign_y_x()            
             #product = self.assign_coords_pyproj(product,epsg_out=32631)
-            product = self.assign_coords(product,reproject=reproject, epsg_in=epsg)
+            product = self.assign_coords(product,reproject=reproject, epsg_in=self.epsg)
             #product.rio.write_crs(epsg, inplace=True)
+            
             if subset is not None:
-                product = self.subset_xy(product, *subset)
+                product = self.subset_xy(product, subset)
+
+            # automatically remove product when no data available
+            masking_ = masking(product)
+            nodata = masking_.get_mask(nodata=False).compute()
+            if nodata.sum().compute() == 0:
+                continue
+                
+            #---------------------------------------------------
+            # fix merging when MAJA flags are not always present
+            #get names of variables
+            varnames = pd.DataFrame(product.data_vars)
+            vars_to_remove = varnames[0][varnames[0].str.contains("mask")]
+            product=product.drop_vars(vars_to_remove)
+            try:
+                product=product.drop_vars('aot_maja')
+            except:
+                pass
+            #---------------------------------------------------
+
             products.append(product)
-        product = xr.concat(products,dim='time',compat=compat).sortby('time')
-        self.datacube = product#.rio.write_coordinate_system()
+            
+        product = xr.concat(products,dim='time').sortby('time')
+        self.datacube = product
+        self.pixnum = len(self.datacube.x)*len(self.datacube.y)
+        
 
     def reshape_datacube(self, bands=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4', 'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',
                                       'Rrs_B8A'],

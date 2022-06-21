@@ -74,8 +74,9 @@ class image_viewer():
 
         return pn.Row(pn.Param(viewer.param), viewer.map_band)  # iwl=2, cmap=ps))
 
-    def param_date(self, raster):
+    def param_date(self, raster,cmap='kbc'):
 
+        cmap_ = cmap
         ps = {k: p for k, p in cc.palette_n.items()}
         ps = odict([(n, cc.palette[n]) for n in ['fire', 'bgy', 'bgyw', 'bmy', 'gray', 'kbc']])
         dates = {str(date): idate for idate, date in enumerate(raster.time.values)}
@@ -85,7 +86,7 @@ class image_viewer():
         gopts = hv.opts.Tiles(responsive=True, xaxis=None, yaxis=None, bgcolor='black', show_grid=False)
 
         class Viewer(pm.Parameterized):
-            cmap = pm.Selector(ps, default=ps['kbc'])
+            cmap = pm.Selector(ps, default=ps[cmap_])
             date = pm.Selector(dates)
             basemap = pm.Selector(bases)
 

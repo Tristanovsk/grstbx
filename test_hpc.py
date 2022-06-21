@@ -35,7 +35,7 @@ bbox = bbox.to_crs(epsg=32631)
 
 # generate datacube
 dc = grstbx.l2grs(files)
-dc.load(subset=bbox)
+#dc.load(subset=bbox)
 dc.Rrs.Rrs.isel(wl=2).plot.imshow(col='time',col_wrap=5,vmin=0,vmax=0.05,cmap=plt.cm.Spectral_r)
 #bbox = bbox.to_crs(epsg=3857)
 #dc.load(reproject=True, subset=bbox.bounds.values[0])
@@ -46,3 +46,9 @@ masking_.get_mask(ndwi=True).compute()
 
 nodata = masking_.get_mask(nodata=False).compute()
 nodata.sum().compute()
+
+from matplotlib_scalebar.scalebar import ScaleBar
+bathyfile='/DATA/projet/magellium/malaigue/data/Bathymetrie_Region_LR_juillet-sept2009/isolignes_thau_20100625.shx'
+bathy = gpd.read_file(bathyfile)
+bathy =bathy.to_crs(3857)
+bathy.CON

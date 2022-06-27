@@ -22,7 +22,7 @@ setup(
 
     # Dependent packages (distributions)
     install_requires=['numpy < 1.23','scipy','pandas','xarray','dask','geopandas','rasterio','affine',
-                      'matplotlib','docopt','pyproj','datetime','rioxarray','datetime','cartopy',
+                      'matplotlib','docopt','pyproj','datetime','rioxarray','datetime','cartopy','folium','mapclassify',
                       'holoviews','hvplot','colorcet','panel','datashader','netcdf4','matplotlib-scalebar'
 ],
 

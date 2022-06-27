@@ -20,7 +20,7 @@ class select_files():
         :return:
         '''
         nb_rep = len(self.root.split('/'))
-        list_ = pd.DataFrame(glob.glob(opj(self.root, product, tile, '*', '*', '*', pattern)))
+        list_ = pd.DataFrame( )
 
         list = list_[0].str.split('/', expand=True).iloc[:, nb_rep:]
         list.columns = ['product', 'tile', 'year', 'month', 'day', 'image']

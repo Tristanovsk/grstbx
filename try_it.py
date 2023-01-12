@@ -27,3 +27,38 @@ product = xr.open_dataset(file, chunks={'x': 512, 'y': 512},
                           decode_coords='all')
 
 ppj.CRS.from_wkt(product.crs.wkt).to_epsg()
+
+products = []
+for file in files:
+    product = xr.open_dataset(file, chunks={'x': 512, 'y': 512},
+                              decode_coords='all')
+    product = product.drop(['lat', 'lon'])
+    # add time dimension
+    product = dc.add_time_dim(product)
+    # ---------------------------------------------------
+    # fix merging when MAJA flags are not always present
+    # get names of variables
+    varnames = pd.DataFrame(product.data_vars)
+    vars_to_remove = varnames[0][varnames[0].str.contains("mask")]
+    product = product.drop_vars(vars_to_remove)
+    try:
+        product = product.drop_vars('aot_maja')
+    except:
+        pass
+    # ---------------------------------------------------
+    products.append(product)
+
+#product = xr.concat(products, dim='time').sortby('time')
+masking_ = grstbx.masking(product)
+nodata = masking_.get_mask(nodata=False)
+nodata.as_numpy()
+##
+p_ = product
+bands=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4',
+                                      'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',
+                                      'Rrs_B8A']
+wl = []
+for name, band in p_[bands].items():
+    wl.append(band.attrs['wavelength'])
+Rrs = p_[bands]
+Rrs = Rrs.to_array(dim='wl', name='Rrs').assign_coords(wl=wl).chunk({'wl': 1})

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 
 __package__ = 'grstbx'
-__version__ = '1.0.0'
+__version__ = '1.0.4'
 
 setup(
     name=__package__,
@@ -21,7 +21,7 @@ setup(
     description='some snippets to play with GRS images',
 
     # Dependent packages (distributions)
-    install_requires=['numpy < 1.23','scipy','pandas','xarray','dask','geopandas','rasterio','affine',
+    install_requires=['numpy','scipy','pandas','xarray','dask','geopandas','rasterio','affine',
                       'matplotlib','docopt','pyproj','datetime','rioxarray','datetime','cartopy','folium','mapclassify',
                       'holoviews','hvplot','colorcet','panel','datashader','netcdf4','matplotlib-scalebar'
 ],

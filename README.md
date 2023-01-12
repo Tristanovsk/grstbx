@@ -2,6 +2,8 @@
 ## **Scientific code to visualize and post-process GRS L2 images** 
 ## --> remote sensing reflectance (Rrs) 
 
+## Example
+![example gif](illustration/grstbx_visual_tool.gif)
 
 ## Getting Started
 
@@ -12,7 +14,7 @@ These instructions will get you a copy of the project up and running on your loc
 What things you need to install the software and how to install them
 
 ```
-conda install -c pyviz geoviews
+conda install gdal pyproj rasterio datashader cartopy hvplot jupyter jupyterlab dask rioxarray
 ```
 
 ### Installing
@@ -40,3 +42,8 @@ python3 setup.py install --prefix=<where-to-install>
 ## Some example of the forward model:
 
 ![example files](illustration/le_leman_bleu.png)
+
+## To generate a new kernel for Jupyter
+```
+python -m ipykernel install --user --name=grstbx
+```

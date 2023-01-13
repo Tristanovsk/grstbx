@@ -21,7 +21,7 @@ setup(
     description='some snippets to play with GRS images',
 
     # Dependent packages (distributions)
-    install_requires=['numpy','scipy','pandas','xarray','dask','geopandas','rasterio','affine',
+    install_requires=['numpy','scipy','pandas','xarray','dask','geopandas','rasterio','affine','pandas-bokeh',
                       'matplotlib','docopt','pyproj','datetime','rioxarray','datetime','cartopy','folium','mapclassify',
                       'holoviews','hvplot','colorcet','panel','datashader','netcdf4','matplotlib-scalebar'
 ],

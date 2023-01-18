@@ -18,7 +18,7 @@ from .masking import masking
 
 
 class l2grs():
-    def __init__(self, files):
+    def __init__(self, files=None):
         self.files = files
         self.no_product = False
 
@@ -84,30 +84,14 @@ class l2grs():
         #                     parallel=True)
         products = []
         for file in self.files:
-            product = xr.open_dataset(file, chunks={'x': 512, 'y': 512},
-                                      decode_coords='all')  # ,engine='netcdf4')
 
-            # remove lat lon raster to avoid conflict with PROJ, GDAL, RIO
-            product = product.drop(['lat', 'lon'])
-
-            # set CRS 
-            self.epsg = rxr.crs.CRS.from_wkt(product.crs.wkt).to_epsg()
-            product.rio.write_crs(self.epsg, inplace=True)
-
-            # set geotransform
-            i2m = product.crs.i2m
-            i2m = np.array((product.crs.i2m.split(','))).astype(float)
-            gt = Affine(i2m[0], i2m[1], i2m[4], i2m[2], i2m[3], i2m[5])
-            product.rio.write_transform(gt, inplace=True)
-
-            # add coords x, y (missing for GRS <= v1.5)
-            product = self.assign_coords(product)  # , reproject=reproject, epsg_in=self.epsg,epsg_out=epsg_out)
+            product = self.open_file(file)  # , reproject=reproject, epsg_in=self.epsg,epsg_out=epsg_out)
 
             if subset is not None:
                 product = self.subset_xy(product, subset)
 
             if reproject:
-                product = product.rio.reproject(epsg_out, nodata=np.nan)
+                product = product.rio.reproject(epsg_out)
                 self.epsg = product.rio.crs.to_epsg()
 
             # add time dimension
@@ -151,11 +135,33 @@ class l2grs():
             wl.append(band.attrs['wavelength'])
 
         Rrs = p_[bands]  # .squeeze()
-        Rrs = Rrs.to_array(dim='wl', name='Rrs').assign_coords(wl=wl).chunk({'wl': -1})
+        Rrs = Rrs.to_array(dim='wl', name='Rrs').assign_coords(wl=wl).chunk({'wl': 1})
 
         # merge to keep flags
-        self.Rrs = xr.merge([Rrs, p_[variables]]).chunk({'time': 5})
+        self.Rrs = xr.merge([Rrs, p_[variables]]).chunk({'time': 1})
         return
+
+    def open_file(self,file):
+        product = xr.open_dataset(file, chunks={'x': 512, 'y': 512},
+                              decode_coords='all')  # ,engine='netcdf4')
+
+        # remove lat lon raster to avoid conflict with PROJ, GDAL, RIO
+        product = product.drop(['lat', 'lon'])
+
+        # set CRS
+        epsg = rxr.crs.CRS.from_wkt(product.crs.wkt).to_epsg()
+        # TODO check if that dat is necessary (normally rio handles it)
+        self.epsg = epsg
+        product.rio.write_crs(epsg, inplace=True)
+
+        # set geotransform
+        #i2m = product.crs.i2m
+        i2m = np.array((product.crs.i2m.split(','))).astype(float)
+        gt = Affine(i2m[0], i2m[1], i2m[4], i2m[2], i2m[3], i2m[5])
+        product.rio.write_transform(gt, inplace=True)
+
+        # add coords x, y (missing for GRS <= v1.5)
+        return self.assign_coords(product)
 #
 # import glob
 # opj = os.path.join

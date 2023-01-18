@@ -2,6 +2,7 @@ import os
 import glob
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 
 import grstbx
 from datetime import datetime as dt
@@ -15,13 +16,24 @@ from affine import Affine
 locale.setlocale(locale.LC_ALL, 'en_US.utf8')
 opj = os.path.join
 
+
+#######################
+# mosaic
+root='/media/harmel/vol1/Dropbox/satellite/S2/cnes'
+file1=glob.glob(opj(root,'37PGN','2022','12','01','*.nc'))[0]
+file2=glob.glob(opj(root,'37PHN','2022','12','01','*.nc'))[0]
+tbx = grstbx.l2grs()
+img1 = tbx.open_file(file1)
+img2 = tbx.open_file(file2)
+
 ############################################################
 tile='31TEJ'
 select =grstbx.select_files()
 # if you need to change the root path
 select.root='/home/harmel/Dropbox/satellite/S2'
 select.root='/media/harmel/TOSHIBA EXT/data/satellite'
-select.list_tile(tile=tile,product='S2_L2GRS')
+select.list_tile(tile=tile,product='S2_L2GRS',pattern='*v14.nc')
+
 files = select.list_file_path(('2022-01-12','2022-01-31'))
 # central coordinate
 lon, lat = 3.61, 43.4

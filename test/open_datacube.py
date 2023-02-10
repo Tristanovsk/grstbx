@@ -42,21 +42,25 @@ ppj.datadir.get_data_dir()
 
 # ## Set the images you want to play with
 
-tile='37PGN'
-ID='abhe'
+tile='30TXR'
+ID='gironde'
 odir ='/sat_data/satellite/sentinel2/datacube/'
-start_date='2022-11-01'
+odir ='/home/harmel/Dropbox/satellite/S2/cnes/datacube/'
+
+start_date='2022-07-01'
 stop_date='2022-12-31'
-ofile = opj(odir,tile+'_'+start_date+'_'+stop_date+'_'+ID+'.nc')
+basename= tile+'_'+start_date+'_'+stop_date+'_'+ID
+basename='31TGM_2022-01-01_2022-06-30_SHL2'
+ofile = opj(odir,basename+'.nc')
 
 # Open and load your datacube:
 # from netcdf format and interpret coordinate system
 raster = xr.open_dataset(ofile,decode_coords='all')
 dc =grstbx.l2grs()
 dc.raster=raster
-dc.reshape_raster()
+#dc.reshape_raster()
 
-coarsening = 3
+coarsening = 1
 aspect=len(dc.raster.x)/len(dc.raster.y)*1.2
 
 fig = dc.raster.Rrs.isel(wl=2)[:,::coarsening, ::coarsening].plot(col='time', col_wrap=4,robust=True,cmap=cc.cm.CET_D13,aspect=aspect)
@@ -64,33 +68,35 @@ for ax in fig.axs.flat:
     ax.set(xticks=[], yticks=[])
     ax.set_ylabel('')
     ax.set_xlabel('')
-fig
+plt.savefig('test/fig/'+basename+'_B3.png',dpi=300)
 
 
 # In[17]:
 
 
-coarsening = 2
+#coarsening = 2
 fig=raster.BRDFg[:,::coarsening, ::coarsening].plot(col='time', col_wrap=4,vmax=0.01,robust=True,cmap=cc.cm.gray,aspect=aspect)
 for ax in fig.axs.flat:
     ax.set(xticks=[], yticks=[])
     ax.set_ylabel('')
     ax.set_xlabel('')
-fig
+
+plt.savefig('test/fig/'+basename+'_sunglint.png',dpi=300)
 
 
 # In[18]:
 
 
 bands=[4,2,1]
-#bands=[3,2,1]
-coarsening = 2
+bands=[3,2,1]
+coarsening = 1
 brightness_factor = 5
 gamma=2
-fig = (dc.raster.Rrs.isel(wl=bands)[:,:,::coarsening, ::coarsening]**(1/gamma)*brightness_factor).plot.imshow(col='time', col_wrap=4,robust=True,aspect=aspect)
+fig = (dc.raster.Rrs.isel(wl=bands)[:,:,::coarsening, ::coarsening]**(1/gamma)*brightness_factor).plot.imshow(col='time', col_wrap=4,robust=True,aspect=aspect/1.2)
 for ax in fig.axs.flat:
     ax.set(xticks=[], yticks=[])
     ax.set_ylabel('')
     ax.set_xlabel('')
-fig
+
+plt.savefig('test/fig/'+basename+'_RGB.png',dpi=300)
 

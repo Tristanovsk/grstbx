@@ -21,8 +21,9 @@ class l2grs():
     def __init__(self, files=None):
         self.files = files
         self.no_product = False
+        self.raster=None
 
-    def load(self, reproject=False, subset=None,reshape=True):
+    def load(self, reproject=False, subset=None, reshape=True):
         '''
         :param reproject: if True reproject in geodetic coordinates, keep native projection otherwise 
         :param subset: None for no subset or [minx, miny, maxx, maxy] in the appropriate crs
@@ -33,7 +34,7 @@ class l2grs():
             print('no product available for your settings')
             return
         if reshape:
-            self.reshape_datacube()
+            self.reshape_raster(from_datacube=True)
 
     # @staticmethod
     def assign_coords(self, product, reproject=False, epsg_in=4326, epsg_out=3857, res=None):
@@ -113,7 +114,8 @@ class l2grs():
                 product = product.drop_vars('aot_maja')
             except:
                 pass
-            # ---------------------------------------------------
+
+            # ----------------------------------------------------
 
             products.append(product)
 
@@ -123,13 +125,29 @@ class l2grs():
 
         product = xr.concat(products, dim='time').sortby('time')
         self.datacube = product
+        self.datacube.attrs['start_date'] = str(product.time[0].values)
+        self.datacube.attrs['stop_date'] = str(product.time[-1].values)
         self.pixnum = len(self.datacube.x) * len(self.datacube.y)
 
-    def reshape_datacube(self, bands=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4',
-                                      'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',
-                                      'Rrs_B8A'],
-                         variables=['flags', 'SZA', 'shade']):
-        p_ = self.datacube
+        # ---------------------------------------------------
+        # fix for nodata value of BRDFg
+        # TODO need to check in grs (to be removed when solved)
+        self.datacube['BRDFg'] =self.datacube['BRDFg'].where(self.datacube[
+                                                                   'BRDFg'] > -99)
+        # ---------------------------------------------------
+
+
+
+    def reshape_raster(self, bands=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4',
+                                    'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',
+                                    'Rrs_B8A'],
+                         data_vars=['flags', 'SZA', 'shade', 'BRDFg'],
+                         from_datacube=False
+                       ):
+        if from_datacube:
+            p_ = self.datacube
+        else:
+            p_ = self.raster
         wl = []
         for name, band in p_[bands].items():
             wl.append(band.attrs['wavelength'])
@@ -138,12 +156,31 @@ class l2grs():
         Rrs = Rrs.to_array(dim='wl', name='Rrs').assign_coords(wl=wl).chunk({'wl': 1})
 
         # merge to keep flags
-        self.Rrs = xr.merge([Rrs, p_[variables]]).chunk({'time': 1})
+        self.raster = xr.merge([Rrs, p_[data_vars]]).chunk({'time': 1})
         return
 
-    def open_file(self,file):
+    def reproject_data_vars(self, epsg=3857,
+                            data_vars=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4',
+                                       'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',
+                                       'Rrs_B8A', 'flags', 'SZA', 'shade', 'BRDFg'],
+                            no_data=np.nan
+                            ):
+
+        # set no_data value before reprojection
+        for var in data_vars:
+            # TODO handle differnt nodata value depending on dtype (int, float, str...)
+            #if self.datacube[var].dtype float32:
+            self.datacube[var].rio.write_nodata(no_data,inplace=True)
+            #elif isinstance(self.datacube[var], int):
+            #    self.datacube[var].rio.write_nodata(-999,inplace=True)
+
+        # reproject and create new xarray "raster"
+        self.raster = self.datacube[data_vars].rio.reproject(epsg, nodata=no_data)
+
+
+    def open_file(self, file):
         product = xr.open_dataset(file, chunks={'x': 512, 'y': 512},
-                              decode_coords='all')  # ,engine='netcdf4')
+                                  decode_coords='all')  # ,engine='netcdf4')
 
         # remove lat lon raster to avoid conflict with PROJ, GDAL, RIO
         product = product.drop(['lat', 'lon'])
@@ -155,7 +192,7 @@ class l2grs():
         product.rio.write_crs(epsg, inplace=True)
 
         # set geotransform
-        #i2m = product.crs.i2m
+        # i2m = product.crs.i2m
         i2m = np.array((product.crs.i2m.split(','))).astype(float)
         gt = Affine(i2m[0], i2m[1], i2m[4], i2m[2], i2m[3], i2m[5])
         product.rio.write_transform(gt, inplace=True)

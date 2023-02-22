@@ -8,6 +8,8 @@ import xarray as xr
 import matplotlib.pyplot as plt
 import pkg_resources
 from scipy.interpolate import interp1d
+import scipy as sp
+from sklearn import linear_model, metrics
 
 class spatiotemp():
 
@@ -227,3 +229,36 @@ class plot:
         if filename:
             plt.savefig(filename)  # , bbox_inches='tight')
             plt.close()
+
+    @staticmethod
+    def set_layout(ax):
+        lims = [
+            np.min([ax.get_xlim(), ax.get_ylim()]),  # min of both axes
+            np.max([ax.get_xlim(), ax.get_ylim()]),  # max of both axes
+        ]
+        # now plot both limits against eachother
+        ax.plot(lims, lims, 'k-', alpha=0.75, zorder=0)
+        ax.set_aspect('equal')
+        ax.set_xlim(lims)
+        ax.set_ylim(lims)
+        return ax
+
+    @staticmethod
+    def add_stats(x, y, ax, label=False,fontsize=12):
+        regr = sp.stats.linregress(x, y)
+
+        # Prediction metrics
+        rmse = np.sqrt(metrics.mean_squared_error(x, y))
+        mape = metrics.mean_absolute_percentage_error(x, y)
+        bias = np.mean(y - x)
+        N = len(x)
+        stats = f'$y = %.2f x %+.4f$' % (regr.slope, regr.intercept) + \
+                '\n$r = %.3f$' % (regr.rvalue) + \
+                '\n$rmse = %.3f$' % (rmse) + \
+                '\n$mape = %.3f$' % (mape) + \
+                '\n$N = %i$' % (N)
+        ax.axline(xy1=(0.01, regr.intercept + 0.01 * regr.slope), slope=regr.slope, ls='--', lw=1.5, c="gray")
+        if label:
+            ax.text(0.98, 0.01, stats, fontsize=fontsize, verticalalignment='bottom', horizontalalignment='right',
+                    transform=ax.transAxes)
+        return

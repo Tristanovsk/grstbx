@@ -28,6 +28,33 @@ class select_files():
         file_list['abspath'] = list_.values
         file_list['date'] = pd.to_datetime(file_list['date'])
         self.file_list = file_list.set_index('date').sort_index()
+    def list_folder(self,  pattern='*.nc'):
+        '''
+
+
+        :param pattern: regex pattern to pre-select your files (default: '*.nc')
+        :return:
+        '''
+
+        datadir = opj(self.root,  pattern)
+        list_ = glob.glob(datadir)
+        if len(list_) == 0:
+
+            print("wrong path, no data available; try again!")
+            return
+
+        basenames = pd.Series([os.path.basename(p) for p in list_])  # ,columns=['basename']) #basenames
+        file_list = basenames.str.split('_', expand=True).iloc[..., [0, 1, 2, 5, 7, -1]].copy()
+        file_list.columns = ['satellite', 'level', 'date', 'tile', 'cloud_coverage', 'version']
+        file_list['version'] = file_list['version'].str.split('.', expand=True).values[:, 0]
+        file_list['cloud_coverage'] = file_list['cloud_coverage'].str.replace('cc', '').astype(float)
+        file_list['abspath'] = list_
+        file_list['date'] = pd.to_datetime(file_list['date'])
+        # file_list = list_[0].str.split('/', expand=True).iloc[:, nb_rep:]
+        # file_list.columns = ['product', 'tile', 'year', 'month', 'day', 'image']
+        # file_list['basenames'] = [os.path.basename(p) for p in file_list['abspath']]
+        # file_list['date'] = pd.to_datetime(file_list[['year', 'month', 'day']])
+        self.file_list = file_list.set_index('date').sort_index()
 
     def list_tile(self, product='S2-L2GRS', tile='31TEJ', pattern='*.nc'):
         '''

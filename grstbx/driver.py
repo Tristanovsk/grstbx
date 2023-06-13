@@ -141,7 +141,7 @@ class l2grs():
     def reshape_raster(self, bands=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4',
                                     'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',
                                     'Rrs_B8A'],
-                         data_vars=['flags', 'SZA', 'shade', 'BRDFg'],
+                         data_vars=[ 'SZA', 'AZI', 'VZA', 'shade', 'BRDFg'],
                          from_datacube=False
                        ):
         if from_datacube:
@@ -162,7 +162,7 @@ class l2grs():
     def reproject_data_vars(self, epsg=3857,
                             data_vars=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4',
                                        'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',
-                                       'Rrs_B8A', 'flags', 'SZA', 'shade', 'BRDFg'],
+                                       'Rrs_B8A' 'SZA', 'AZI', 'VZA', 'shade', 'BRDFg'],
                             no_data=np.nan
                             ):
 

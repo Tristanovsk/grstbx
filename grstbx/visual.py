@@ -2,14 +2,13 @@ import glob
 import os
 import numpy as np
 import pandas as pd
-
-import cartopy.crs as ccrs
+import geopandas as gpd
 
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 # mpl.use('TkAgg')
-import hvplot.xarray
 
+import hvplot.xarray
 import holoviews as hv
 import holoviews.operation.datashader as hd
 from holoviews.operation.datashader import rasterize, shade, spread
@@ -29,7 +28,7 @@ import colorcet as cc
 import panel as pn
 import panel.widgets as pnw
 import param as pm
-
+from shapely.geometry import Polygon
 from collections import OrderedDict as odict
 
 
@@ -50,7 +49,7 @@ class image_viewer():
         dates = {str(date): idate for idate, date in enumerate(raster.time.values)}
 
         # map_tiles = EsriImagery().opts(alpha=0.65, bgcolor='black')
-        maps = ['EsriImagery', 'EsriUSATopo', 'EsriTerrain', 'StamenWatercolor', 'StamenTonerBackground']
+        maps = ['StamenTonerBackground', 'EsriImagery', 'EsriUSATopo', 'EsriTerrain', 'StamenWatercolor']
         bases = odict(
             [(name, None) if name == 'None' else (name, getattr(hvts, name)().relabel(name)) for name in maps])
         gopts = hv.opts.Tiles(responsive=True, xaxis=None, yaxis=None, bgcolor='black', show_grid=False)
@@ -69,11 +68,12 @@ class image_viewer():
             wavelength = pm.Selector(iwls, default=2)
             cmap = pm.Selector(ps, default=ps['gouldian'])
             basemap = pm.Selector(bases)
+            vmax = pm.Number(0.03)
             extracted_data = []
 
             @pm.depends('date')
             def extract_ds_by_date(self):
-                self.ds_ = hv.Dataset(raster.isel(time=self.date, drop=True))
+                self.ds_ = hv.Dataset(raster.isel(time=self.date, drop=True).compute())
                 # clean up graph
 
             @pm.depends('date')
@@ -156,7 +156,7 @@ class image_viewer():
 
                 im = ds.to(hv.Image, ['x', 'y']).opts(clim_percentile=True, padding=0, active_tools=['box_edit'],
                                                       tools=['hover', 'lasso_select'], title=title, cmap=self.cmap,
-                                                      colorbar=True, clim=(0, None)).opts(
+                                                      colorbar=True, clim=(0, self.vmax)).opts(
                     fontsize={'title': 18, 'labels': 14, 'xticks': 12, 'yticks': 12})  # .hist(bin_range=(0,0.02) )
 
                 return (im * polys).opts(opts.Polygons(fill_alpha=0.2, line_color='black'))
@@ -230,24 +230,35 @@ class image_viewer():
         return pn.Row(pn.Param(viewer.param), viewer.map_band)
 
 
-def custom_hover():
-    formatter_code = """
-      var digits = 4;
-      var projections = Bokeh.require("core/util/projections");
-      var x = special_vars.x; var y = special_vars.y;
-      var coords = projections.wgs84_mercator.invert(x, y);
-      return "" + (Math.round(coords[%d] * 10**digits) / 10**digits).toFixed(digits)+ "";
-    """
-    formatter_code_x, formatter_code_y = formatter_code % 0, formatter_code % 1
-    custom_tooltips = [('Lon', '@x{custom}'), ('Lat', '@y{custom}'), ('Value', '@image{0.0000}')]
-    custom_formatters = {
-        '@x': bokeh.models.CustomJSHover(code=formatter_code_x),
-        '@y': bokeh.models.CustomJSHover(code=formatter_code_y)
-    }
-    return bokeh.models.HoverTool(tooltips=custom_tooltips, formatters=custom_formatters)
+class utils():
+
+    @staticmethod
+    def get_geom(aoi_stream, crs=4326):
+        geom = aoi_stream.data
+        ys, xs = geom['ys'][-1], geom['xs'][-1]
+        polygon_geom = Polygon(zip(xs, ys))
+        polygon = gpd.GeoDataFrame(index=[0], crs=3857, geometry=[polygon_geom])
+        return polygon.to_crs(crs)
+
+    @staticmethod
+    def custom_hover():
+        formatter_code = """
+          var digits = 4;
+          var projections = Bokeh.require("core/util/projections");
+          var x = special_vars.x; var y = special_vars.y;
+          var coords = projections.wgs84_mercator.invert(x, y);
+          return "" + (Math.round(coords[%d] * 10**digits) / 10**digits).toFixed(digits)+ "";
+        """
+        formatter_code_x, formatter_code_y = formatter_code % 0, formatter_code % 1
+        custom_tooltips = [('Lon', '@x{custom}'), ('Lat', '@y{custom}'), ('Value', '@image{0.0000}')]
+        custom_formatters = {
+            '@x': bokeh.models.CustomJSHover(code=formatter_code_x),
+            '@y': bokeh.models.CustomJSHover(code=formatter_code_y)
+        }
+        return bokeh.models.HoverTool(tooltips=custom_tooltips, formatters=custom_formatters)
 
 
-class view_spectral():
+class view_spectral(utils):
     def __init__(self, raster, dates=None,
                  bands=None,
                  reproject=False,
@@ -275,7 +286,10 @@ class view_spectral():
         self.raster = raster
         self.dataarrays = {}
 
-        for itime, time in enumerate(raster.time.values):
+        times = raster.time.values
+        if not hasattr(times, "__len__"):
+            times = [times]
+        for itime, time in enumerate(times):
             raster_ = raster.sel(time=time)
             for iband, band in enumerate(self.bands):
                 if reproject:
@@ -283,13 +297,14 @@ class view_spectral():
                 else:
                     self.dataarrays[itime, iband] = raster_.sel(wl=band)
 
-        # declare streaming object to get Area of Interest (AOI)
-        self.aoi_polygons = gv.Polygons([], crs=crs.epsg(3857)).opts(opts.Polygons(
+        # declare streaming object to get Area of Interest (AOI), crs=crs.epsg(3857)
+        self.aoi_polygons = hv.Polygons([]).opts(opts.Polygons(
             fill_alpha=0.3, fill_color='white',
             line_width=1.2))  ##, active_tools=['poly_draw']))#.opts(crs.GOOGLE_MERCATOR)
         self.aoi_stream = hv.streams.PolyDraw(
-            source=self.aoi_polygons)  # , num_objects=1)#5,styles={'fill_color': aoi_colours})
+            source=self.aoi_polygons, drag=True)  # , num_objects=1)#5,styles={'fill_color': aoi_colours})
         self.edit_stream = hv.streams.PolyEdit(source=self.aoi_polygons, vertex_style={'color': 'red'})
+
 
     def visu(self):
 
@@ -300,7 +315,7 @@ class view_spectral():
         # set visualization options
         hv.opts.defaults(
             hv.opts.Image(height=self.height, width=self.width,
-                          colorbar=True, tools=[custom_hover()], active_tools=['wheel_zoom'],
+                          colorbar=True, tools=[self.custom_hover()], active_tools=['wheel_zoom'],
                           clipping_colors={'NaN': '#00000000'}),
             hv.opts.Tiles(active_tools=['wheel_zoom'])
         )
@@ -340,6 +355,7 @@ class view_spectral():
             used_colormap = cc.cm[pn_colormap_value]
             image.opts(cmap=used_colormap, alpha=pn_opacity_value, clim=range_slider_value,
                        title=titles[pn_date_value, pn_band_value])
+
             return image
 
         @pn.depends(
@@ -370,7 +386,7 @@ class view_spectral():
         )
 
 
-class view_param():
+class view_param(utils):
     def __init__(self, raster, dates=None,
                  params=None,
                  reproject=False,
@@ -393,11 +409,15 @@ class view_param():
 
         self.params = params
         if params == None:
-            self.params = list(raster.data_vars)
+            self.params = list()
             # Clean up: param to be removed
-            for to_be_removed in ['crs', 'metadata']:
-                if to_be_removed in self.params:
-                    self.params.remove(to_be_removed)
+            self.params= []
+            for param in raster.data_vars:
+                if ('x' in raster[param].dims) and ('y' in raster[param].dims):
+                    self.params.append(param)
+            # for to_be_removed in ['crs', 'metadata']:
+            #     if to_be_removed in self.params:
+            #         self.params.remove(to_be_removed)
 
         # load raster
         self.raster = raster
@@ -412,7 +432,7 @@ class view_param():
                     self.dataarrays[itime, param] = raster_[param]
 
         # declare streaming object to get Area of Interest (AOI)
-        self.aoi_polygons = gv.Polygons([], crs=crs.epsg(3857)).opts(opts.Polygons(
+        self.aoi_polygons = hv.Polygons([], crs=crs.epsg(3857)).opts(opts.Polygons(
             fill_alpha=0.3, fill_color='white', line_width=1.2))
         self.aoi_stream = hv.streams.PolyDraw(source=self.aoi_polygons)
         self.edit_stream = hv.streams.PolyEdit(source=self.aoi_polygons, vertex_style={'color': 'red'})
@@ -426,7 +446,7 @@ class view_param():
         # set visualization options
         hv.opts.defaults(
             hv.opts.Image(height=self.height, width=self.width,
-                          colorbar=True, tools=[custom_hover()], active_tools=['wheel_zoom'],
+                          colorbar=True, tools=[self.custom_hover(),'box_select'], active_tools=['wheel_zoom'],
                           clipping_colors={'NaN': '#00000000'}),
             hv.opts.Tiles(active_tools=['wheel_zoom'])
         )

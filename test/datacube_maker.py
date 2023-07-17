@@ -50,11 +50,12 @@ stop_date='2022-12-31'
 ofile = opj(odir,tile+'_'+start_date+'_'+stop_date+'_'+ID+'.nc')
 
 idir='/media/harmel/vol1/Dropbox/satellite/S2'
+idir='/datalake/watcal'
 select =grstbx.select_files()
 
 # if you need to change the root path
 select.root=idir
-select.list_tile(tile=tile,product='cnes',pattern='*15.nc')
+select.list_tile(tile=tile,product='S2-L2GRS',pattern='*15.nc')
 files = select.list_file_path((start_date,stop_date))
 files
 

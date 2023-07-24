@@ -16,9 +16,6 @@ from holoviews.element.tiles import EsriImagery
 from holoviews.element import tiles as hvts
 from holoviews import opts
 
-import geoviews as gv
-from cartopy import crs
-
 hv.extension('bokeh')
 
 import datashader as ds
@@ -432,7 +429,7 @@ class view_param(utils):
                     self.dataarrays[itime, param] = raster_[param]
 
         # declare streaming object to get Area of Interest (AOI)
-        self.aoi_polygons = hv.Polygons([], crs=crs.epsg(3857)).opts(opts.Polygons(
+        self.aoi_polygons = hv.Polygons([]).opts(opts.Polygons(
             fill_alpha=0.3, fill_color='white', line_width=1.2))
         self.aoi_stream = hv.streams.PolyDraw(source=self.aoi_polygons)
         self.edit_stream = hv.streams.PolyEdit(source=self.aoi_polygons, vertex_style={'color': 'red'})

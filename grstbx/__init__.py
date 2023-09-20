@@ -10,6 +10,8 @@ version 2.0.0: transition to GRS V2
 '''
 
 from .driver import l2grs
+from .driver_v1 import l2grs_v1
+
 from .masking import masking
 from .utils import *
 from .datalake import select_files

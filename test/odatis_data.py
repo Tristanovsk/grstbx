@@ -47,9 +47,16 @@ dupes = str_duplicated.merge(duplicated,left_index=True, right_index=True)
 df=df[~df.index.duplicated(keep=False)]
 
 # merge averaged duplicated into main dateframe
-pd.concat([df,dupes])
+df=pd.concat([df,dupes])
 
-xarr=df.reset_index(['lon','lat']).to_xarray()
+# export data into netcdf for each station
+for station,df_ in df.groupby('station'):
+    xarr=df_.reset_index().set_index(['date']).to_xarray()
+    station=str(station).replace(' ','')
+    ofile=opj(idir,'odatis_data_'+station+'.nc')
+    if os.path.exists(ofile):
+        os.remove(ofile)
+    xarr.to_netcdf(ofile)
 
 #---------------------------
 # Plot maps and histograms
@@ -84,6 +91,16 @@ for ii,param in enumerate(['chla','spm','poc']):
     ax = fig.add_subplot(2, 3, ii + 4)
     colors.hist(ax=ax,bins=20,rwidth=0.9,
                    color='#607c8e')
+    ax.text(0.65, 0.95,
+            'N = {:.0f}'.format(colors.count()) +
+            '\nmean = {:.1f} '.format(colors.mean()) +
+            '\nstd = {:.1f} '.format(colors.std()) +
+            '\nmin = {:.1f} '.format(colors.min())+
+            '\nmax = {:.1f} '.format(colors.max()),
+
+            bbox=dict(boxstyle="round", fc='1'), fontsize=11, horizontalalignment='left',
+            verticalalignment='top',
+            transform=ax.transAxes)
     ax.semilogy()
     ax.set_xlabel(xlabels[ii])
 plt.suptitle('ODATIS data for coastal validation')
@@ -94,18 +111,18 @@ plt.savefig('test/odatis_dataset_maps_histo.png',dpi=300)
 # Plot time series
 #---------------------------
 
-fig,axs = plt.subplots(3,1,figsize=(16,12),sharex=True)
-fig.subplots_adjust(left=0.1, right=0.98, bottom=0.15,top=0.97,hspace=.1, wspace=0.05)
-tsdf = df_.set_index('date').groupby('station')
+fig,axs = plt.subplots(3,1,figsize=(16,13),sharex=True)
+fig.subplots_adjust(left=0.1, right=0.98, bottom=0.265,top=0.97,hspace=.1, wspace=0.05)
+tsdf = df.reset_index().set_index('date').groupby('station')
 for ii,param in enumerate(['chla','spm','poc']):
-    axs[ii].set_prop_cycle('color', plt.cm.Spectral(np.linspace(0, 1, 40)))
+    axs[ii].set_prop_cycle('color', plt.cm.Spectral_r(np.linspace(0, 1, 42)))
     tsdf[param].plot(ls='',marker='o',ms=3.5,alpha=0.75,ax=axs[ii])
     axs[ii].semilogy()
     axs[ii].set_ylabel(xlabels[ii])
     axs[ii].minorticks_on()
 axs[ii].set_xlabel('')
-axs[ii].legend(title='$Sites$',loc='upper center', bbox_to_anchor=(0.5, -0.225),
-                  fancybox=True, shadow=True, ncol=8, handletextpad=0.1, fontsize=12)
+axs[ii].legend(title='$Sites$',loc='upper center', bbox_to_anchor=(0.5, -0.18),
+                  fancybox=True, shadow=True, ncol=7, handletextpad=0.1, fontsize=12)
 plt.savefig('test/odatis_dataset_timeseries.png',dpi=300)
 
 

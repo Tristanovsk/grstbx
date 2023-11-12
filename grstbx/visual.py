@@ -265,12 +265,17 @@ class view_spectral(utils):
 
         # layout settings
         self.title = '## S2 L2A'
-        self.width, self.height = 1200, 700
+        self.width, self.height = 1200, 800
         self.key_dimensions = ['x', 'y']
         self.minmaxvalues = minmaxvalues
         self.minmax = minmax
         self.colormaps = ['CET_D13', 'bky', 'CET_D1A', 'CET_CBL2', 'CET_L10', 'CET_C6s',
                           'kbc', 'blues_r', 'kb', 'rainbow', 'fire', 'kgy', 'bjy', 'gray']
+
+        # check if single date, if so push time as dimension to be compliant with multidates
+        if not 'time' in raster.dims:
+            raster = raster.expand_dims('time')
+
         # variables settings
         self.dates = dates
         if dates == None:
@@ -293,6 +298,7 @@ class view_spectral(utils):
                     self.dataarrays[itime, iband] = raster_.sel(wl=band).rio.reproject(3857, nodata=np.nan)
                 else:
                     self.dataarrays[itime, iband] = raster_.sel(wl=band)
+
 
         # declare streaming object to get Area of Interest (AOI), crs=crs.epsg(3857)
         self.aoi_polygons = hv.Polygons([]).opts(opts.Polygons(
@@ -369,8 +375,8 @@ class view_spectral(utils):
             pn.WidgetBox(
                 self.title,
                 pn.Column(
+                    pn.Row('### Band', pn_band),
                     pn.Row(
-                        pn.Row('### Band', pn_band),
                         pn.Row('### Date', pn_date),
                         pn.Row('#### Basemap', pn_basemaps)
                     ),
@@ -399,6 +405,10 @@ class view_param(utils):
         self.minmax = minmax
         self.colormaps = ['CET_D13', 'bky', 'CET_D1A', 'CET_CBL2', 'CET_L10', 'CET_C6s',
                           'kbc', 'blues_r', 'kb', 'rainbow', 'fire', 'kgy', 'bjy', 'gray']
+        # check if single date, if so push time as dimension to be compliant with multidates
+        if not 'time' in raster.dims:
+            raster = raster.expand_dims('time')
+
         # variables settings
         self.dates = dates
         if dates == None:
@@ -420,6 +430,9 @@ class view_param(utils):
         self.raster = raster
         self.dataarrays = {}
 
+        times = raster.time.values
+        if not hasattr(times, "__len__"):
+            times = [times]
         for itime, time in enumerate(raster.time.values):
             raster_ = raster.sel(time=time)
             for iparam, param in enumerate(self.params):

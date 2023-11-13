@@ -14,7 +14,7 @@ These instructions will get you a copy of the project up and running on your loc
 What things you need to install the software and how to install them
 
 ```
-conda install -c conda-forge gdal eoreader pyproj rasterio datashader cartopy hvplot jupyter jupyterlab dask rioxarray
+conda install -c conda-forge gdal eoreader pyproj rasterio datashader cartopy hvplot jupyter jupyterlab jupyter_bokeh dask rioxarray
 ```
 
 ### Installing

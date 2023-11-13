@@ -24,7 +24,7 @@ setup(
     install_requires=['numpy','scipy','pandas','xarray','dask','geopandas','rasterio','affine','pandas-bokeh',
                       'matplotlib','docopt','pyproj','datetime','rioxarray','datetime','folium','mapclassify',
                       'holoviews','hvplot','colorcet','panel','datashader','netcdf4','matplotlib-scalebar'
-],
+    ],
 
 
     # entry_points={

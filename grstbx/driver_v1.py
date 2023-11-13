@@ -17,7 +17,7 @@ from datetime import datetime as dt
 from .masking import masking
 
 
-class l2grs():
+class l2grs_v1():
     def __init__(self, files=None):
         self.files = files
         self.no_product = False

@@ -245,3 +245,4 @@ class l2grs():
 
         # add coords x, y (missing for GRS <= v1.5)
         return self.assign_coords(product)
+

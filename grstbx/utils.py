@@ -4,6 +4,7 @@ import pandas as pd
 from rasterio import features
 from affine import Affine
 import xarray as xr
+import geopandas as gpd
 
 import matplotlib.pyplot as plt
 import pkg_resources
@@ -102,6 +103,36 @@ class spatiotemp():
                                     dtype=float, **kwargs)
         spatial_coords = {latitude: coords[latitude], longitude: coords[longitude]}
         return xr.DataArray(raster, coords=spatial_coords, dims=(latitude, longitude))
+
+    @staticmethod
+    def clip_raster(raster, lat, lon, extent_m):
+        '''
+        :param raster as rioxarray object with documented coordinate system
+        :param lat: latitude (float) of central point of buffer
+        :param lon: longitude (float) of central point of buffer
+        :param extent_m: extent of square centered on lat/lon
+        :param crs: crs for reprojection, use lat/lon epsg4326 otherwise.
+        :return: clipped raster
+        '''
+        # distance is d/2 of the square buffer around the point,
+        # from center to corner;
+        # find buffer width in meters
+        buffer_width_m = extent_m / np.sqrt(2)
+
+        # EPSG:4326 sets Coordinate Reference System to WGS84 to match input
+        wgs84_pt_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy([lon], [lat], crs='4326'))
+
+        # find suitable projected coordinate system for distance
+        utm_crs = wgs84_pt_gdf.estimate_utm_crs()
+        # reproject to UTM -> create square buffer (cap_style = 3) around point -> reproject back to WGS84
+        buffer = wgs84_pt_gdf.to_crs(utm_crs).buffer(buffer_width_m, cap_style=3)
+        # get buffer in the raster coordinate system
+        buffer=buffer.to_crs(raster.rio.crs)
+
+        # clipping
+        return raster.rio.clip(buffer)
+
+
 
 
 class data:

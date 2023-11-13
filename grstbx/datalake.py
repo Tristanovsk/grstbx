@@ -25,9 +25,10 @@ class select_files():
         file_list.columns = ['satellite', 'level', 'date', 'tile', 'cloud_coverage', 'version']
         file_list['version'] = file_list['version'].str.split('.', expand=True).values[:, 0]
         file_list['cloud_coverage'] = file_list['cloud_coverage'].str.replace('cc', '').astype(float)
-        file_list['abspath'] = list_.values
+        file_list['abspath'] = list_
         file_list['date'] = pd.to_datetime(file_list['date'])
         self.file_list = file_list.set_index('date').sort_index()
+
     def list_folder(self,  pattern='*.nc'):
         '''
 

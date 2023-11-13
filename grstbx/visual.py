@@ -384,8 +384,8 @@ class view_spectral(utils):
                         pn.Row('', range_slider),
                         pn.Row('#### Opacity', pn_opacity),
                         pn.Row('#### Colormap', pn_colormap))
-                )),
-            combined
+                ),
+            combined)
         )
 
 
@@ -521,6 +521,6 @@ class view_param(utils):
                         pn.Row('', range_slider),
                         pn.Row('#### Opacity', pn_opacity),
                         pn.Row('#### Colormap', pn_colormap))
-                )),
-            combined
+                ),
+            combined)
         )

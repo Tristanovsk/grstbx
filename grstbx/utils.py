@@ -7,7 +7,7 @@ import xarray as xr
 import geopandas as gpd
 
 import matplotlib.pyplot as plt
-import pkg_resources
+import importlib_resources
 from scipy.interpolate import interp1d
 import scipy as sp
 from sklearn import linear_model, metrics
@@ -183,7 +183,7 @@ class data:
 
 
 class irradiance:
-    def __init__(self, F0_file=pkg_resources.resource_stream(__name__, 'data/Thuillier_2003_0.3nm.dat')):
+    def __init__(self, F0_file=importlib_resources.files('grstbx.data').joinpath('Thuillier_2003_0.3nm.dat')):
         self.F0_file = F0_file
 
     def load_F0(self, ):

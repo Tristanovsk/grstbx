@@ -1,6 +1,6 @@
 # **grstbx**
-## **Scientific code to visualize and post-process GRS L2 images** 
-## --> remote sensing reflectance (Rrs) 
+## **Scientific code and notebooks to visualize and post-process GRS L2A and L2B images** 
+
 
 ## Example
 ![example gif](illustration/grstbx_visual_tool.gif)
@@ -11,15 +11,26 @@ These instructions will get you a copy of the project up and running on your loc
 
 ### Prerequisites
 
-What things you need to install the software and how to install them
+Please use conda environment
+``` 
+conda activate "name of your conda env"
+```
+
+Python >= 3.9 is recommended, example:
+``` 
+conda create python=3.11 -n grstbx
+conda activate grstbx
+``` 
+
+It is safer to pre-install gdal and pyproj with conda:
 
 ```
-conda install -c conda-forge gdal eoreader pyproj rasterio datashader cartopy hvplot jupyter jupyterlab jupyter_bokeh dask rioxarray
+conda install -c conda-forge gdal pyproj
 ```
 
 ### Installing
 
-First, clone [the repository](https://github.com/Tristanovsk/invRrs#) and execute the following command in the
+Clone [the repository](https://github.com/Tristanovsk/grstbx#) and execute the following command in the
 local copy:
 
 ```

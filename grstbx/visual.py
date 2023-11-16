@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 # mpl.use('TkAgg')
 
-import hvplot.xarray
+#import hvplot.xarray
 import holoviews as hv
 import holoviews.operation.datashader as hd
 from holoviews.operation.datashader import rasterize, shade, spread
@@ -16,7 +16,7 @@ from holoviews.element.tiles import EsriImagery
 from holoviews.element import tiles as hvts
 from holoviews import opts
 
-hv.extension('bokeh')
+
 
 import datashader as ds
 import datashader.transfer_functions as tf
@@ -27,6 +27,8 @@ import panel.widgets as pnw
 import param as pm
 from shapely.geometry import Polygon
 from collections import OrderedDict as odict
+
+hv.extension('bokeh')
 
 
 class image_viewer():
@@ -338,7 +340,7 @@ class view_spectral(utils):
         pn_colormap = pn.widgets.Select(value='CET_D13',
                                         options=self.colormaps)
         pn_opacity = pn.widgets.FloatSlider(name='Opacity', value=0.95, start=0, end=1, step=0.05)
-        range_slider = pn.widgets.RangeSlider(name='Range Slider', start=self.minmax[0], end=self.minmax[1],
+        range_slider = pn.widgets.EditableRangeSlider(name='Range Slider', start=self.minmax[0], end=self.minmax[1],
                                               value=self.minmaxvalues, step=0.0001)
         pn_basemaps = pn.widgets.Select(value='StamenTonerBackground', options=bases)
         pn_date = pn.widgets.DatePicker(value=dates[0], start=dates[0],
@@ -384,8 +386,8 @@ class view_spectral(utils):
                         pn.Row('', range_slider),
                         pn.Row('#### Opacity', pn_opacity),
                         pn.Row('#### Colormap', pn_colormap))
-                )),
-            combined
+                ),
+            combined)
         )
 
 
@@ -399,7 +401,7 @@ class view_param(utils):
 
         # layout settings
         self.title = '## S2 L2B'
-        self.width, self.height = 1200, 700
+        self.width, self.height = 1200, 800
         self.key_dimensions = ['x', 'y']
         self.minmaxvalues = minmaxvalues
         self.minmax = minmax
@@ -420,6 +422,8 @@ class view_param(utils):
             # Clean up: param to be removed
             self.params= []
             for param in raster.data_vars:
+                if len(raster[param].shape)>3:
+                    continue
                 if ('x' in raster[param].dims) and ('y' in raster[param].dims):
                     self.params.append(param)
             # for to_be_removed in ['crs', 'metadata']:
@@ -437,7 +441,7 @@ class view_param(utils):
             raster_ = raster.sel(time=time)
             for iparam, param in enumerate(self.params):
                 if reproject:
-                    self.dataarrays[itime, param] = raster_[param].rio.reproject(3857, nodata=np.nan)
+                    self.dataarrays[itime, param] = raster_[param].astype(np.float32).rio.reproject(3857, nodata=np.nan)
                 else:
                     self.dataarrays[itime, param] = raster_[param]
 
@@ -446,6 +450,14 @@ class view_param(utils):
             fill_alpha=0.3, fill_color='white', line_width=1.2))
         self.aoi_stream = hv.streams.PolyDraw(source=self.aoi_polygons)
         self.edit_stream = hv.streams.PolyEdit(source=self.aoi_polygons, vertex_style={'color': 'red'})
+        # set visualization options
+        hv.opts.defaults(
+            hv.opts.Image(height=self.height, width=self.width,
+                          colorbar=True, tools=[self.custom_hover(), 'box_select'], active_tools=['wheel_zoom'],
+                          clipping_colors={'NaN': '#00000000'}),
+            hv.opts.Tiles(active_tools=['wheel_zoom'])
+        )
+
 
     def visu(self):
 
@@ -453,15 +465,7 @@ class view_param(utils):
         dates = self.dates
         params = self.params
 
-        # set visualization options
-        hv.opts.defaults(
-            hv.opts.Image(height=self.height, width=self.width,
-                          colorbar=True, tools=[self.custom_hover(),'box_select'], active_tools=['wheel_zoom'],
-                          clipping_colors={'NaN': '#00000000'}),
-            hv.opts.Tiles(active_tools=['wheel_zoom'])
-        )
         gopts = hv.opts.Tiles(xaxis=None, yaxis=None, bgcolor='black', show_grid=False)
-
         # set images to show
         titles, images = {}, {}
         for idate, date in enumerate(dates):
@@ -472,11 +476,11 @@ class view_param(utils):
 
         # set map/color collections
         bases = [name for name, ts in hv.element.tiles.tile_sources.items()]
-        pn_param = pn.widgets.Select(value=params[-1], options=params)
+        pn_param = pn.widgets.Select(value=params[0], options=params)
         pn_colormap = pn.widgets.Select(value='CET_D13',
                                         options=self.colormaps)
         pn_opacity = pn.widgets.FloatSlider(name='Opacity', value=0.95, start=0, end=1, step=0.05)
-        range_slider = pn.widgets.RangeSlider(name='Range Slider', start=self.minmax[0], end=self.minmax[1],
+        range_slider = pn.widgets.EditableRangeSlider(name='Range Slider', start=self.minmax[0], end=self.minmax[1],
                                               value=self.minmaxvalues, step=0.0001)
         pn_basemaps = pn.widgets.Select(value='StamenTonerBackground', options=bases)
         pn_date = pn.widgets.DatePicker(value=dates[0], start=dates[0],
@@ -517,10 +521,10 @@ class view_param(utils):
                         pn.Row('### Date', pn_date),
                         pn.Row('#### Basemap', pn_basemaps)
                     ),
-                    pn.Row(
-                        pn.Row('', range_slider),
-                        pn.Row('#### Opacity', pn_opacity),
-                        pn.Row('#### Colormap', pn_colormap))
-                )),
-            combined
+                    pn.Row(range_slider,
+                           pn.Row('#### Opacity', pn_opacity),
+                           pn.Row('#### Colormap', pn_colormap)
+                    )
+                ),
+            combined)
         )

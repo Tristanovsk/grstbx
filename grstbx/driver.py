@@ -50,17 +50,18 @@ class l2grs():
         Rrs_g_vars = []
         for wl in wls:
             Rrs_vars.append('Rrs_{:d}'.format(wl))
-            Rrs_g_vars.append('Rrs_g_{:d}'.format(wl))
+            #Rrs_g_vars.append('Rrs_g_{:d}'.format(wl))
 
         Rrs = raster[Rrs_vars].to_array(dim='wl', name='Rrs').chunk(
             {'wl': self.wlchunk, 'x': self.xchunk, 'y': self.ychunk})
         Rrs = Rrs.assign_coords({'wl': wls})
         raster = raster.drop_vars(Rrs_vars)
-        Rrs_g = raster[Rrs_g_vars].to_array(dim='wl', name='Rrs_g').chunk(
-            {'wl': self.wlchunk, 'x': self.xchunk, 'y': self.ychunk})
-        Rrs_g = Rrs_g.assign_coords({'wl': wls})
+        #Rrs_g = raster[Rrs_g_vars].to_array(dim='wl', name='Rrs_g').chunk(
+        #    {'wl': self.wlchunk, 'x': self.xchunk, 'y': self.ychunk})
+        #Rrs_g = Rrs_g.assign_coords({'wl': wls})
         raster = raster.drop_vars(Rrs_g_vars)
-        return xr.merge([raster, Rrs, Rrs_g]), ancillary
+        #return xr.merge([raster, Rrs, Rrs_g]), ancillary
+        return xr.merge([raster, Rrs]), ancillary
 
     def load_l2b_image(self, l2b_path):
         return xr.open_dataset(l2b_path, decode_coords='all', chunks={'x': self.xchunk, 'y': self.ychunk})

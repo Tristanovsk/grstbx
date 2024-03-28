@@ -415,6 +415,7 @@ class view_param(utils):
         self.dates = dates
         if dates == None:
             self.dates = raster.time.dt.date.values
+            self.datetimes = raster.time.dt.strftime('%Y-%m-%d %H:%M:%S').values  # dt.date.values
 
         self.params = params
         if params == None:

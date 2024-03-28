@@ -25,7 +25,7 @@ class l2grs():
         self.files = files
         self.xchunk = 512
         self.ychunk = 512
-        self.wlchunk = 1
+        self.wlchunk = -1
 
     def load_l2a_image(self, l2a_path):
 
@@ -61,7 +61,7 @@ class l2grs():
         #Rrs_g = Rrs_g.assign_coords({'wl': wls})
         raster = raster.drop_vars(Rrs_g_vars)
         #return xr.merge([raster, Rrs, Rrs_g]), ancillary
-        return xr.merge([raster, Rrs]), ancillary
+        return xr.merge([raster, Rrs]).load(), ancillary
 
     def load_l2b_image(self, l2b_path):
         return xr.open_dataset(l2b_path, decode_coords='all', chunks={'x': self.xchunk, 'y': self.ychunk})

@@ -12,17 +12,16 @@ from scipy.interpolate import interp1d
 import scipy as sp
 from sklearn import linear_model, metrics
 
+
 class spatiotemp():
 
-
-    def get_time(self,ds, key='start_date'):
+    def get_time(self, ds, key='start_date'):
         if key in ds.attrs.keys():
             grid_time = pd.to_datetime(ds.attrs[key])
             return ds.assign(time=grid_time)
         raise ValueError("Time attribute missing: {0}".format(key))
 
-
-    def wktbox(self,center_lon, center_lat, width=100, height=100, ellps='WGS84'):
+    def wktbox(self, center_lon, center_lat, width=100, height=100, ellps='WGS84'):
         '''
 
         :param center_lon: decimal longitude
@@ -52,16 +51,14 @@ class spatiotemp():
             pt1_lon, pt1_lat, pt2_lon, pt2_lat, pt3_lon, pt3_lat, pt4_lon, pt4_lat, pt1_lon, pt1_lat)
         return wkt_poly
 
-
-    def transform_from_latlon(self,lat, lon):
+    def transform_from_latlon(self, lat, lon):
         lat = np.asarray(lat)
         lon = np.asarray(lon)
         trans = Affine.translation(lon[0], lat[0])
         scale = Affine.scale(lon[1] - lon[0], lat[1] - lat[0])
         return trans * scale
 
-
-    def rasterize(self,shapes, coords, latitude='lat', longitude='lon',
+    def rasterize(self, shapes, coords, latitude='lat', longitude='lon',
                   fill=np.nan, **kwargs):
         """Rasterize a list of (geometry, fill_value) tuples onto the given
         xray coordinates. This only works for 1d latitude and longitude
@@ -127,12 +124,10 @@ class spatiotemp():
         # reproject to UTM -> create square buffer (cap_style = 3) around point -> reproject back to WGS84
         buffer = wgs84_pt_gdf.to_crs(utm_crs).buffer(buffer_width_m, cap_style=3)
         # get buffer in the raster coordinate system
-        buffer=buffer.to_crs(raster.rio.crs)
+        buffer = buffer.to_crs(raster.rio.crs)
 
         # clipping
         return raster.rio.clip(buffer)
-
-
 
 
 class data:
@@ -203,6 +198,7 @@ class irradiance:
         if not mute:
             return self.F0
 
+
 class plot:
     def __init__(self):
         pass
@@ -213,13 +209,14 @@ class plot:
         #                               gridspec_kw={"height_ratios": [1, 0.05]})
 
         nimg = data.time.shape[0]
-        nrows= nimg//4 + (1 if nimg % 4 else 0)
+        nrows = nimg // 4 + (1 if nimg % 4 else 0)
         if nimg == 1:
             p = data.isel().plot(x='lon', y='lat', robust=True, size=10, cmap=cmap,
                                  cbar_kwargs=dict(orientation='horizontal', pad=.1, aspect=40, shrink=0.6), **kwargs)
         else:
-            p = data.isel().plot(x='lon', y='lat', col='time', col_wrap=min(nimg,4), robust=True, size=10, cmap=cmap,
-                                 vmin=0,cbar_kwargs=dict(orientation='horizontal', pad=.1, aspect=40, shrink=0.6), **kwargs)
+            p = data.isel().plot(x='lon', y='lat', col='time', col_wrap=min(nimg, 4), robust=True, size=10, cmap=cmap,
+                                 vmin=0, cbar_kwargs=dict(orientation='horizontal', pad=.1, aspect=40, shrink=0.6),
+                                 **kwargs)
             for i, ax in enumerate(p.axes.flat):
                 if i >= data.time.shape[0]:
                     break
@@ -228,7 +225,7 @@ class plot:
             p.fig.set_size_inches(15, nrows * 6)
             p.fig.suptitle(title)
             p.fig.subplots_adjust(bottom=0.1, top=0.9, left=0.08, right=0.92, wspace=0.02, hspace=0.2)
-            p.add_colorbar(orientation='horizontal', pad=.1, aspect=40, shrink=0.6,anchor=(0,1))
+            p.add_colorbar(orientation='horizontal', pad=.1, aspect=40, shrink=0.6, anchor=(0, 1))
 
             if ofig != None:
                 p.fig.savefig(ofig)
@@ -275,7 +272,7 @@ class plot:
         return ax
 
     @staticmethod
-    def add_stats(x, y, ax, label=False,fontsize=12):
+    def add_stats(x, y, ax, label=False, fontsize=12):
         regr = sp.stats.linregress(x, y)
 
         # Prediction metrics
@@ -293,3 +290,33 @@ class plot:
             ax.text(0.98, 0.01, stats, fontsize=fontsize, verticalalignment='bottom', horizontalalignment='right',
                     transform=ax.transAxes)
         return
+
+
+class dem:
+
+    @staticmethod
+    def compute_dem_attributes(dem_raster,
+                               sza,
+                               azi):
+        '''
+
+        :param dem_raster: rioxarray Dataarray-like elevation in meter
+        :param sza: solar zenith angle in degree
+        :param azi: sun azimuth from North in degree
+        :return:
+        '''
+
+        x, y = np.gradient(dem_raster)
+        azir = np.radians(azi % 360)
+        szar = np.radians(sza)
+
+        slope = np.arctan(np.sqrt(x * x + y * y))
+        aspect = np.arctan2(-x, y)
+
+        shaded = np.cos(szar) * np.cos(slope) + np.sin(szar) * np.sin(slope) * np.cos(azir - aspect)
+
+        return xr.Dataset(dict(shaded=(["y", "x"], shaded),
+                               slope=(["y", "x"], slope)),
+                          coords=dict(x=dem_raster.x,
+                                      y=dem_raster.y),
+                          )

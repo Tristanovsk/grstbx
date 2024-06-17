@@ -51,7 +51,7 @@ ofile = opj(odir,tile+'_'+start_date+'_'+stop_date+'_'+ID+'.nc')
 
 idir='/media/harmel/vol1/Dropbox/satellite/S2'
 idir='/datalake/watcal'
-select =grstbx.select_files()
+select =grstbx.SelectFiles()
 
 # if you need to change the root path
 select.root=idir
@@ -70,20 +70,20 @@ lon, lat = 41.77, 11.18
 width, height = 13000, 15000
 aspect=width/height
 
-ust = grstbx.utils.spatiotemp()
+ust = grstbx.utils.SpatioTemp()
 box = ust.wktbox(lon,lat, width=width, height=height, ellps='WGS84')
 bbox = gpd.GeoSeries.from_wkt([box]).set_crs(epsg=4326)
 # reproject lon lat in xy coordinates
 #bbox = bbox.to_crs(epsg=32631)
 
 # generate datacube
-dc = grstbx.l2grs(files)
+dc = grstbx.L2grs(files)
 dc.load(subset=bbox,reshape=False, reproject=False)
 
 
 # ## Check data/metadata
 
-masking_ = grstbx.masking(dc.datacube)
+masking_ = grstbx.Masking(dc.datacube)
 dc.datacube
 
 

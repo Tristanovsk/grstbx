@@ -6,7 +6,7 @@ import panel as pn
 opj = os.path.join
 
 
-class select_files():
+class SelectFiles():
     def __init__(self, root=None):
         if root is None:
             self.root = '/datalake/watcal'

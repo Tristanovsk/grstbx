@@ -56,7 +56,7 @@ ofile = opj(odir,basename+'.nc')
 # Open and load your datacube:
 # from netcdf format and interpret coordinate system
 raster = xr.open_dataset(ofile,decode_coords='all')
-dc =grstbx.l2grs()
+dc =grstbx.L2grs()
 dc.raster=raster
 #dc.reshape_raster()
 

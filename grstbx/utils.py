@@ -13,7 +13,7 @@ import scipy as sp
 from sklearn import linear_model, metrics
 
 
-class spatiotemp():
+class SpatioTemp():
 
     def get_time(self, ds, key='start_date'):
         if key in ds.attrs.keys():
@@ -130,7 +130,7 @@ class spatiotemp():
         return raster.rio.clip(buffer)
 
 
-class data:
+class Data:
     def __init__(self):
         pass
 
@@ -177,7 +177,7 @@ class data:
         return df
 
 
-class irradiance:
+class Irradiance:
     def __init__(self, F0_file=importlib_resources.files('grstbx.data').joinpath('Thuillier_2003_0.3nm.dat')):
         self.F0_file = F0_file
 
@@ -199,7 +199,7 @@ class irradiance:
             return self.F0
 
 
-class plot:
+class Plotting:
     def __init__(self):
         pass
 
@@ -292,7 +292,7 @@ class plot:
         return
 
 
-class dem:
+class Dem:
 
     @staticmethod
     def compute_dem_attributes(dem_raster,

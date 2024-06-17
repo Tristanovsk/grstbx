@@ -11,7 +11,7 @@ import pyproj as ppj
 
 import grstbx
 
-ust = grstbx.utils.spatiotemp()
+ust = grstbx.utils.SpatioTemp()
 box = ust.wktbox(7.5, 41.5, width=100, height=100, ellps='WGS84')
 bbox = gpd.GeoSeries.from_wkt([box]).set_crs(epsg=4326)
 bbox.to_crs(epsg=4326)
@@ -49,7 +49,7 @@ for file in files:
     products.append(product)
 
 #product = xr.concat(products, dim='time').sortby('time')
-masking_ = grstbx.masking(product)
+masking_ = grstbx.Masking(product)
 nodata = masking_.get_mask(nodata=False)
 nodata.as_numpy()
 ##

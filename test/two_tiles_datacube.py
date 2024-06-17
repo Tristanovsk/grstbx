@@ -35,7 +35,7 @@ grstbx.__version__
 
 tile='37PGN'
 idir='/media/harmel/vol1/Dropbox/satellite/S2'
-select =grstbx.select_files()
+select =grstbx.SelectFiles()
 
 # if you need to change the root path
 select.root=idir
@@ -54,19 +54,19 @@ lon, lat = 41.78, 11.18
 width, height = 15000, 15000
 aspect=width/height
 
-ust = grstbx.utils.spatiotemp()
+ust = grstbx.utils.SpatioTemp()
 box = ust.wktbox(lon,lat, width=width, height=height, ellps='WGS84')
 bbox = gpd.GeoSeries.from_wkt([box]).set_crs(epsg=4326)
 # reproject lon lat in xy coordinates
 #bbox = bbox.to_crs(epsg=32631)
 
 # generate datacube
-dc1 = grstbx.l2grs(tile1)
+dc1 = grstbx.L2grs(tile1)
 dc1.load(subset=bbox,reproject=True, reshape=False)
 
 
 # generate datacube
-dc2 = grstbx.l2grs(tile2)
+dc2 = grstbx.L2grs(tile2)
 dc2.load(subset=bbox,reproject=True)
 from rioxarray.merge import merge_datasets
 dc1.Rrs.Rrs.rio.write_nodata(np.nan,inplace=True)

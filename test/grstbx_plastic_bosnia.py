@@ -45,7 +45,7 @@ tile='34TCP'
 lon, lat = 19.28,43.758
 # size in meter of the rectangle of interest
 width, height = 2500, 1600
-select =grstbx.select_files()
+select =grstbx.SelectFiles()
 # if you need to change the root path
 #select.root='/media/harmel/TOSHIBA EXT/data/satellite'
 select.list_tile(tile=tile,product='S2-L2GRS',pattern='*v14.nc')
@@ -62,7 +62,7 @@ pyproj.datadir.set_data_dir('/work/scratch/harmelt/envs/grstbx/share/proj')
 
 
 # ## Load and subset image series
-ust = grstbx.utils.spatiotemp()
+ust = grstbx.utils.SpatioTemp()
 box = ust.wktbox(lon,lat, width=width, height=height, ellps='WGS84')
 bbox = gpd.GeoSeries.from_wkt([box]).set_crs(epsg=4326)
 # reproject lon lat in xy coordinates
@@ -70,7 +70,7 @@ bbox = gpd.GeoSeries.from_wkt([box]).set_crs(epsg=4326)
 bbox.to_crs(4326).bounds
 
 # generate datacube
-dc = grstbx.l2grs(files)
+dc = grstbx.L2grs(files)
 dc.load(subset=bbox)
 
 
@@ -87,7 +87,7 @@ pd.DataFrame.from_dict(dc.datacube.metadata.attrs,orient='index')
 # ## Check flags and masking
 
 
-masking_ = grstbx.masking(dc.datacube)
+masking_ = grstbx.Masking(dc.datacube)
 masking_.print_info()
 
 
@@ -129,7 +129,7 @@ Rrs_masked.isel(wl=2).plot(col='time',col_wrap=5,vmin=0,vmax=0.03, robust=True,c
 # In[17]:
 
 
-visual.image_viewer().Rrs_date(Rrs_masked)
+visual.ImageViewer().Rrs_date(Rrs_masked)
 
 
 # ## **Fast checking of the RGB images**
@@ -335,7 +335,7 @@ chl.persist()
 # In[27]:
 
 
-visual.image_viewer().param_date(chl,cmap='bgyw')
+visual.ImageViewer().param_date(chl, cmap='bgyw')
 
 
 # In[ ]:
@@ -376,7 +376,7 @@ acdom.persist()
 # In[ ]:
 
 
-visual.image_viewer().param_date(acdom,cmap='bgyw')
+visual.ImageViewer().param_date(acdom, cmap='bgyw')
 
 
 # # Total suspended particulate matter (SPM) from Nechad et al., 2010, 2016 formulation
@@ -396,7 +396,7 @@ spm.persist()
 # In[ ]:
 
 
-visual.image_viewer().param_date(spm,cmap='bgyw')
+visual.ImageViewer().param_date(spm, cmap='bgyw')
 
 
 # In[ ]:

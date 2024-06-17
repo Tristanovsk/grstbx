@@ -4,7 +4,7 @@ import pandas as pd
 import xarray as xr
 
 
-class masking():
+class Masking():
     def __init__(self, product, flag_ID='flags', names_='flag_meanings',
                  description_='flag_descriptions',
                  mask_binary='flag_masks'):

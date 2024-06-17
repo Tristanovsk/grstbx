@@ -31,7 +31,7 @@ from collections import OrderedDict as odict
 hv.extension('bokeh')
 
 
-class image_viewer():
+class ImageViewer():
 
     def Rrs_date(self, raster, third_dim='wl', param='Rrs', Rrs_unit=True):
 
@@ -229,7 +229,7 @@ class image_viewer():
         return pn.Row(pn.Param(viewer.param), viewer.map_band)
 
 
-class utils():
+class Utils():
 
     @staticmethod
     def get_geom(aoi_stream, crs=4326):
@@ -257,7 +257,7 @@ class utils():
         return bokeh.models.HoverTool(tooltips=custom_tooltips, formatters=custom_formatters)
 
 
-class view_spectral(utils):
+class ViewSpectral(Utils):
     def __init__(self, raster, dates=None,
                  bands=None,
                  reproject=False,
@@ -391,7 +391,7 @@ class view_spectral(utils):
         )
 
 
-class view_param(utils):
+class ViewParam(Utils):
     def __init__(self, raster, dates=None,
                  params=None,
                  reproject=False,

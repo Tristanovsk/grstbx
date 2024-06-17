@@ -63,7 +63,7 @@ for dt in rrule.rrule(rrule.MONTHLY, dtstart=start_date, until=end_date):
         continue
     print(ofile)
 
-    select = grstbx.select_files()
+    select = grstbx.SelectFiles()
 
     # if you need to change the root path
     select.root = idir
@@ -80,14 +80,14 @@ for dt in rrule.rrule(rrule.MONTHLY, dtstart=start_date, until=end_date):
     print(select.files)
     ## Load and subset image series
 
-    ust = grstbx.utils.spatiotemp()
+    ust = grstbx.utils.SpatioTemp()
     box = ust.wktbox(lon, lat, width=width, height=height, ellps='WGS84')
     bbox = gpd.GeoSeries.from_wkt([box]).set_crs(epsg=4326)
     # reproject lon lat in xy coordinates
     # bbox = bbox.to_crs(epsg=32631)
 
     # generate datacube
-    dc = grstbx.l2grs(select.files)
+    dc = grstbx.L2grs(select.files)
     dc.load(subset=bbox, reshape=False, reproject=False)
 
     # filter out empty rasters
@@ -101,7 +101,7 @@ for dt in rrule.rrule(rrule.MONTHLY, dtstart=start_date, until=end_date):
 
     # mask remaining rasters
     print('mask remaining rasters')
-    masking_ = grstbx.masking(dc.datacube)
+    masking_ = grstbx.Masking(dc.datacube)
     mask = masking_.get_mask(high_nir=True) | masking_.get_mask(hicld=True) | (dc.datacube.Rrs_B3 < 0.0002) | (
                 dc.datacube.Rrs_B3 > 0.12)
 

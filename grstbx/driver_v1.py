@@ -14,7 +14,7 @@ import pyproj as ppj
 from affine import Affine
 from datetime import datetime as dt
 
-from .masking import masking
+from .masking import Masking
 
 
 class l2grs_v1():
@@ -99,7 +99,7 @@ class l2grs_v1():
             product = self.add_time_dim(product)
 
             # automatically remove product when no data available
-            masking_ = masking(product)
+            masking_ = Masking(product)
             nodata = masking_.get_mask(nodata=False)  # .compute()
             if nodata.sum().compute() == 0:
                 continue

@@ -22,13 +22,13 @@ opj = os.path.join
 root='/media/harmel/vol1/Dropbox/satellite/S2/cnes'
 file1=glob.glob(opj(root,'37PGN','2022','12','01','*.nc'))[0]
 file2=glob.glob(opj(root,'37PHN','2022','12','01','*.nc'))[0]
-tbx = grstbx.l2grs()
+tbx = grstbx.L2grs()
 img1 = tbx.open_file(file1)
 img2 = tbx.open_file(file2)
 
 ############################################################
 tile='31TEJ'
-select =grstbx.select_files()
+select =grstbx.SelectFiles()
 # if you need to change the root path
 select.root='/home/harmel/Dropbox/satellite/S2'
 select.root='/media/harmel/TOSHIBA EXT/data/satellite'
@@ -40,14 +40,14 @@ lon, lat = 3.61, 43.4
 # size in meter of the rectangle of interest
 width, height = 10000, 10000
 
-ust = grstbx.utils.spatiotemp()
+ust = grstbx.utils.SpatioTemp()
 box = ust.wktbox(lon,lat, width=width, height=height, ellps='WGS84')
 bbox = gpd.GeoSeries.from_wkt([box]).set_crs(epsg=4326)
 # reproject lon lat in xy coordinates
 bbox = bbox.to_crs(epsg=32631)
 
 # generate datacube
-dc = grstbx.l2grs(files)
+dc = grstbx.L2grs(files)
 dc.load(subset=bbox)#,reproject=True)
 
 B2 = dc.datacube.Rrs_B2.rio.reproject(3857)
@@ -109,7 +109,7 @@ product_proj = product.rio.reproject(epsg_out,nodata=np.nan)
 # product['y'] = np.arange(y0 - res / 2, y1 + 1, -res)
 #
 # product.crs.wkt.split('\n')[-1]
-ust = grstbx.utils.spatiotemp()
+ust = grstbx.utils.SpatioTemp()
 box = ust.wktbox(6.6, 46.45, width=1000, height=1000, ellps='WGS84')
 bbox = gpd.GeoSeries.from_wkt([box]).set_crs(epsg=4326)
 print(bbox.bounds)
@@ -118,11 +118,11 @@ print(bbox.bounds)
 bbox = bbox.to_crs(epsg=3857)
 print(bbox.bounds)
 
-dc = grstbx.l2grs(files,)
+dc = grstbx.L2grs(files, )
 dc.load(subset=bbox)
 #bbox = bbox.to_crs(epsg=3857)
 print(bbox.bounds)
-dc2 = grstbx.l2grs(files,)
+dc2 = grstbx.L2grs(files, )
 dc2.load(reproject=True,subset=bbox)
 dc.Rrs.Rrs.rio.reproject('EPSG:3857')
 dc.Rrs.Rrs.plot(col='wl',row='time',vmin=0)

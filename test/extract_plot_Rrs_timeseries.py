@@ -66,13 +66,13 @@ with (PdfPages(file) as pdf):
         else:
             continue
         raster = xr.open_dataset(file, decode_coords='all').set_coords('spatial_ref')
-        dc = grstbx.l2grs(file)
+        dc = grstbx.L2grs(file)
         dc.raster = raster
 
         lat, lon = float(insitu_.lat.mean()), float(insitu_.lon.mean())
 
         # clipping
-        Rrs = grstbx.spatiotemp.clip_raster(dc.raster.Rrs, lat, lon, extent)
+        Rrs = grstbx.SpatioTemp.clip_raster(dc.raster.Rrs, lat, lon, extent)
 
         # masking
         Rrs_blue_avg = float(Rrs.sel(wl=443).mean())
@@ -133,7 +133,7 @@ with (PdfPages(file) as pdf):
         else:
             continue
         raster = xr.open_dataset(file, decode_coords='all').set_coords('spatial_ref')
-        dc = grstbx.l2grs(file)
+        dc = grstbx.L2grs(file)
         dc.raster = raster
         bands = [3, 2, 1]
         coarsening = 1
@@ -187,13 +187,13 @@ with (PdfPages(file) as pdf):
             else:
                 continue
             raster = xr.open_dataset(file, decode_coords='all').set_coords('spatial_ref')
-            dc = grstbx.l2grs(file)
+            dc = grstbx.L2grs(file)
             dc.raster = raster
 
             lat, lon = float(insitu_.lat.mean()), float(insitu_.lon.mean())
 
             # clipping
-            Rrs = grstbx.spatiotemp.clip_raster(dc.raster.Rrs, lat, lon, extent)
+            Rrs = grstbx.SpatioTemp.clip_raster(dc.raster.Rrs, lat, lon, extent)
 
             # masking
             Rrs_blue_avg = float(Rrs.sel(wl=443).mean())
@@ -354,7 +354,7 @@ for station in stations:
     else:
         continue
     raster = xr.open_dataset(file, decode_coords='all').set_coords('spatial_ref')
-    dc = grstbx.l2grs(file)
+    dc = grstbx.L2grs(file)
     dc.raster = raster
     # TODO to be removed for GRS v2.1
     dc.raster = dc.raster.rename({'o2_band': 'wv_band'})
@@ -373,7 +373,7 @@ for station in stations:
     Rrs = Rrs.where(mask == 0)
 
     # clipping
-    Rrs = grstbx.spatiotemp.clip_raster(Rrs, lat, lon, extent)
+    Rrs = grstbx.SpatioTemp.clip_raster(Rrs, lat, lon, extent)
 
     # QC and date rejection
     stats = stats_from_roi(Rrs.sel(wl=slice(400, 1000)))

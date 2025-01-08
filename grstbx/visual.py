@@ -30,7 +30,6 @@ from collections import OrderedDict as odict
 
 hv.extension('bokeh')
 
-
 class ImageViewer():
 
     def Rrs_date(self, raster, third_dim='wl', param='Rrs', Rrs_unit=True):
@@ -232,9 +231,11 @@ class ImageViewer():
 class Utils():
 
     @staticmethod
-    def get_geom(aoi_stream, crs=4326):
+    def get_geom(aoi_stream,
+                 crs=4326,
+                 index=-1):
         geom = aoi_stream.data
-        ys, xs = geom['ys'][-1], geom['xs'][-1]
+        ys, xs = geom['ys'][index], geom['xs'][index]
         polygon_geom = Polygon(zip(xs, ys))
         polygon = gpd.GeoDataFrame(index=[0], crs=3857, geometry=[polygon_geom])
         return polygon.to_crs(crs)

@@ -8,7 +8,7 @@ import geopandas as gpd
 # just to make sure that with the good format for month:
 import locale
 
-locale.setlocale(locale.LC_ALL, 'en_US.utf8')
+#locale.setlocale(locale.LC_ALL, 'en_US.utf8')
 
 import pyproj as ppj
 from affine import Affine

@@ -21,7 +21,7 @@ setup(
     description='some snippets to play with GRS images',
 
     # Dependent packages (distributions)
-    install_requires=['importlib_resources','numpy','scipy','pandas','xarray','dask','geopandas','rasterio','pandas-bokeh',
+    install_requires=['scikit-learn','importlib_resources','numpy','scipy','pandas','xarray','dask','geopandas','rasterio','pandas-bokeh',
                       'matplotlib','docopt','pyproj','datetime','rioxarray','datetime','cartopy',
                       'holoviews','colorcet','panel','datashader','jupyterlab','jupyter_bokeh'],
 

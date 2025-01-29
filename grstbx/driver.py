@@ -8,7 +8,7 @@ import geopandas as gpd
 # just to make sure that with the good format for month:
 import locale
 
-#locale.setlocale(locale.LC_ALL, 'en_US.utf8')
+# locale.setlocale(locale.LC_ALL, 'en_US.utf8')
 
 import pyproj as ppj
 from affine import Affine
@@ -89,7 +89,7 @@ class L2grs():
             product, anc = self.load_l2a_image(file)  # , reproject=reproject, epsg_in=self.epsg,epsg_out=epsg_out)
 
             # add mean solar angles:
-            for attribute in ['mean_solar_azimuth','mean_solar_zenith_angle']:
+            for attribute in ['mean_solar_azimuth', 'mean_solar_zenith_angle']:
                 product[attribute] = product.attrs[attribute]
 
             if subset is not None:
@@ -124,7 +124,12 @@ class L2grs():
         self.datacube.attrs['stop_date'] = str(product.time[-1].values)
         self.pixnum = len(self.datacube.x) * len(self.datacube.y)
 
-    def get_l2b_datacube(self, subset=None, reproject=False, epsg_out=3857, var='Chla_OC2nasa'):
+    def get_l2b_datacube(self,
+                         subset=None,
+                         reproject=False,
+                         epsg_out=3857,
+                         var='Chla_OC2nasa',
+                         var_novalid='central_wavelength'):
         # product = xr.open_mfdataset(self.files, chunks={'x': 512, 'y': 512},
         #                     decode_coords='all',combine='nested',
         #                     concat_dim="time",preprocess = self.add_time_dim,
@@ -133,6 +138,9 @@ class L2grs():
         for file in self.files:
 
             product = self.load_l2b_image(file)  # , reproject=reproject, epsg_in=self.epsg,epsg_out=epsg_out)
+
+            if var_novalid in product:
+                product = product.drop_vars(var_novalid)
 
             if subset is not None:
                 product = self.subset_xy(product, subset)
@@ -180,7 +188,6 @@ class L2grs():
         self.datacube.attrs['start_date'] = str(product.time[0].values)
         self.datacube.attrs['stop_date'] = str(product.time[-1].values)
         self.pixnum = len(self.datacube.x) * len(self.datacube.y)
-
 
     @staticmethod
     def get_flag_stats(raster):

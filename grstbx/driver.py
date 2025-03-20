@@ -30,6 +30,9 @@ class L2grs():
     def load_l2a_image(self,
                        l2a_path):
 
+        if l2a_path.split('.')[-1] in 'zarr':
+            return xr.open_zarr(l2a_path,decode_coords='all'), None
+
         basename = os.path.basename(l2a_path)
         main_file = opj(l2a_path, basename + '.nc')
         ancillary_file = opj(l2a_path, basename + '_anc.nc')

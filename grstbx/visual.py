@@ -15,7 +15,7 @@ from holoviews.operation.datashader import rasterize, shade, spread
 from holoviews.element.tiles import EsriImagery
 from holoviews.element import tiles as hvts
 from holoviews import opts
-
+from holoviews.plotting.links import DataLink
 
 
 import datashader as ds
@@ -231,6 +231,20 @@ class ImageViewer():
 class Utils():
 
     @staticmethod
+    def get_points(poi_stream,
+                 crs=4326,
+                 index=-1):
+        # TODO convert points coordinates from 3857 to crs
+        geom = poi_stream.data
+        gpd.points_from_xy(geom['x'],geom['y'],crs="EPSG:3857").to_crs(crs)
+        geom = poi_stream.data
+        ys, xs = geom['ys'][index], geom['xs'][index]
+        polygon_geom = Polygon(zip(xs, ys))
+        polygon = gpd.GeoDataFrame(index=[0], crs=3857, geometry=[polygon_geom])
+        return polygon.to_crs(crs)
+
+
+    @staticmethod
     def get_geom(aoi_stream,
                  crs=4326,
                  index=-1):
@@ -311,6 +325,24 @@ class ViewSpectral(Utils):
             source=self.aoi_polygons, drag=True)  # , num_objects=1)#5,styles={'fill_color': aoi_colours})
         self.edit_stream = hv.streams.PolyEdit(source=self.aoi_polygons, vertex_style={'color': 'red'})
 
+        # declare streaming object to get Point of Interest (POI), crs=crs.epsg(3857)
+
+        self.poi_points = hv.Points(
+                                    [],vdims='color'
+                                   ).opts(opts.Points(active_tools=['point_draw'],
+                                              color='color',
+                                              size=7)
+                                              ) ##, active_tools=['poly_draw']))#.opts(crs.GOOGLE_MERCATOR)
+
+        self.poi_stream = hv.streams.PointDraw(
+            data=self.poi_points.columns(),
+            source=self.poi_points,
+            empty_value='red'
+            )  # , num_objects=1)#5,styles={'fill_color': aoi_colours})
+        self.table = hv.Table(
+                    self.poi_points, ['x', 'y'], 'color'
+                     ).opts(opts.Table(editable=True))
+        DataLink(self.poi_points, self.table)
 
     def visu(self):
 
@@ -371,8 +403,10 @@ class ViewSpectral(Utils):
             return tiles.options(height=self.height, width=self.width).opts(gopts)
 
         dynmap = hd.regrid(hv.DynamicMap(load_map))
-        combined = (hv.DynamicMap(
-            load_tiles) * dynmap * self.aoi_polygons)  # .opts(active_tools=['wheel_zoom', 'poly_draw'])
+
+        combined = (hv.DynamicMap(load_tiles) *
+                    dynmap * self.aoi_polygons * self.poi_points
+                    + self.table)  # .opts(active_tools=['wheel_zoom', 'poly_draw'])
 
         return pn.Column(
             pn.WidgetBox(
@@ -388,7 +422,8 @@ class ViewSpectral(Utils):
                         pn.Row('#### Opacity', pn_opacity),
                         pn.Row('#### Colormap', pn_colormap))
                 ),
-            combined)
+            combined.opts(opts.Points(active_tools=['point_draw'], color='color'))
+            )
         )
 
 

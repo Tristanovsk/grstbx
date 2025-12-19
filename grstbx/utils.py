@@ -176,6 +176,24 @@ class Data:
         df.sort_index(axis=1, level=2, inplace=True)
         return df
 
+    @staticmethod
+    def remove_wl_dataarray(xarr, wl_to_remove, drop=True):
+        xarr_ = xarr #.isel(x=1, y=1)
+        for wls in wl_to_remove:
+            wl_min, wl_max = wls
+            xarr_ = xarr_.where((xarr_.wl < wl_min) | (xarr_.wl > wl_max), drop=drop)
+        wl_final = xarr_.wl.values
+        return xarr.sel(wl=wl_final)
+
+    @staticmethod
+    def remove_wl_dataset(xds, wl_to_remove, variable='Rrs', drop=True):
+        xarr_ = xds[variable]#.isel(x=1, y=1)
+        for wls in wl_to_remove:
+            wl_min, wl_max = wls
+            xarr_ = xarr_.where((xarr_.wl < wl_min) | (xarr_.wl > wl_max), drop=drop)
+        wl_final = xarr_.wl.values
+        return xds.sel(wl=wl_final)
+
 
 class Irradiance:
     def __init__(self, F0_file=importlib_resources.files('grstbx.data').joinpath('Thuillier_2003_0.3nm.dat')):

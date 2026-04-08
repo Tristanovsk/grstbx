@@ -5,32 +5,29 @@ import xarray as xr
 
 
 class Masking():
-    def __init__(self, product, flag_ID='flags', names_='flag_meanings',
+    def __init__(self, product, flag_ID='flags', names_='flag_names',
                  description_='flag_descriptions',
-                 mask_binary='flag_masks'):
+                 ):
         self.product = product
 
         self.flag_ID = flag_ID
         self.names_ = names_
         self.description_ = description_
-        self.mask_binary = mask_binary
-        self.get_flags()
 
     def print_info(self):
+        self.get_flags()
         return self.dflags
 
     def get_flags(self, ):
 
         pflags = self.product[self.flag_ID]
-        names = []
-        for flag_name in pflags.attrs[self.names_].split(' '):
-            names.append(flag_name)
-
+        #names = []
+        #for flag_name in pflags.attrs[self.names_].split(' '):
+        #    names.append(flag_name)
+        names = pflags.attrs[self.names_]
         # construct dataframe:
         dflags = pd.DataFrame({'name': names})
-        dflags['description'] = pflags.attrs[self.description_].split('\t')
-        dflags['value'] = pflags.attrs[self.mask_binary]
-        dflags.sort_values('value', inplace=True)
+        dflags['description'] = pflags.attrs[self.description_]#.split('\t')
         dflags['bit'] = dflags.index
         self.dflags = dflags.set_index('name')
         self.pflags = pflags
@@ -46,6 +43,20 @@ class Masking():
         else:
             mask &= (~bitval)
         return mask
+
+    @staticmethod
+    def add_flag(flags,
+                 boolean_cond,
+                 name,
+                 bitmask,
+                 description=''):
+        xr.set_options(keep_attrs=True)
+        flags = flags + (boolean_cond << bitmask)
+
+        # add name and description
+        flags.attrs['flag_descriptions'][bitmask] = description
+        flags.attrs['flag_names'][bitmask] = name
+        return flags
 
     def compute_mask_value(self, **flags):
 

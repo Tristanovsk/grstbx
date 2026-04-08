@@ -8,9 +8,10 @@ version 1.0.5: revisit datacube and raster object for multi-tile access
 version 2.0.0: transition to GRS V2
 v2.0.1: fix for gdal projection for accepted dtype, fix for dashboard visu
 v2.0.2: small changes for the visu devices
+v2.0.3: (2026-04-08) add tool option for masking / bitmask flagging
 '''
 
-__version__ = '2.0.2'
+__version__ = '2.0.3'
 
 from .driver import L2grs
 #from .driver_v1 import l2grs_v1

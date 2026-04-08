@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 
 __package__ = 'grstbx'
-__version__ = '2.0.2'
+__version__ = '2.0.3'
 
 setup(
     name=__package__,

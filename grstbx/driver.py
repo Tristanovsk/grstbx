@@ -13,6 +13,7 @@ import locale
 import pyproj as ppj
 from affine import Affine
 from datetime import datetime as dt
+import logging
 
 from .masking import Masking
 
@@ -23,8 +24,8 @@ class L2grs():
 
     def __init__(self, files):
         self.files = files
-        self.xchunk = 5490
-        self.ychunk = 5490
+        self.xchunk = 1000
+        self.ychunk = 1000
         self.wlchunk = -1
 
     def load_l2a_image(self,
@@ -37,9 +38,13 @@ class L2grs():
         main_file = opj(l2a_path, basename + '.nc')
         ancillary_file = opj(l2a_path, basename + '_anc.nc')
 
-        raster = xr.open_dataset(main_file, decode_coords='all',
-                                 chunks={'wl': self.wlchunk, 'x': self.xchunk, 'y': self.ychunk})
-        ancillary = xr.open_dataset(ancillary_file, decode_coords='all')
+        raster = xr.open_dataset(main_file,
+                                 decode_coords='all',
+                                 chunks={'wl': self.wlchunk,
+                                         'x': self.xchunk,
+                                         'y': self.ychunk})
+        ancillary = xr.open_dataset(ancillary_file,
+                                    decode_coords='all')
 
         if raster.attrs['metadata_profile'] != 'beam':
             return raster, ancillary
@@ -80,15 +85,16 @@ class L2grs():
                          subset=None,
                          reproject=False,
                          nodata_thresh=0.5,
-                         epsg_out=3857):
+                         epsg_out=3857,
+                         FLAG_NAME = 'flags'):
         # product = xr.open_mfdataset(self.files, chunks={'x': 512, 'y': 512},
         #                     decode_coords='all',combine='nested',
         #                     concat_dim="time",preprocess = self.add_time_dim,
         #                     parallel=True)
-        FLAG_NAME = 'flags'
+
         products = []
         for file in self.files:
-
+            logging.info(f'loading l2a image: {file}')
             product, anc = self.load_l2a_image(file)  # , reproject=reproject, epsg_in=self.epsg,epsg_out=epsg_out)
 
             # add mean solar angles:
@@ -96,18 +102,21 @@ class L2grs():
                 product[attribute] = product.attrs[attribute]
 
             if subset is not None:
+                logging.info(f'subsetting...')
                 product = self.subset_xy(product, subset)
 
             if reproject:
+                logging.info(f'reprojecting...')
                 product = product.rio.reproject(epsg_out)
                 self.epsg = product.rio.crs.to_epsg()
 
             # get flag statistics and mask
-            flag_stats = self.get_flag_stats(product[FLAG_NAME].expand_dims('time'))
+            logging.info(f'computing flags statistics')
+            flag_stats = self.get_flag_stats(product[FLAG_NAME].expand_dims('time').load())
             if flag_stats.flag_nodata.values > nodata_thresh:
                 continue
 
-            # product = xr.merge([product,flag_stats])
+            product = xr.merge([product,flag_stats])
 
             products.append(product)
 
@@ -115,12 +124,15 @@ class L2grs():
             self.no_product = True
             return
 
+        logging.info(f'concatenate rasters')
         product = xr.concat(products, dim='time')  # .sortby('time')
         # keep only one date for dem
         product['dem'] = product.dem.isel(time=0)
 
         # add flags statistics:
-        product = xr.merge([product, self.get_flag_stats(product.flags)])
+        logging.info(f'merge raster and flags statistics')
+        #product = xr.merge([product,
+        #                    self.get_flag_stats(product.flags)])
 
         self.datacube = product
         self.datacube.attrs['start_date'] = str(product.time[0].values)

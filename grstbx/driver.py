@@ -219,7 +219,7 @@ class L2grs():
             raster_ = raster.isel(time=itime)
             flag_value = 1
             for ii, flag_name in enumerate(raster_.flag_names):
-                if flag_name != 'None':
+                if (flag_name != 'None') and (flag_name != ''):
                     flag = ((raster_ & flag_value) != 0)
                     flag_stat = float(flag.sum() / flag.count())
                     if first:

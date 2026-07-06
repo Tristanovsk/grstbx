@@ -11,7 +11,7 @@ import importlib_resources
 from scipy.interpolate import interp1d
 import scipy as sp
 from sklearn import linear_model, metrics
-
+import xesmf as xe
 
 class SpatioTemp():
 
@@ -338,3 +338,63 @@ class Dem:
                           coords=dict(x=dem_raster.x,
                                       y=dem_raster.y),
                           )
+
+
+class Reproj():
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def regridding(input_dataset,
+                   output_grid_size=(1200, 1200),
+                   d_input_crs=4326,
+                   parallel=True,
+                   latitude_name='latitude',
+                   longitude_name='longitude',
+                   method='bilinear',
+                   chunk=500):
+        """
+        Take a PRISMA L1C product in sensor geometry (x,y) as input and
+        return it in a georeferenced geometry (lon,lat).
+
+        WARNING : Due to the use of the xESMF package, relying on Fortran,
+        some user warnings like : "UserWarning: Input array is not F_CONTIGUOUS.
+        Will affect performance." may be raised. It is not an issue in our case
+        (see https://github.com/JiaweiZhuang/xESMF/issues/25).
+
+        :param input_dataset: the product to regrid
+        :param output_grid_size: (tuple) output grid size in (lon, lat) format
+        :param d_input_crs: (int) code EPSG of the related geolocalisation frame
+
+        :return output_dataset: the regularised product
+        """
+
+        # setting lon and lat as coordinates
+        attrs = input_dataset.attrs
+        #input_dataset = input_dataset.set_coords(["lon", "lat"])
+
+        # make the grid that the data will be regridded to
+        grid_lons = np.linspace(input_dataset[longitude_name].min().values, input_dataset[longitude_name].max().values, output_grid_size[0])
+        grid_lats = np.linspace(input_dataset[latitude_name].min().values, input_dataset[latitude_name].max().values, output_grid_size[1])
+        new_grid = xr.Dataset({latitude_name: ([latitude_name], grid_lats), longitude_name: ([longitude_name], grid_lons)})
+        new_grid = new_grid.chunk({latitude_name: chunk, longitude_name: chunk})
+
+        # use periodic=False if either or both the lat and lon dimensions are not regular
+        regridder = xe.Regridder(input_dataset, new_grid,
+                                 method=method,
+                                 periodic=False,
+                                 unmapped_to_nan=True,
+                                 parallel=parallel)
+
+        # regrid the data
+        output_dataset = regridder(input_dataset)
+
+        # put "x","y" naming:
+        output_dataset = output_dataset.rename({longitude_name: "x", latitude_name: "y"})
+
+        # adding the CRS
+        output_dataset.rio.write_crs(d_input_crs, inplace=True)
+        output_dataset.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+        output_dataset.rio.write_coordinate_system(inplace=True)
+        output_dataset.attrs.update(attrs)
+        return output_dataset

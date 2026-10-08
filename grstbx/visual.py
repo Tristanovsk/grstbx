@@ -1,44 +1,54 @@
-import glob
-import os
+"""
+Interactive (holoviews / panel / bokeh) viewers for GRS L2A and L2B datacubes,
+intended to be used in Jupyter notebooks.
+
+ - ViewSpectral: browse L2A Rrs by date and band, draw areas / points of interest
+ - ViewParam: browse L2B parameters by date
+ - ImageViewer: older viewers with on-the-fly spectrum extraction
+"""
+
 import numpy as np
-import pandas as pd
 import geopandas as gpd
 
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-# mpl.use('TkAgg')
-
-#import hvplot.xarray
 import holoviews as hv
 import holoviews.operation.datashader as hd
-from holoviews.operation.datashader import rasterize, shade, spread
-from holoviews.element.tiles import EsriImagery
 from holoviews.element import tiles as hvts
 from holoviews import opts
 from holoviews.plotting.links import DataLink
 
-
-import datashader as ds
-import datashader.transfer_functions as tf
 import bokeh
 import colorcet as cc
 import panel as pn
-import panel.widgets as pnw
 import param as pm
 from shapely.geometry import Polygon
 from collections import OrderedDict as odict
 
 hv.extension('bokeh')
 
+# colormaps proposed in the ViewSpectral / ViewParam widgets
+COLORMAPS = ['CET_D13', 'bky', 'CET_D1A', 'CET_CBL2', 'CET_L10', 'CET_C6s',
+             'kbc', 'blues_r', 'kb', 'rainbow', 'fire', 'kgy', 'bjy', 'gray']
+
+
 class ImageViewer():
+    """Older interactive viewers built on param.Parameterized."""
 
     def Rrs_date(self, raster, third_dim='wl', param='Rrs', Rrs_unit=True):
+        """
+        Map of one band / one date with a box-drawing tool; the mean (+/- std)
+        spectrum within each drawn box is plotted alongside.
+
+        :param raster: Dataset with dims (time, wl, y, x), in EPSG:3857 to overlay basemaps
+        :param third_dim: spectral dimension
+        :param param: variable to display
+        :param Rrs_unit: if False, values are displayed as rho_w = pi * Rrs
+        :return: panel layout
+        """
 
         param_label = r'$R_{rs}$'
         if not Rrs_unit:
             param_label = r'$rho_w$'
 
-        ps = {k: p for k, p in cc.palette_n.items()}
         ps = odict([(n, cc.palette[n]) for n in
                     ['gouldian', 'rainbow', 'fire', 'CET_D13', 'CET_CBC1', 'bgy', 'bgyw', 'bmy', 'gray', 'kbc']])
 
@@ -85,7 +95,6 @@ class ImageViewer():
                 # if no data selected: plot empty graph
                 if not data or not any(len(d) for d in data.values()):
                     return hv.NdOverlay({0: hv.Curve([], 'Wavelength (nm)', param_label)})
-                print(data)
                 ds_ = self.ds_  # hv.Dataset(raster.isel(time=self.date,drop=True))
                 curves = {}
                 data = zip(data['x0'], data['x1'], data['y0'], data['y1'])
@@ -96,10 +105,8 @@ class ImageViewer():
                     selection = ds_.select(x=(x0, x1), y=(y0, y1))
 
                     mean = selection.aggregate(third_dim, np.nanmean).data
-                    # return hv.NdOverlay({0: hv.Curve([],'OK', param_label)})
                     if np.isnan(mean[param][0]):
                         continue
-                    std = selection.aggregate(third_dim, np.nanstd).data
 
                     if not Rrs_unit:
                         mean = mean * np.pi
@@ -165,9 +172,8 @@ class ImageViewer():
                     return
                 return self.basemap.opts(gopts).opts(alpha=0.5)
 
-            def map_band(self):  # iwl=2,cmap=ps['kbc']):
+            def map_band(self):
                 self.extract_ds_by_date()
-                ropts = dict(cmap=self.cmap, )
                 return hv.DynamicMap(self.tiles) * self.select_band()  # .opts(**ropts)
 
         viewer = Viewer()
@@ -187,9 +193,15 @@ class ImageViewer():
                          pn.Row(viewer.map_band, graph))
 
     def param_date(self, raster, cmap='kbc'):
+        """
+        Map of a single-variable DataArray (time, y, x) with date / colormap / basemap selectors.
+
+        :param raster: DataArray in EPSG:3857 to overlay basemaps
+        :param cmap: initial colormap
+        :return: panel layout
+        """
 
         cmap_ = cmap
-        ps = {k: p for k, p in cc.palette_n.items()}
         ps = odict([(n, cc.palette[n]) for n in ['fire', 'bgy', 'bgyw', 'bmy', 'gray', 'kbc']])
         dates = {str(date): idate for idate, date in enumerate(raster.time.values)}
         maps = ['EsriImagery', 'EsriUSATopo', 'EsriTerrain', 'StamenWatercolor', 'StamenTonerBackground']
@@ -220,8 +232,7 @@ class ImageViewer():
                 return self.basemap.opts(gopts).opts(alpha=0.5)
 
             def map_band(self):
-                ropts = dict(cmap=self.cmap, )
-                return hv.DynamicMap(self.tiles) * self.select_date()  # .opts(**ropts)
+                return hv.DynamicMap(self.tiles) * self.select_date()
 
         viewer = Viewer()
 
@@ -229,25 +240,36 @@ class ImageViewer():
 
 
 class Utils():
+    """Helpers shared by the viewers to retrieve user-drawn geometries."""
 
     @staticmethod
     def get_points(poi_stream,
-                 crs=4326,
-                 index=-1):
-        # TODO convert points coordinates from 3857 to crs
-        geom = poi_stream.data
-        gpd.points_from_xy(geom['x'],geom['y'],crs="EPSG:3857").to_crs(crs)
-        geom = poi_stream.data
-        ys, xs = geom['ys'][index], geom['xs'][index]
-        polygon_geom = Polygon(zip(xs, ys))
-        polygon = gpd.GeoDataFrame(index=[0], crs=3857, geometry=[polygon_geom])
-        return polygon.to_crs(crs)
+                   crs=4326):
+        """
+        Return the points drawn with a PointDraw stream (EPSG:3857) as a GeoDataFrame.
 
+        :param poi_stream: holoviews PointDraw stream (e.g. ``ViewSpectral.poi_stream``)
+        :param crs: output CRS
+        :return: geopandas.GeoDataFrame of points (with their 'color' column if present)
+        """
+        geom = poi_stream.data
+        points = gpd.GeoDataFrame(
+            {k: v for k, v in geom.items() if k not in ('x', 'y')},
+            geometry=gpd.points_from_xy(geom['x'], geom['y']), crs=3857)
+        return points.to_crs(crs)
 
     @staticmethod
     def get_geom(aoi_stream,
                  crs=4326,
                  index=-1):
+        """
+        Return one polygon drawn with a PolyDraw stream (EPSG:3857) as a GeoDataFrame.
+
+        :param aoi_stream: holoviews PolyDraw stream (e.g. ``ViewSpectral.aoi_stream``)
+        :param crs: output CRS
+        :param index: index of the polygon to return (default: last drawn)
+        :return: geopandas.GeoDataFrame with a single polygon
+        """
         geom = aoi_stream.data
         ys, xs = geom['ys'][index], geom['xs'][index]
         polygon_geom = Polygon(zip(xs, ys))
@@ -256,6 +278,7 @@ class Utils():
 
     @staticmethod
     def custom_hover():
+        """Bokeh hover tool displaying lon/lat (converted from web mercator) and pixel value."""
         formatter_code = """
           var digits = 4;
           var projections = Bokeh.require("core/util/projections");
@@ -273,6 +296,23 @@ class Utils():
 
 
 class ViewSpectral(Utils):
+    """
+    Interactive viewer of an L2A datacube (Rrs with 'time' and 'wl' dimensions).
+
+    Example
+    -------
+    >>> viewer = ViewSpectral(datacube.Rrs, reproject=True)
+    >>> viewer.visu()
+    >>> aoi = viewer.get_geom(viewer.aoi_stream)
+
+    :param raster: DataArray with dims (time, wl, y, x) (time is optional)
+    :param dates: dates to display (default: all)
+    :param bands: wavelengths to display (default: all)
+    :param reproject: reproject images to EPSG:3857 (needed to overlay basemaps)
+    :param minmaxvalues: initial color range
+    :param minmax: bounds of the color range slider
+    """
+
     def __init__(self, raster, dates=None,
                  bands=None,
                  reproject=False,
@@ -286,8 +326,7 @@ class ViewSpectral(Utils):
         self.key_dimensions = ['x', 'y']
         self.minmaxvalues = minmaxvalues
         self.minmax = minmax
-        self.colormaps = ['CET_D13', 'bky', 'CET_D1A', 'CET_CBL2', 'CET_L10', 'CET_C6s',
-                          'kbc', 'blues_r', 'kb', 'rainbow', 'fire', 'kgy', 'bjy', 'gray']
+        self.colormaps = COLORMAPS
 
         # check if single date, if so push time as dimension to be compliant with multidates
         if not 'time' in raster.dims:
@@ -295,20 +334,17 @@ class ViewSpectral(Utils):
 
         # variables settings
         self.dates = dates
-        if dates == None:
+        if dates is None:
             self.dates = raster.time.dt.date.values
         self.bands = bands
-        if bands == None:
+        if bands is None:
             self.bands = raster.wl.values
 
         # load raster
         self.raster = raster
         self.dataarrays = {}
 
-        times = raster.time.values
-        if not hasattr(times, "__len__"):
-            times = [times]
-        for itime, time in enumerate(times):
+        for itime, time in enumerate(raster.time.values):
             raster_ = raster.sel(time=time)
             for iband, band in enumerate(self.bands):
                 if reproject:
@@ -345,6 +381,7 @@ class ViewSpectral(Utils):
         DataLink(self.poi_points, self.table)
 
     def visu(self):
+        """Return the panel layout of the viewer."""
 
         # get data
         dates = self.dates
@@ -428,6 +465,17 @@ class ViewSpectral(Utils):
 
 
 class ViewParam(Utils):
+    """
+    Interactive viewer of an L2B datacube (one 2D map per parameter and date).
+
+    :param raster: Dataset with dims (time, y, x) (time is optional)
+    :param dates: dates to display (default: all)
+    :param params: variables to display (default: all variables with x and y dimensions)
+    :param reproject: reproject images to EPSG:3857 (needed to overlay basemaps)
+    :param minmaxvalues: initial color range
+    :param minmax: bounds of the color range slider
+    """
+
     def __init__(self, raster, dates=None,
                  params=None,
                  reproject=False,
@@ -441,39 +489,28 @@ class ViewParam(Utils):
         self.key_dimensions = ['x', 'y']
         self.minmaxvalues = minmaxvalues
         self.minmax = minmax
-        self.colormaps = ['CET_D13', 'bky', 'CET_D1A', 'CET_CBL2', 'CET_L10', 'CET_C6s',
-                          'kbc', 'blues_r', 'kb', 'rainbow', 'fire', 'kgy', 'bjy', 'gray']
+        self.colormaps = COLORMAPS
         # check if single date, if so push time as dimension to be compliant with multidates
         if not 'time' in raster.dims:
             raster = raster.expand_dims('time')
 
         # variables settings
         self.dates = dates
-        if dates == None:
+        if dates is None:
             self.dates = raster.time.dt.date.values
             self.datetimes = raster.time.dt.strftime('%Y-%m-%d %H:%M:%S').values  # dt.date.values
 
         self.params = params
-        if params == None:
-            self.params = list()
-            # Clean up: param to be removed
-            self.params= []
-            for param in raster.data_vars:
-                if len(raster[param].shape)>3:
-                    continue
-                if ('x' in raster[param].dims) and ('y' in raster[param].dims):
-                    self.params.append(param)
-            # for to_be_removed in ['crs', 'metadata']:
-            #     if to_be_removed in self.params:
-            #         self.params.remove(to_be_removed)
+        if params is None:
+            # keep the 2D (+ time) maps
+            self.params = [param for param in raster.data_vars
+                           if raster[param].ndim <= 3
+                           and 'x' in raster[param].dims and 'y' in raster[param].dims]
 
         # load raster
         self.raster = raster
         self.dataarrays = {}
 
-        times = raster.time.values
-        if not hasattr(times, "__len__"):
-            times = [times]
         for itime, time in enumerate(raster.time.values):
             raster_ = raster.sel(time=time)
             for iparam, param in enumerate(self.params):
@@ -497,6 +534,7 @@ class ViewParam(Utils):
 
 
     def visu(self):
+        """Return the panel layout of the viewer."""
 
         # get data
         dates = self.dates

@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grstbx"
+dynamic = ["version"]
+description = "some snippets to play with GRS images"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "T. Harmel", email = "tristan.harmel@gmail.com" }]
+requires-python = ">=3.11"
+dependencies = [
+    "scikit-learn",
+    "importlib_resources",
+    "numpy",
+    "scipy",
+    "pandas",
+    "xarray>=2025.6.1",
+    "zarr>=3",
+    "dask",
+    "geopandas",
+    "rasterio",
+    "pandas-bokeh",
+    "matplotlib",
+    "docopt",
+    "pyproj",
+    "rioxarray",
+    "cartopy",
+    "holoviews",
+    "colorcet",
+    "panel",
+    "datashader",
+    "jupyterlab",
+    "jupyter_bokeh",
+]
+
+[project.optional-dependencies]
+# needed only for grstbx.utils.Reproj.regridding
+regrid = ["xesmf"]
+# to build the documentation (see docs/ and .readthedocs.yaml)
+docs = [
+    "sphinx>=7",
+    "sphinx-book-theme>=1.1",
+    "sphinx-copybutton",
+    "myst-nb>=1.0",
+    "linkify-it-py",
+    "ipython",
+]
+
+[project.urls]
+Repository = "https://github.com/Tristanovsk/grstbx"
+Documentation = "https://grstbx.readthedocs.io"
+
+[tool.setuptools.dynamic]
+version = { attr = "grstbx.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["grstbx*"]
+
+[tool.setuptools.package-data]
+"grstbx.data" = ["*.nc", "*.txt", "*.csv", "*.dat"]

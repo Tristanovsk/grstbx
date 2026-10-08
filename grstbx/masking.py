@@ -1,10 +1,33 @@
-import os
+"""
+Bitmask handling for GRS products.
+
+GRS stores pixel classification as a single integer ``flags`` raster in which
+bit ``i`` is set when condition ``flag_names[i]`` holds. The names and
+descriptions of each bit are stored in the attributes of the ``flags``
+variable. This module decodes those bits into boolean masks.
+"""
+
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 
 class Masking():
+    """
+    Decode the bitmask ``flags`` variable of a GRS product.
+
+    Example
+    -------
+    >>> masking_ = Masking(product)
+    >>> masking_.print_info()                       # table of available flags
+    >>> water = masking_.get_mask(ndwi=False, hicld=False)
+
+    :param product: xarray.Dataset holding the bitmask variable
+    :param flag_ID: name of the bitmask variable (default: 'flags')
+    :param names\\_: attribute of the bitmask variable listing the flag names
+    :param description\\_: attribute of the bitmask variable listing the flag descriptions
+    """
+
     def __init__(self, product, flag_ID='flags', names_='flag_names',
                  description_='flag_descriptions',
                  ):
@@ -15,27 +38,43 @@ class Masking():
         self.description_ = description_
 
     def print_info(self):
+        """Return a pandas.DataFrame describing each flag (description, bit number, bit value)."""
         self.get_flags()
         return self.dflags
 
+    @staticmethod
+    def _as_list(attr):
+        # attributes may be stored as a space-separated string (older products) or as a list
+        if isinstance(attr, str):
+            return attr.split(' ')
+        return list(attr)
+
     def get_flags(self, ):
+        """
+        Build ``self.dflags``, a DataFrame indexed by flag name with columns
+        ``description``, ``bit`` (bit number) and ``value`` (``1 << bit``).
+        """
 
         pflags = self.product[self.flag_ID]
-        #names = []
-        #for flag_name in pflags.attrs[self.names_].split(' '):
-        #    names.append(flag_name)
-        names = pflags.attrs[self.names_]
-        # construct dataframe:
+        names = self._as_list(pflags.attrs[self.names_])
+        descriptions = self._as_list(pflags.attrs[self.description_])
+
         dflags = pd.DataFrame({'name': names})
-        dflags['description'] = pflags.attrs[self.description_]#.split('\t')
+        dflags['description'] = pd.Series(descriptions, dtype=object)
         dflags['bit'] = dflags.index
+        dflags['value'] = [1 << int(bit) for bit in dflags['bit']]
         self.dflags = dflags.set_index('name')
         self.pflags = pflags
 
     @staticmethod
     def bitmask(mask, bitval, value):
         """
+        Set (``value=True``) or clear (``value=False``) the bits ``bitval`` in ``mask``.
 
+        :param mask: integer bitmask
+        :param bitval: integer with the bits to modify set to 1
+        :param value: boolean, set or clear
+        :return: updated bitmask
         """
 
         if value:
@@ -50,40 +89,70 @@ class Masking():
                  name,
                  bitmask,
                  description=''):
-        xr.set_options(keep_attrs=True)
+        """
+        Add a new flag to a bitmask DataArray.
+
+        :param flags: bitmask xarray.DataArray (with 'flag_names' and 'flag_descriptions' attributes)
+        :param boolean_cond: boolean xarray.DataArray, True where the flag is raised
+        :param name: name of the new flag
+        :param bitmask: bit number used to store the flag
+        :param description: description of the flag
+        :return: updated bitmask xarray.DataArray
+        """
+        attrs = dict(flags.attrs)
         flags = flags + (boolean_cond << bitmask)
 
-        # add name and description
-        flags.attrs['flag_descriptions'][bitmask] = description
-        flags.attrs['flag_names'][bitmask] = name
+        # copy the lists so that the original attributes are left untouched
+        names = list(attrs.get('flag_names', []))
+        descriptions = list(attrs.get('flag_descriptions', []))
+        for list_ in (names, descriptions):
+            list_.extend([''] * (bitmask + 1 - len(list_)))
+        names[bitmask] = name
+        descriptions[bitmask] = description
+
+        attrs['flag_names'] = names
+        attrs['flag_descriptions'] = descriptions
+        flags.attrs = attrs
         return flags
 
     def compute_mask_value(self, **flags):
+        """
+        Compute the integer ``mask`` selecting the requested bits and the
+        integer ``value`` expected for those bits.
+
+        :param flags: flag_name=bool pairs
+        :return: (mask, value) such that ``(bitmask & mask) == value`` selects the pixels
+        """
+        if not hasattr(self, 'dflags'):
+            self.get_flags()
 
         mask = 0
+        value = 0
         for flag_name, flag_ref in flags.items():
-            bit, bit_val = self.dflags.loc[flag_name, ['bit', 'value']]
-            #print(flag_name, flag_ref, bit)
+            bit_val = int(self.dflags.loc[flag_name, 'value'])
             mask = self.bitmask(mask, bit_val, True)
-            value = self.bitmask(mask, bit_val, flag_ref)
-            self.mask = mask
-            self.value = value
+            value = self.bitmask(value, bit_val, flag_ref)
+        self.mask = mask
+        self.value = value
         return mask, value
 
     def get_mask(self, **flags):
         """
-        Returns boolean xarray computed from **flags
-        Example:
-        masking_ = masking(product)
-        mask_ = masking_.make_mask(MG2_Water_Mask=False,negative=False,nodata=True)
+        Returns boolean xarray computed from ``**flags``, True where all the
+        requested flag conditions are fulfilled.
 
-        :param flags: list of boolean flags
+        Example
+        -------
+        >>> masking_ = Masking(product)
+        >>> mask_ = masking_.get_mask(ndwi=False, negative=False, nodata=True)
+
+        :param flags: flag_name=bool pairs
         :return: boolean xarray.DataArray
         """
 
         mask, value = self.compute_mask_value(**flags)
 
-        return self.product[self.flag_ID] & mask == value
+        return (self.product[self.flag_ID] & mask) == value
 
     @staticmethod
     def create_mask(flags,
@@ -95,6 +164,8 @@ class Masking():
         '''
         Create binary mask from bitmask flags, with selection of bitmask to mask or to keep (by bit number).
         The masking convention is: good pixels for mask == 0, bad pixels when mask == 1
+
+        A pixel is masked if any bit of ``tomask`` is raised, or if none of the bits of ``tokeep`` is raised.
 
         :param flags: xarray dataarray with bitmask flags
         :param tomask: array of bitmask flags used to mask
@@ -132,26 +203,19 @@ class Masking():
 
         '''
 
-        mask = xr.zeros_like(flags, dtype=_type)
+        flag_value_tomask = sum(1 << bitnum for bitnum in tomask)
+        flag_value_tokeep = sum(1 << bitnum for bitnum in tokeep)
 
-        flag_value_tomask = 0
-        flag_value_tokeep = 0
+        if tomask and tokeep:
+            mask = ((flags & flag_value_tomask) != 0) | ((flags & flag_value_tokeep) == 0)
+        elif tokeep:
+            mask = (flags & flag_value_tokeep) == 0
+        elif tomask:
+            mask = (flags & flag_value_tomask) != 0
+        else:
+            mask = xr.zeros_like(flags, dtype=bool)
 
-        if len(tomask) > 0:
-            for bitnum in tomask:
-                flag_value_tomask += 1 << bitnum
-
-        if len(tokeep) > 0:
-            for bitnum in tokeep:
-                flag_value_tokeep += 1 << bitnum
-
-        if (len(tokeep) > 0) & (len(tomask) > 0):
-            mask = (((flags & flag_value_tomask) != 0) | ((flags & flag_value_tokeep) == 0)).astype(_type)
-        elif (len(tokeep) > 0) | (len(tomask) > 0):
-            if len(tokeep) > 0:
-                mask = ((flags & flag_value_tokeep) == 0)
-            else:
-                mask = ((flags & flag_value_tomask) != 0)
+        mask = mask.astype(_type)
         mask.attrs["long_name"] = "binary mask from flags"
         mask.attrs["description"] = "good pixels for mask == 0, bad pixels when mask == 1"
         mask.name = mask_name

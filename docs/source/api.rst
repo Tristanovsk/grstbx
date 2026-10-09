@@ -12,6 +12,7 @@ The main classes and functions are importable from the package itself:
    select = grstbx.SelectFiles('/datalake/watcal')
    dc = grstbx.L2grs(files)
    masking_ = grstbx.Masking(dc.datacube)
+   subset, subset_anc = grstbx.crop_l2a(product, aoi, ancillary)
    viewer = grstbx.visual.ViewSpectral(dc.datacube.Rrs)
 
 File selection
@@ -39,8 +40,24 @@ Loading images and datacubes
    :nosignatures:
 
    grstbx.driver.open_zarr_image
+   grstbx.driver.open_zarr_ancillary
    grstbx.driver.zarr_levels
    grstbx.driver.is_zarr
+
+Cropping and export
+-------------------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   grstbx.subset.open_l2a
+   grstbx.subset.aoi_from_box
+   grstbx.subset.crop_l2a
+   grstbx.subset.export_l2a
+   grstbx.subset.export_rrs_geotiff
+   grstbx.subset.subset_path
+   grstbx.subset.crop_and_export
 
 Masking
 -------
@@ -79,6 +96,13 @@ Utilities
    grstbx.utils.Plotting
    grstbx.utils.Dem
    grstbx.utils.Reproj
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   grstbx.utils.utm_projection
+   grstbx.utils.plot_rgb
 
 Module overviews
 ----------------

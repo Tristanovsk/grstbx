@@ -78,6 +78,22 @@ def open_zarr_image(path, level=0, chunks={}):
     return ds
 
 
+def open_zarr_ancillary(path, group='ancillary'):
+    """
+    Open the ancillary data (CAMS fields, gaseous transmittance on a coarse grid, dims ``xc``, ``yc``)
+    stored in the group ``group`` of a GRS L2A Zarr store.
+
+    :param path: path to the Zarr store
+    :param group: name of the ancillary group
+    :return: xarray.Dataset, or None if the store has no such group
+    """
+    import zarr
+
+    if group not in dict(zarr.open_group(path, mode='r').groups()):
+        return None
+    return xr.open_zarr(path, group=group, decode_coords='all')
+
+
 class L2grs():
     """
     Build multi-temporal datacubes from a list of GRS products.
@@ -113,7 +129,7 @@ class L2grs():
 
         Two layouts are supported:
          - ``*.zarr`` store, single-resolution or multiscale (pyramid with groups '0', '1', ...),
-           returned as is (no ancillary data);
+           with the ancillary data in the group 'ancillary' when present;
          - folder ``<name>/`` containing ``<name>.nc`` (main) and ``<name>_anc.nc`` (ancillary).
 
         Products written with the 'beam' metadata profile store one variable per band
@@ -121,11 +137,13 @@ class L2grs():
 
         :param l2a_path: path to the L2A product
         :param level: pyramid level for multiscale Zarr stores (default: ``self.level``)
-        :return: (raster, ancillary) xarray.Datasets; ancillary is None for zarr stores
+        :return: (raster, ancillary) xarray.Datasets; ancillary is None for zarr stores without
+                 'ancillary' group
         """
 
         if is_zarr(l2a_path):
-            return open_zarr_image(l2a_path, level=self.level if level is None else level), None
+            return (open_zarr_image(l2a_path, level=self.level if level is None else level),
+                    open_zarr_ancillary(l2a_path))
 
         basename = os.path.basename(l2a_path.rstrip('/'))
         main_file = opj(l2a_path, basename + '.nc')
@@ -238,7 +256,7 @@ class L2grs():
             return
 
         logging.info('concatenate rasters')
-        product = xr.concat(products, dim='time')
+        product = xr.concat(products, dim='time', data_vars='all')
         # keep only one date for dem
         if 'dem' in product:
             product['dem'] = product.dem.isel(time=0)
@@ -294,7 +312,7 @@ class L2grs():
             self.no_product = True
             return
 
-        self._finalize_datacube(xr.concat(products, dim='time').sortby('time'))
+        self._finalize_datacube(xr.concat(products, dim='time', data_vars='all').sortby('time'))
 
     @staticmethod
     def get_flag_stats(raster):

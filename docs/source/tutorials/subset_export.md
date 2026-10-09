@@ -78,7 +78,7 @@ drawing of the AOI on an interactive map, crop, export, check of the exported pr
 processing. It is rendered with the outputs of its last run, where no polygon was drawn (the default
 box is used; the interactive widgets are not functional in this page). The input image is not
 distributed with grstbx: set the paths of the settings cell to run it on your own data. The notebook
-is [`notebook/grstbx_l2a_visu_subset_export.ipynb`](https://github.com/Tristanovsk/grstbx/blob/master/notebook/grstbx_l2a_visu_subset_export.ipynb).
+is [`notebook/grstbx_l2a_visu_subset_export.ipynb`](https://github.com/Tristanovsk/grstbx/blob/main/notebook/grstbx_l2a_visu_subset_export.ipynb).
 
 ```{toctree}
 :maxdepth: 1

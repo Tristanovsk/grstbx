@@ -21,6 +21,8 @@ It provides:
   netCDF files or single-resolution / multiscale (pyramid) Zarr stores
   (:class:`~grstbx.driver.L2grs`),
 - the decoding of the GRS bitmask ``flags`` into boolean masks (:class:`~grstbx.masking.Masking`),
+- the cropping of L2A products to an area of interest and the export of the subsets as GRS products
+  (NetCDF, Zarr) or GeoTIFF (:mod:`grstbx.subset`),
 - interactive viewers for Jupyter notebooks, based on holoviews, datashader and panel, to browse
   the images by date and band and to draw areas or points of interest (:mod:`grstbx.visual`),
 - miscellaneous helpers: bounding boxes, AERONET-OC readers, solar irradiance, DEM-based
@@ -56,6 +58,7 @@ It provides:
    tutorials/masking
    tutorials/visualization
    tutorials/l2a_image
+   tutorials/subset_export
    tutorials/utilities
    tutorials/validation
    tutorials/case_studies

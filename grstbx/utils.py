@@ -1,9 +1,9 @@
 """
 Miscellaneous helpers: geometry/time utilities (SpatioTemp), in-situ data readers (Data),
-solar irradiance (Irradiance), plotting (Plotting), DEM-based illumination (Dem)
-and regridding (Reproj).
+solar irradiance (Irradiance), plotting (Plotting, utm_projection, plot_rgb), DEM-based
+illumination (Dem) and regridding (Reproj).
 
-Heavy optional dependencies (matplotlib, scipy, scikit-learn, xesmf) are imported
+Heavy optional dependencies (matplotlib, cartopy, scipy, scikit-learn, xesmf) are imported
 inside the functions that need them to keep ``import grstbx`` fast.
 """
 
@@ -16,7 +16,7 @@ import geopandas as gpd
 
 import importlib_resources
 
-__all__ = ['SpatioTemp', 'Data', 'Irradiance', 'Plotting', 'Dem', 'Reproj']
+__all__ = ['SpatioTemp', 'Data', 'Irradiance', 'Plotting', 'Dem', 'Reproj', 'utm_projection', 'plot_rgb']
 
 class SpatioTemp():
     """Geometry and time helpers."""
@@ -359,6 +359,83 @@ class Plotting:
             ax.text(0.98, 0.01, stats, fontsize=fontsize, verticalalignment='bottom', horizontalalignment='right',
                     transform=ax.transAxes)
         return
+
+
+def utm_projection(crs):
+    """
+    Cartopy projection matching the CRS of an image, to plot it on map axes.
+
+    Example
+    -------
+    >>> proj = utm_projection(raster.rio.crs)
+    >>> fig, ax = plt.subplots(subplot_kw={'projection': proj})
+
+    :param crs: CRS of the image (e.g. ``raster.rio.crs``), or anything accepted by
+                :meth:`pyproj.CRS.from_user_input` (EPSG code, WKT...)
+    :return: ``cartopy.crs.UTM`` for a WGS 84 / UTM CRS (EPSG 326xx: north, 327xx: south),
+             ``cartopy.crs.Mercator.GOOGLE`` (web Mercator) otherwise
+    """
+    import cartopy.crs as ccrs
+    from pyproj import CRS
+
+    epsg = CRS.from_user_input(crs).to_epsg()
+    if epsg is not None and (32601 <= epsg <= 32660 or 32701 <= epsg <= 32760):
+        return ccrs.UTM(zone=epsg % 100, southern_hemisphere=epsg > 32700)
+    return ccrs.Mercator.GOOGLE
+
+
+def plot_rgb(raster, ax=None, aoi=None, bands=(665, 560, 490), gamma=0.5, robust=True,
+             max_size=2000, figsize=(10, 10), aoi_color='red'):
+    """
+    True-colour (or false-colour) composite of a reflectance image, on map axes.
+
+    Large images are decimated (one pixel out of ``n``) so that the displayed image is at most
+    ``max_size`` pixels on its longest side: only the displayed pixels of the three bands are read.
+
+    Example
+    -------
+    >>> ax = plot_rgb(product, aoi=aoi)                        # Dataset with an 'Rrs' variable
+    >>> plot_rgb(product.Rrs, bands=(865, 665, 560), ax=ax)   # false colour on existing axes
+
+    :param raster: xarray.Dataset with an ``Rrs`` variable, or DataArray with dims (wl, y, x);
+                   a ``time`` dimension of size 1 is squeezed
+    :param ax: matplotlib axes (map axes from :func:`utm_projection` or plain axes); created if None
+    :param aoi: geopandas.GeoDataFrame (any CRS) whose outline is drawn, or None
+    :param bands: wavelengths (nm) displayed in red, green and blue (nearest available)
+    :param gamma: exponent applied to the reflectance to enhance dark (water) pixels; 1 for linear
+    :param robust: stretch between the 2nd and 98th percentiles
+    :param max_size: maximum number of displayed pixels along x or y; None to display all pixels
+    :param figsize: size of the figure created when ``ax`` is None
+    :param aoi_color: color of the AOI outline
+    :return: the axes
+    """
+    import matplotlib.pyplot as plt
+
+    da = raster['Rrs'] if isinstance(raster, xr.Dataset) else raster
+    if 'time' in da.dims:
+        if da.sizes['time'] != 1:
+            raise ValueError('select one date (e.g. raster.isel(time=0)) before plotting')
+        da = da.isel(time=0)
+    crs = da.rio.crs
+
+    if max_size:
+        step = int(np.ceil(max(da.sizes['x'], da.sizes['y']) / max_size))
+        da = da.isel(x=slice(None, None, step), y=slice(None, None, step))
+    rgb = da.sel(wl=list(bands), method='nearest').clip(min=0) ** gamma
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize, subplot_kw={'projection': utm_projection(crs)})
+    rgb.plot.imshow(rgb='wl', robust=robust, ax=ax)
+
+    if aoi is not None:
+        aoi = aoi.to_crs(crs)
+        if hasattr(ax, 'add_geometries'):  # cartopy map axes
+            ax.add_geometries(aoi.geometry, crs=utm_projection(crs),
+                              facecolor='none', edgecolor=aoi_color, lw=2)
+        else:
+            aoi.boundary.plot(ax=ax, color=aoi_color, lw=2)
+    ax.set_title('')
+    return ax
 
 
 class Dem:

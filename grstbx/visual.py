@@ -514,7 +514,7 @@ class _MultiscaleViewer(Utils):
     """
 
     def __init__(self, data, dates=None, reproject=False, minmaxvalues=(0, 0.02), minmax=(0, 0.06),
-                 width=1200, height=800, min_size=512):
+                 width=1200, height=800, min_size=512, basemap=DEFAULT_BASEMAP):
         if not isinstance(data, Multiscale):
             if isinstance(data, (str, os.PathLike)) or (
                     isinstance(data, (list, tuple)) and isinstance(data[0], (str, os.PathLike))):
@@ -539,6 +539,7 @@ class _MultiscaleViewer(Utils):
 
         # display CRS and transformations from / to the CRS of the images
         self.reproject = reproject
+        self.basemap = basemap
         self.display_crs = pyproj.CRS.from_epsg(3857) if reproject else pyproj.CRS.from_user_input(data.crs)
         self._to_native = pyproj.Transformer.from_crs(self.display_crs, data.crs, always_xy=True)
         self._to_display = pyproj.Transformer.from_crs(data.crs, self.display_crs, always_xy=True)
@@ -620,7 +621,11 @@ class _MultiscaleViewer(Utils):
         if not self.reproject:
             return pn.widgets.Select(value='None (reproject=False)', options=['None (reproject=False)'],
                                      disabled=True)
-        return pn.widgets.Select(value=DEFAULT_BASEMAP, options=list(BASEMAPS))
+        options = list(BASEMAPS)
+        if self.basemap not in options:
+            # custom XYZ URL
+            options.append(self.basemap)
+        return pn.widgets.Select(value=self.basemap, options=options)
 
     def _date_widget(self):
         options = {str(dt): idate for idate, dt in enumerate(self.datetimes)}
@@ -666,6 +671,7 @@ class ViewSpectral(_MultiscaleViewer):
     -------
     >>> viewer = ViewSpectral(['S2A_L2A_1.zarr', 'S2B_L2A_2.zarr'], reproject=True)   # Zarr pyramids
     >>> viewer = ViewSpectral(datacube.Rrs, reproject=True)                         # datacube
+    >>> viewer = ViewSpectral(datacube.Rrs, reproject=True, basemap='CARTO Positron')
     >>> viewer.visu()
     >>> aoi = viewer.get_geom()            # last drawn polygon, EPSG:4326
     >>> points = viewer.get_points()       # drawn points, EPSG:4326
@@ -676,6 +682,8 @@ class ViewSpectral(_MultiscaleViewer):
     :param bands: wavelengths to display (default: all)
     :param reproject: display in web Mercator (EPSG:3857) to overlay basemaps; only the visible
                       window is reprojected
+    :param basemap: initial basemap, name in :data:`BASEMAPS` (e.g. 'CARTO Positron') or XYZ URL
+                    with {X}, {Y}, {Z}; it can be changed in the widget
     :param minmaxvalues: initial color range
     :param minmax: bounds of the color range slider
     :param rgb_bands: wavelengths of the true-colour composite
@@ -692,10 +700,11 @@ class ViewSpectral(_MultiscaleViewer):
                  rgb_bands=(665, 560, 490),
                  gamma=0.5,
                  width=1000,
-                 height=700):
+                 height=700,
+                 basemap=DEFAULT_BASEMAP):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
-                         width=width, height=height)
+                         width=width, height=height, basemap=basemap)
         self.title = '## S2 L2A'
 
         image = self.data.images[self.indexes[0]][0]
@@ -824,6 +833,8 @@ class ViewParam(_MultiscaleViewer):
     :param params: variables to display (default: all variables with x and y dimensions)
     :param reproject: display in web Mercator (EPSG:3857) to overlay basemaps; only the visible
                       window is reprojected
+    :param basemap: initial basemap, name in :data:`BASEMAPS` (e.g. 'CARTO Positron') or XYZ URL
+                    with {X}, {Y}, {Z}; it can be changed in the widget
     :param minmaxvalues: initial color range
     :param minmax: bounds of the color range slider
     :param width: width of the map (pixels)
@@ -836,10 +847,11 @@ class ViewParam(_MultiscaleViewer):
                  minmaxvalues=(0, 4),
                  minmax=(0, 10),
                  width=1200,
-                 height=800):
+                 height=800,
+                 basemap=DEFAULT_BASEMAP):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
-                         width=width, height=height)
+                         width=width, height=height, basemap=basemap)
         self.title = '## S2 L2B'
 
         image = self.data.images[self.indexes[0]][0]

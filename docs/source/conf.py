@@ -1,6 +1,7 @@
 # Configuration file for the Sphinx documentation builder.
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -11,6 +12,19 @@ REPO_ROOT = DOCS_SOURCE.parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 import grstbx
+
+# The notebooks of the tutorials live in notebook/ (where they are run); they are
+# copied into the documentation source at each build (git-ignored copies).
+NOTEBOOKS = {
+    'tutorials/l2a_image': ['notebook/grstbx_l2a_visu_simple.ipynb'],
+    'tutorials/validation': ['notebook/validation/grstbx_l2a_hypernets_matchup.ipynb',
+                             'notebook/validation/grstbx_l2b_hypernets_matchup.ipynb'],
+    'tutorials/case_studies': ['notebook/case_study/clear_lake/grstbx_rgb_dem_multitemp.ipynb'],
+}
+for _target, _notebooks in NOTEBOOKS.items():
+    (DOCS_SOURCE / _target).mkdir(exist_ok=True)
+    for _notebook in _notebooks:
+        shutil.copy2(REPO_ROOT / _notebook, DOCS_SOURCE / _target / Path(_notebook).name)
 
 # -- Project information -----------------------------------------------------
 
@@ -110,8 +124,8 @@ myst_enable_extensions = [
 ]
 myst_heading_anchors = 3
 
-# The tutorials need GRS images that are not available on Read the Docs:
-# they are never executed.
+# The notebooks need GRS images and in situ data that are not available on
+# Read the Docs: they are rendered with their stored outputs, never executed.
 nb_execution_mode = 'off'
 nb_merge_streams = True
 suppress_warnings = ['mystnb.unknown_mime_type', 'myst.header']

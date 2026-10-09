@@ -52,3 +52,5 @@ clipped = raster.rio.clip(aoi.geometry.values)
 
 points = viewer.get_points(viewer.poi_stream)                   # ViewSpectral only, EPSG:4326
 ```
+
+See {doc}`l2a_image` for a complete example on a Sentinel-2 L2A image.

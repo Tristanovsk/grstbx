@@ -75,4 +75,4 @@ Bitmask ``flags``
 The pixel classification is stored as a single integer ``flags`` raster in which bit ``i`` is set
 when condition ``flag_names[i]`` holds. The names and descriptions of the bits are stored in the
 ``flag_names`` and ``flag_descriptions`` attributes of the variable (as lists, or as
-space-separated strings for older products). See :doc:`tutorials/masking`.
+space-separated strings for older products). They are decoded by :class:`~grstbx.masking.Masking`.

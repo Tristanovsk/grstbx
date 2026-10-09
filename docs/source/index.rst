@@ -53,10 +53,6 @@ It provides:
    :maxdepth: 2
    :caption: Tutorials
 
-   tutorials/select_files
-   tutorials/datacube
-   tutorials/masking
-   tutorials/visualization
    tutorials/l2a_image
    tutorials/subset_export
    tutorials/utilities

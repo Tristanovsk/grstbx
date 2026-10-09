@@ -16,7 +16,7 @@ This notebook walks through a single GRS L2A product, from loading to simple wat
 It is rendered with the outputs of its last run, where no geometry was drawn on the interactive
 maps (the interactive widgets are not functional in this page). The input image is not distributed
 with grstbx: set `workdir` and `DEFAULT_FILE` to run it on your own data. The notebook is
-[`notebook/grstbx_l2a_visu.ipynb`](https://github.com/Tristanovsk/grstbx/blob/master/notebook/grstbx_l2a_visu.ipynb).
+[`notebook/grstbx_l2a_visu.ipynb`](https://github.com/Tristanovsk/grstbx/blob/main/notebook/grstbx_l2a_visu.ipynb).
 
 ```{toctree}
 :maxdepth: 1

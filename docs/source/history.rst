@@ -1,6 +1,16 @@
 History
 =======
 
+v2.3.0
+   Multiscale interactive viewers: :class:`~grstbx.visual.ViewSpectral` and
+   :class:`~grstbx.visual.ViewParam` read only the pixels visible on the screen, at the screen
+   resolution, from the pyramids of the Zarr products (or from coarser levels computed on demand,
+   :class:`~grstbx.visual.Multiscale`); only the visible window is reprojected to web Mercator.
+   They open Zarr stores directly (path or list of paths). ``ViewSpectral`` adds a true-colour
+   composite and the full-resolution spectra of the drawn points. Free basemaps: CARTO, OpenStreetMap,
+   OpenTopoMap, Esri and the Stamen styles of Stadia Maps (:data:`~grstbx.visual.BASEMAPS`).
+   Drawn geometries are returned in the right CRS when the map is not reprojected.
+
 v2.2.0
    Crop L2A products to an area of interest and export the subsets as GRS products (NetCDF or Zarr)
    or GeoTIFF (:mod:`grstbx.subset`); the ancillary group of Zarr products is opened with the image.

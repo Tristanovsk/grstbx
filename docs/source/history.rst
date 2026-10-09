@@ -1,6 +1,15 @@
 History
 =======
 
+v2.2.0
+   Crop L2A products to an area of interest and export the subsets as GRS products (NetCDF or Zarr)
+   or GeoTIFF (:mod:`grstbx.subset`); the ancillary group of Zarr products is opened with the image.
+   Map helpers :func:`~grstbx.utils.utm_projection` (fixes the UTM zone / hemisphere detection) and
+   :func:`~grstbx.utils.plot_rgb` (true-colour composite, decimated for large images, AOI outline).
+   Packaging: dependencies with lower bounds, unused ones removed (``docopt``, ``pandas-bokeh``),
+   ``netCDF4`` added, Jupyter moved to the ``notebook`` extra; ``environment.yml`` and
+   ``requirements.txt``.
+
 v2.1.1
    Open Zarr v3 multiscale (pyramid) images, groups ``'0'``, ``'1'``, ``'2'``, ...
 

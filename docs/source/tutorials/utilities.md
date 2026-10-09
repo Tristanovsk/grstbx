@@ -66,6 +66,28 @@ attrs.shaded.plot.imshow()
 
 ## Plotting
 
+### Maps
+
+{func}`~grstbx.utils.utm_projection` returns the cartopy projection matching the CRS of an image
+(UTM zone and hemisphere for Sentinel-2 tiles, web Mercator otherwise), to plot it on map axes.
+{func}`~grstbx.utils.plot_rgb` displays a true-colour (or false-colour) composite of $R_{rs}$, with
+the outline of an area of interest. Large images are decimated to at most `max_size` pixels per side
+(2000 by default), so that a full tile is displayed in a few seconds.
+
+```python
+import matplotlib.pyplot as plt
+import grstbx
+
+ax = grstbx.plot_rgb(product, aoi=aoi)                  # creates map axes in the image projection
+
+fig, axs = plt.subplots(1, 2, figsize=(16, 8),
+                        subplot_kw={'projection': grstbx.utm_projection(product.rio.crs)})
+grstbx.plot_rgb(product, ax=axs[0])                                 # 665, 560, 490 nm
+grstbx.plot_rgb(product, ax=axs[1], bands=(865, 665, 560), gamma=1)  # false colour, linear
+```
+
+### Matchups
+
 {class}`~grstbx.utils.Plotting` provides matplotlib helpers for matchup scatter plots:
 
 ```python

@@ -32,8 +32,9 @@ L2A: remote-sensing reflectance
 :meth:`L2grs.load_l2a_image <grstbx.driver.L2grs.load_l2a_image>` supports two layouts:
 
 ``*.zarr`` store
-   Single-resolution or multiscale (see below). The store is returned as is, without ancillary
-   data.
+   Single-resolution or multiscale (see below), with the ancillary data (CAMS fields, gaseous
+   transmittance on a coarse grid) in the group ``ancillary`` when present
+   (:func:`~grstbx.driver.open_zarr_ancillary`).
 
 folder ``<name>/``
    Containing ``<name>.nc`` (main image) and ``<name>_anc.nc`` (ancillary data). Products written

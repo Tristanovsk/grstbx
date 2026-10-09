@@ -16,7 +16,8 @@ import grstbx
 # The notebooks of the tutorials live in notebook/ (where they are run); they are
 # copied into the documentation source at each build (git-ignored copies).
 NOTEBOOKS = {
-    'tutorials/l2a_image': ['notebook/grstbx_l2a_visu_simple.ipynb'],
+    'tutorials/l2a_image': ['notebook/grstbx_l2a_visu.ipynb'],
+    'tutorials/subset_export': ['notebook/grstbx_l2a_visu_subset_export.ipynb'],
     'tutorials/validation': ['notebook/validation/grstbx_l2a_hypernets_matchup.ipynb',
                              'notebook/validation/grstbx_l2b_hypernets_matchup.ipynb'],
     'tutorials/case_studies': ['notebook/case_study/clear_lake/grstbx_rgb_dem_multitemp.ipynb'],

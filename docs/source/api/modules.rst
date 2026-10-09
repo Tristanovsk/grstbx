@@ -19,6 +19,12 @@ grstbx.masking
 .. automodule:: grstbx.masking
    :no-members:
 
+grstbx.subset
+-------------
+
+.. automodule:: grstbx.subset
+   :no-members:
+
 grstbx.visual
 -------------
 

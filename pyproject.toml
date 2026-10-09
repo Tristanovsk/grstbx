@@ -5,40 +5,66 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "grstbx"
 dynamic = ["version"]
-description = "some snippets to play with GRS images"
+description = "Visualization and post-processing of GRS (Glint Removal for Sentinel-2-like sensors) L2A and L2B images"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "T. Harmel", email = "tristan.harmel@gmail.com" }]
+keywords = ["Sentinel-2", "Landsat", "ocean color", "remote sensing reflectance", "water quality",
+            "sunglint", "xarray", "datacube"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Framework :: Jupyter",
+]
 requires-python = ">=3.11"
+# Lower bounds: oldest versions providing the APIs used by grstbx.
 dependencies = [
-    "scikit-learn",
-    "importlib_resources",
-    "numpy",
-    "scipy",
-    "pandas",
-    "xarray>=2025.6.1",
+    # arrays and datacubes
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pandas>=2.0",
+    "xarray>=2025.6.1",       # Zarr-python 3 support and `shards` encoding (Zarr exports)
+    "dask[array]>=2024.1",
     "zarr>=3",
-    "dask",
-    "geopandas",
-    "rasterio",
-    "pandas-bokeh",
-    "matplotlib",
-    "docopt",
-    "pyproj",
-    "rioxarray",
-    "cartopy",
-    "holoviews",
-    "colorcet",
-    "panel",
-    "datashader",
-    "jupyterlab",
-    "jupyter_bokeh",
+    "netCDF4>=1.6",           # NetCDF products
+    "importlib_resources>=5.10",
+    # geospatial
+    "affine>=2.4",
+    "pyproj>=3.6",
+    "shapely>=2.0",
+    "geopandas>=0.14",
+    "rasterio>=1.3",
+    "rioxarray>=0.15",
+    # plotting and interactive viewers (grstbx.visual)
+    "matplotlib>=3.7",
+    "cartopy>=0.22",
+    "bokeh>=3.3",
+    "holoviews>=1.18",
+    "datashader>=0.16",
+    "colorcet>=3.0",
+    "param>=2.0",
+    "panel>=1.3",
+    # statistics of the matchups (grstbx.utils.Plotting.add_stats)
+    "scikit-learn>=1.3",
 ]
 
 [project.optional-dependencies]
-# needed only for grstbx.utils.Reproj.regridding
-regrid = ["xesmf"]
-# to build the documentation (see docs/ and .readthedocs.yaml)
+# Jupyter environment to run the notebooks and the interactive viewers
+notebook = [
+    "jupyterlab>=4",
+    "ipykernel>=6",
+    "jupyter_bokeh>=4",
+]
+# grstbx.utils.Reproj.regridding; xesmf depends on ESMF, install it with conda:
+# conda install -c conda-forge xesmf
+regrid = ["xesmf>=0.8"]
+# build the documentation (see docs/ and .readthedocs.yaml)
 docs = [
     "sphinx>=7",
     "sphinx-book-theme>=1.1",
@@ -47,10 +73,14 @@ docs = [
     "linkify-it-py",
     "ipython",
 ]
+# everything installable with pip (xesmf excepted)
+all = ["grstbx[notebook,docs]"]
 
 [project.urls]
 Repository = "https://github.com/Tristanovsk/grstbx"
 Documentation = "https://grstbx.readthedocs.io"
+Issues = "https://github.com/Tristanovsk/grstbx/issues"
+GRS = "https://github.com/Tristanovsk/grs"
 
 [tool.setuptools.dynamic]
 version = { attr = "grstbx.__version__" }
@@ -60,3 +90,6 @@ include = ["grstbx*"]
 
 [tool.setuptools.package-data]
 "grstbx.data" = ["*.nc", "*.txt", "*.csv", "*.dat"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["__pycache__/*", "*.pyc"]

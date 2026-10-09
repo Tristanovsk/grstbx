@@ -20,7 +20,8 @@ NOTEBOOKS = {
     'tutorials/subset_export': ['notebook/grstbx_l2a_visu_subset_export.ipynb'],
     'tutorials/validation': ['notebook/validation/grstbx_l2a_hypernets_matchup.ipynb',
                              'notebook/validation/grstbx_l2b_hypernets_matchup.ipynb'],
-    'tutorials/case_studies': ['notebook/case_study/clear_lake/grstbx_rgb_dem_multitemp.ipynb'],
+    'tutorials/case_studies': ['notebook/case_study/clear_lake/grstbx_rgb_dem_multitemp.ipynb',
+                               'notebook/case_study/bagre/grstbx_l2a_datacube_matchup.ipynb'],
 }
 for _target, _notebooks in NOTEBOOKS.items():
     (DOCS_SOURCE / _target).mkdir(exist_ok=True)
@@ -90,7 +91,7 @@ pygments_style = 'sphinx'
 
 html_theme_options = {
     'repository_url': 'https://github.com/Tristanovsk/grstbx',
-    'repository_branch': 'master',
+    'repository_branch': 'main',
     'path_to_docs': 'docs/source',
     'use_repository_button': True,
     'use_issues_button': True,

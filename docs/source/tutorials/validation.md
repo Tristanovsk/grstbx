@@ -4,7 +4,7 @@ These notebooks compare GRS products with in situ measurements in the Berre lago
 where the HYPERNETS station `BEFR` is installed. They are rendered with the outputs of their last
 run: the input data are not distributed with grstbx, set the paths of their configuration cell to
 run them on your own data. The notebooks are in
-[`notebook/validation/`](https://github.com/Tristanovsk/grstbx/tree/master/notebook/validation).
+[`notebook/validation/`](https://github.com/Tristanovsk/grstbx/tree/main/notebook/validation).
 
 - **L2A**: remote-sensing reflectance against the HYPERNETS hyperspectral radiometer, with the
   normalization of the in situ data to nadir viewing.

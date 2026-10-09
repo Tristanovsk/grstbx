@@ -55,7 +55,10 @@ It provides:
    tutorials/datacube
    tutorials/masking
    tutorials/visualization
+   tutorials/l2a_image
    tutorials/utilities
+   tutorials/validation
+   tutorials/case_studies
 
 .. toctree::
    :maxdepth: 2

@@ -53,7 +53,9 @@ $$
 $$
 
 with $\theta_s$ the solar zenith angle, $\phi_s$ the solar azimuth, $\beta$ the slope and $\alpha$
-the aspect of the terrain.
+the aspect of the terrain (downslope direction, clockwise from North). The DEM must be in a projected
+coordinate system (x and y in meter); `z_factor` applies a vertical exaggeration, useful to display
+the relief (see {doc}`case_studies`).
 
 ```python
 from grstbx import Dem

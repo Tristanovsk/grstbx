@@ -42,7 +42,8 @@ class SpatioTemp():
         import pyproj
         geod = pyproj.Geod(ellps=ellps)
 
-        rect_diag = sqrt(width ** 2 + height ** 2)
+        # distance from the centre to each corner (half diagonal)
+        half_diag = sqrt(width ** 2 + height ** 2) / 2
 
         azimuth1 = atan(width / height)
         azimuth2 = atan(-width / height)
@@ -51,7 +52,7 @@ class SpatioTemp():
 
         (pt1_lon, pt2_lon, pt3_lon, pt4_lon), (pt1_lat, pt2_lat, pt3_lat, pt4_lat), _ = geod.fwd(
             [center_lon] * 4, [center_lat] * 4,
-            [degrees(a) for a in (azimuth1, azimuth2, azimuth3, azimuth4)], [rect_diag] * 4)
+            [degrees(a) for a in (azimuth1, azimuth2, azimuth3, azimuth4)], [half_diag] * 4)
 
         wkt_poly = 'POLYGON (( %.6f %.6f, %.6f %.6f, %.6f %.6f, %.6f %.6f, %.6f %.6f ))' % (
             pt1_lon, pt1_lat, pt2_lon, pt2_lat, pt3_lon, pt3_lat, pt4_lon, pt4_lat, pt1_lon, pt1_lat)
@@ -366,27 +367,40 @@ class Dem:
     @staticmethod
     def compute_dem_attributes(dem_raster,
                                sza,
-                               azi):
+                               azi,
+                               z_factor=1):
         '''
-        Compute terrain slope and solar illumination (cosine of the local incidence angle).
+        Compute terrain slope, aspect and solar illumination (cosine of the local incidence angle):
 
-        :param dem_raster: rioxarray Dataarray-like elevation in meter
+        cos(theta_i) = cos(sza) cos(slope) + sin(sza) sin(slope) cos(azi - aspect)
+
+        The gradients are computed with the x and y coordinates of the raster, which must be
+        in meter (projected coordinate system).
+
+        :param dem_raster: rioxarray Dataarray-like elevation in meter, dims (y, x)
         :param sza: solar zenith angle in degree
-        :param azi: sun azimuth from North in degree
-        :return: xarray.Dataset with 'shaded' and 'slope' (radian) variables
+        :param azi: sun azimuth from North in degree (clockwise)
+        :param z_factor: vertical exaggeration applied to the elevation (1: none)
+        :return: xarray.Dataset with 'shaded' (cos(theta_i)), 'slope' and 'aspect'
+                 (downslope direction, clockwise from North) variables, angles in radian
         '''
 
-        x, y = np.gradient(dem_raster)
+        # derivatives along the y (northing) and x (easting) coordinates
+        dz_dy, dz_dx = np.gradient(z_factor * np.asarray(dem_raster, dtype=float),
+                                   np.asarray(dem_raster.y, dtype=float),
+                                   np.asarray(dem_raster.x, dtype=float))
         azir = np.radians(azi % 360)
         szar = np.radians(sza)
 
-        slope = np.arctan(np.sqrt(x * x + y * y))
-        aspect = np.arctan2(-x, y)
+        slope = np.arctan(np.hypot(dz_dx, dz_dy))
+        # azimuth of the downslope direction (-gradient), clockwise from North
+        aspect = np.arctan2(-dz_dx, -dz_dy)
 
         shaded = np.cos(szar) * np.cos(slope) + np.sin(szar) * np.sin(slope) * np.cos(azir - aspect)
 
         return xr.Dataset(dict(shaded=(["y", "x"], shaded),
-                               slope=(["y", "x"], slope)),
+                               slope=(["y", "x"], slope),
+                               aspect=(["y", "x"], aspect)),
                           coords=dict(x=dem_raster.x,
                                       y=dem_raster.y),
                           )

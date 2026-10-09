@@ -12,16 +12,20 @@ v2.0.3: (2026-04-08) add tool option for masking / bitmask flagging
 v2.0.4: code optimization and documentation; lazy loading of the visual module
 v2.1.0: code optimization and update with pyproject.toml
 v2.1.1: open Zarr v3 multiscale (pyramid) images, groups '0', '1', '2', ...
+v2.2.0: crop L2A products to an AOI and export the subsets (grstbx.subset); ancillary group of Zarr products;
+        map helpers utm_projection and plot_rgb
+        packaging: dependency lower bounds, extras (notebook, regrid, docs, all), environment.yml
 '''
 
-__version__ = '2.1.1'
+__version__ = '2.2.0'
 
-from .driver import L2grs, open_zarr_image, zarr_levels
+from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels
 #from .driver_v1 import l2grs_v1
 
 from .masking import Masking
 from .utils import *
 from .datalake import SelectFiles
+from .subset import open_l2a, aoi_from_box, crop_l2a, export_l2a, export_rrs_geotiff, subset_path, crop_and_export
 
 
 def __getattr__(name):

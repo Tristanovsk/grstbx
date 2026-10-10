@@ -17,6 +17,7 @@ from collections import OrderedDict
 from collections import OrderedDict as odict
 
 import numpy as np
+import matplotlib
 import pandas as pd
 import xarray as xr
 import rioxarray  # noqa: F401, activates the .rio accessor
@@ -56,7 +57,7 @@ BASEMAPS = {
     'Alidade Smooth (Stadia)': 'https://tiles.stadiamaps.com/tiles/alidade_smooth/{Z}/{X}/{Y}.png',
     'Alidade Smooth Dark (Stadia)': 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{Z}/{X}/{Y}.png',
 }
-DEFAULT_BASEMAP = 'Esri World Imagery'
+DEFAULT_BASEMAP = 'Stamen Toner Lite (Stadia)'
 _STADIA_API_KEY = os.environ.get('STADIA_API_KEY')
 
 
@@ -83,9 +84,94 @@ def basemap_tiles(name):
     return hv.Tiles(url, name=name)
 
 
-# colormaps proposed in the ViewSpectral / ViewParam widgets
+# colormaps proposed in the ViewParam widget
 COLORMAPS = ['CET_D13', 'bky', 'CET_D1A', 'CET_CBL2', 'CET_L10', 'CET_C6s',
              'kbc', 'blues_r', 'kb', 'rainbow', 'fire', 'kgy', 'bjy', 'gray']
+
+# Colormaps of the ViewSpectral widget: sequential and perceptually uniform (Rrs is a positive
+# quantity with no meaningful centre, diverging or cyclic maps are misleading), named after the
+# water feature they enhance. Values: colorcet name, 'cmo.<name>' (cmocean) or matplotlib name.
+RRS_COLORMAPS = {
+    'Rainbow (CET_R1)': 'CET_R1',
+    'Turbid water, sediments (cmocean turbid)': 'cmo.turbid',
+    'Clear / shallow water (cmocean deep)': 'cmo.deep_r',
+    'Algae, chlorophyll (cmocean algae)': 'cmo.algae',
+    'Water masses (cmocean haline)': 'cmo.haline',
+    'Gouldian (CET_L20)': 'CET_L20',
+    'Viridis': 'viridis',
+    'Cividis (colour-blind safe)': 'cividis',
+    'Blues (CET_L12)': 'blues',
+    'Fire (CET_L3)': 'fire',
+    'Grey (CET_L1)': 'gray',
+}
+DEFAULT_RRS_COLORMAP = 'Rainbow (CET_R1)'
+
+
+def get_colormap(cmap, n=256):
+    """
+    List of hex colours of a colormap.
+
+    :param cmap: list of colours, label of :data:`RRS_COLORMAPS`, colorcet name, 'cmo.<name>'
+                 (cmocean) or matplotlib name; '_r' suffix to reverse
+    :param n: number of colours
+    :return: list of hex colours
+    """
+    if isinstance(cmap, (list, tuple)):
+        return list(cmap)
+    cmap = RRS_COLORMAPS.get(cmap, cmap)
+    if cmap in cc.cm:
+        cmap = cc.cm[cmap]
+    elif cmap.startswith('cmo.'):
+        import cmocean  # noqa: F401, registers the 'cmo.*' colormaps in matplotlib
+        cmap = matplotlib.colormaps[cmap]
+    else:
+        cmap = matplotlib.colormaps[cmap]
+    return [matplotlib.colors.to_hex(c) for c in cmap(np.linspace(0, 1, n))]
+
+
+def color_scale_hook(log):
+    """
+    Holoviews hook switching the color scale of an image between linear and log.
+
+    Holoviews creates the bokeh color mapper at the first rendering and only updates its range
+    afterwards: changing ``logz`` in a DynamicMap has no effect. When the type of the mapper does
+    not match ``log``, the hook replaces the glyph renderer by a copy using a new mapper. Changing
+    the mapper of the existing glyph is not enough: bokehjs draws copies of the glyph made at the
+    first rendering (decimated, selection, muted glyphs) which keep the initial mapper.
+
+    :param log: True for a log color scale, False for a linear one
+    """
+    from bokeh.models import BasicTicker, LinearColorMapper, LogColorMapper, LogTicker
+    mapper_type, ticker_type = (LogColorMapper, LogTicker) if log else (LinearColorMapper, BasicTicker)
+
+    def copy(model, **changes):
+        return type(model)(**{**model.properties_with_values(include_defaults=False), **changes})
+
+    def hook(plot, element):
+        mapper = plot.handles.get('color_mapper')
+        renderer = plot.handles.get('glyph_renderer')
+        if mapper is None or renderer is None or type(mapper) is mapper_type:
+            return
+        new = mapper_type(palette=mapper.palette, low=mapper.low, high=mapper.high, nan_color=mapper.nan_color,
+                          low_color=mapper.low_color, high_color=mapper.high_color)
+        glyphs = {name: copy(getattr(renderer, name), color_mapper=new)
+                  for name in ('glyph', 'selection_glyph', 'nonselection_glyph', 'hover_glyph', 'muted_glyph')
+                  if getattr(getattr(renderer, name), 'color_mapper', None) is mapper}
+        new_renderer = copy(renderer, **glyphs)
+
+        fig = plot.state
+        fig.renderers = [new_renderer if r is renderer else r for r in fig.renderers]
+        for tool in fig.tools:
+            if isinstance(getattr(tool, 'renderers', None), list) and renderer in tool.renderers:
+                tool.renderers = [new_renderer if r is renderer else r for r in tool.renderers]
+        plot.handles.update(color_mapper=new, glyph=glyphs['glyph'], glyph_renderer=new_renderer)
+        if 'colorbar' in plot.handles:
+            # ticker first: bokehjs redraws the colorbar when its mapper changes, not its ticker
+            colorbar = plot.handles['colorbar']
+            colorbar.ticker = ticker_type()
+            colorbar.color_mapper = new
+
+    return hook
 
 
 class ImageViewer():
@@ -632,26 +718,53 @@ class _MultiscaleViewer(Utils):
         return pn.widgets.Select(value=0, options=options)
 
     def _map(self, layer_widget, date_widget, cmap_widget, opacity_widget, range_widget, basemap_widget,
-             title_func):
+             title_func, log_widget=False):
         """Overlay of the basemap and of the multiscale image driven by the widgets and the viewport."""
 
-        def render(date, layer, cmap, opacity, clim, x_range=None, y_range=None, width=None, height=None,
-                   scale=1.):
+        # a DynamicMap must always return the same element type: single layers (hv.Image) and
+        # composites (hv.RGB) are drawn by two DynamicMaps, the inactive one returns an empty element
+        def render_image(date, layer, cmap, opacity, clim, log, x_range=None, y_range=None, width=None,
+                         height=None, scale=1.):
+            if self._is_rgb(layer):
+                x_range, y_range = self._ranges(date, x_range, y_range)
+                return hv.Image(np.zeros((1, 1)), vdims=['image'],
+                                bounds=(x_range[0], y_range[0], x_range[1], y_range[1])).opts(colorbar=False, alpha=0)
             element = self._render(date, layer, title_func(date, layer), x_range, y_range, width, height)
-            if isinstance(element, hv.RGB):
-                return element.opts(alpha=opacity)
-            return element.opts(cmap=cc.cm[cmap], alpha=opacity, clim=tuple(clim))
+            vmin, vmax = clim
+            if log and vmin <= 0:
+                # a log color scale needs a positive lower bound
+                vmin = vmax * 1e-3 if vmax > 0 else 1e-6
+            return element.opts(cmap=get_colormap(cmap), alpha=opacity, clim=(vmin, vmax), logz=log,
+                                colorbar=True, hooks=[color_scale_hook(log)])
+
+        def render_rgb(date, layer, opacity, x_range=None, y_range=None, width=None, height=None, scale=1.):
+            if not self._is_rgb(layer):
+                x_range, y_range = self._ranges(date, x_range, y_range)
+                return hv.RGB(np.zeros((1, 1, 4)), vdims=['R', 'G', 'B', 'A'],
+                              bounds=(x_range[0], y_range[0], x_range[1], y_range[1]))
+            element = self._render(date, layer, title_func(date, layer), x_range, y_range, width, height)
+            return element.opts(alpha=opacity)
 
         image = hv.DynamicMap(
-            pn.bind(render, date=date_widget, layer=layer_widget, cmap=cmap_widget,
-                    opacity=opacity_widget, clim=range_widget),
+            pn.bind(render_image, date=date_widget, layer=layer_widget, cmap=cmap_widget,
+                    opacity=opacity_widget, clim=range_widget, log=log_widget),
             streams=[hv.streams.RangeXY(), hv.streams.PlotSize()]
-        ).opts(opts.Image(**self._image_opts()), opts.RGB(width=self.width, height=self.height,
-                                                          active_tools=['wheel_zoom']))
+        ).opts(opts.Image(**self._image_opts()))
+        if self.has_rgb:
+            rgb = hv.DynamicMap(
+                pn.bind(render_rgb, date=date_widget, layer=layer_widget, opacity=opacity_widget),
+                streams=[hv.streams.RangeXY(), hv.streams.PlotSize()]
+            ).opts(opts.RGB(width=self.width, height=self.height, active_tools=['wheel_zoom']))
+            image = rgb * image
         if not self.reproject:
             return image * self.aoi_polygons
         tiles = hv.DynamicMap(pn.bind(self._tiles, basemap=basemap_widget))
         return tiles * image * self.aoi_polygons
+
+    has_rgb = False
+
+    def _is_rgb(self, layer):
+        return False
 
     def _render(self, date, layer, title, x_range, y_range, width, height):
         return self._image(date, layer, title, x_range, y_range, width, height)
@@ -671,7 +784,7 @@ class ViewSpectral(_MultiscaleViewer):
     -------
     >>> viewer = ViewSpectral(['S2A_L2A_1.zarr', 'S2B_L2A_2.zarr'], reproject=True)   # Zarr pyramids
     >>> viewer = ViewSpectral(datacube.Rrs, reproject=True)                         # datacube
-    >>> viewer = ViewSpectral(datacube.Rrs, reproject=True, basemap='CARTO Positron')
+    >>> viewer = ViewSpectral(datacube.Rrs, reproject=True, basemap='CARTO Positron', cmap='cmo.turbid')
     >>> viewer.visu()
     >>> aoi = viewer.get_geom()            # last drawn polygon, EPSG:4326
     >>> points = viewer.get_points()       # drawn points, EPSG:4326
@@ -688,6 +801,9 @@ class ViewSpectral(_MultiscaleViewer):
     :param minmax: bounds of the color range slider
     :param rgb_bands: wavelengths of the true-colour composite
     :param gamma: exponent applied to Rrs in the composite to enhance dark (water) pixels
+    :param cmap: initial colormap of the single bands, label of :data:`RRS_COLORMAPS`
+                 (e.g. 'Turbid water, sediments (cmocean turbid)'), or any colorcet, cmocean
+                 ('cmo.<name>') or matplotlib name
     :param width: width of the map (pixels)
     :param height: height of the map (pixels)
     """
@@ -701,11 +817,20 @@ class ViewSpectral(_MultiscaleViewer):
                  gamma=0.5,
                  width=1000,
                  height=700,
-                 basemap=DEFAULT_BASEMAP):
+                 basemap=DEFAULT_BASEMAP,
+                 cmap=DEFAULT_RRS_COLORMAP):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
                          width=width, height=height, basemap=basemap)
         self.title = '## S2 L2A'
+
+        # colormaps of the single bands (label -> colours); a custom colormap is added to the list
+        self.colormaps = {label: get_colormap(name) for label, name in RRS_COLORMAPS.items()}
+        labels = {name: label for label, name in RRS_COLORMAPS.items()}
+        cmap = labels.get(cmap, cmap)   # e.g. 'cmo.turbid' -> its label
+        if cmap not in self.colormaps:
+            self.colormaps[str(cmap)] = get_colormap(cmap)
+        self.cmap = str(cmap)
 
         image = self.data.images[self.indexes[0]][0]
         wls = (image['Rrs'] if isinstance(image, xr.Dataset) else image).wl.values
@@ -731,6 +856,11 @@ class ViewSpectral(_MultiscaleViewer):
             rgb = rgb.clip(min=0) ** self.gamma
             self._stretch[idate] = (float(rgb.quantile(0.02)), float(rgb.quantile(0.98)))
         return self._stretch[idate]
+
+    has_rgb = True
+
+    def _is_rgb(self, layer):
+        return layer == 'RGB'
 
     def _render(self, date, layer, title, x_range, y_range, width, height):
         if layer != 'RGB':
@@ -778,7 +908,13 @@ class ViewSpectral(_MultiscaleViewer):
         layers.update({'{:.0f}'.format(wl): wl for wl in self.bands})
         pn_band = pn.widgets.RadioButtonGroup(value='RGB', options=layers)
         pn_date = self._date_widget()
-        pn_colormap = pn.widgets.Select(value='CET_D13', options=self.colormaps)
+        # colormap picker with swatches and reverse toggle
+        pn_colormap = pn.widgets.ColorMap(options=self.colormaps, value_name=self.cmap, swatch_width=120,
+                                          width=260)
+        pn_reverse = pn.widgets.Checkbox(name='Reverse', value=False)
+        cmap = pn.bind(lambda colors, reverse: list(colors)[::-1] if reverse else list(colors),
+                       pn_colormap, pn_reverse)
+        pn_log = pn.widgets.Checkbox(name='Log scale', value=False)
         pn_opacity = pn.widgets.FloatSlider(name='Opacity', value=0.95, start=0, end=1, step=0.05)
         range_slider = pn.widgets.EditableRangeSlider(name='Range Slider', start=self.minmax[0],
                                                       end=self.minmax[1], value=self.minmaxvalues, step=0.0001)
@@ -788,7 +924,7 @@ class ViewSpectral(_MultiscaleViewer):
             band = 'RGB' if layer == 'RGB' else 'wl = {:.0f} nm'.format(layer)
             return '{}, {}'.format(self.datetimes[date], band)
 
-        map_ = self._map(pn_band, pn_date, pn_colormap, pn_opacity, range_slider, pn_basemaps, title)
+        map_ = self._map(pn_band, pn_date, cmap, pn_opacity, range_slider, pn_basemaps, title, pn_log)
         spectra = hv.DynamicMap(pn.bind(self._spectra, date=pn_date), streams=[self.poi_stream])
 
         return pn.Column(
@@ -803,7 +939,7 @@ class ViewSpectral(_MultiscaleViewer):
                     pn.Row(
                         pn.Row('', range_slider),
                         pn.Row('#### Opacity', pn_opacity),
-                        pn.Row('#### Colormap', pn_colormap))
+                        pn.Row('#### Colormap', pn_colormap, pn.Column(pn_reverse, pn_log)))
                 ),
             ),
             pn.Row(
@@ -867,6 +1003,7 @@ class ViewParam(_MultiscaleViewer):
         pn_param = pn.widgets.Select(value=self.params[0], options=self.params)
         pn_date = self._date_widget()
         pn_colormap = pn.widgets.Select(value='CET_D13', options=self.colormaps)
+        pn_log = pn.widgets.Checkbox(name='Log scale', value=False)
         pn_opacity = pn.widgets.FloatSlider(name='Opacity', value=0.95, start=0, end=1, step=0.05)
         range_slider = pn.widgets.EditableRangeSlider(name='Range Slider', start=self.minmax[0],
                                                       end=self.minmax[1], value=self.minmaxvalues, step=0.0001)
@@ -875,7 +1012,7 @@ class ViewParam(_MultiscaleViewer):
         def title(date, param):
             return '{}, {}'.format(self.datetimes[date], param)
 
-        map_ = self._map(pn_param, pn_date, pn_colormap, pn_opacity, range_slider, pn_basemaps, title)
+        map_ = self._map(pn_param, pn_date, pn_colormap, pn_opacity, range_slider, pn_basemaps, title, pn_log)
 
         return pn.Column(
             pn.WidgetBox(
@@ -888,7 +1025,7 @@ class ViewParam(_MultiscaleViewer):
                     ),
                     pn.Row(range_slider,
                            pn.Row('#### Opacity', pn_opacity),
-                           pn.Row('#### Colormap', pn_colormap)
+                           pn.Row('#### Colormap', pn_colormap, pn_log)
                            )
                 ),
             ),

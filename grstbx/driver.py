@@ -6,7 +6,9 @@ images into multi-temporal xarray datacubes.
 import os
 import logging
 
+import dask
 import numpy as np
+import pandas as pd
 import xarray as xr
 import rioxarray as rxr  # activate the rio accessor
 from affine import Affine
@@ -107,23 +109,45 @@ class L2grs():
     :param files: list of paths to GRS products (L2A folders, L2B netCDF files or .zarr stores)
     :param level: resolution level opened for multiscale (pyramid) Zarr stores,
                   0: full resolution, 1: 2x coarser, ..., -1: coarsest (see ``open_zarr_image``)
+
+    The images are opened lazily (dask) with the chunks of the files, so that each stored chunk is
+    decompressed only once; set ``xchunk``, ``ychunk`` or ``wlchunk`` to force other chunk sizes.
+    The images are read in parallel by dask when the datacube is built (flag statistics, subsets).
     """
 
     def __init__(self, files, level=0):
         self.files = files
         self.level = level
-        # dask chunk sizes used when opening images
-        self.xchunk = 1000
-        self.ychunk = 1000
-        self.wlchunk = -1
+        # dask chunk sizes used when opening images (None: chunks of the files)
+        self.xchunk = None
+        self.ychunk = None
+        self.wlchunk = None
+
+    def _scheduler(self, scheduler=None):
+        # netCDF (HDF5) reads are serialized by a lock: with threads they only compete for it and
+        # are slower than on a single thread; Zarr stores are read in parallel by threads, and an
+        # active dask.distributed client (processes) is kept
+        if scheduler is not None:
+            return scheduler
+        try:
+            from distributed import default_client
+            default_client()
+            return None
+        except (ImportError, ValueError):
+            pass
+        if dask.config.get('scheduler', None) is not None:
+            return None
+        return None if all(is_zarr(f) for f in self.files) else 'synchronous'
 
     @property
     def _chunks(self):
-        return {'wl': self.wlchunk, 'x': self.xchunk, 'y': self.ychunk}
+        chunks = {'wl': self.wlchunk, 'x': self.xchunk, 'y': self.ychunk}
+        return {dim: size for dim, size in chunks.items() if size is not None}
 
     def load_l2a_image(self,
                        l2a_path,
-                       level=None):
+                       level=None,
+                       ancillary=True):
         """
         Open a GRS L2A product.
 
@@ -137,13 +161,14 @@ class L2grs():
 
         :param l2a_path: path to the L2A product
         :param level: pyramid level for multiscale Zarr stores (default: ``self.level``)
+        :param ancillary: open the ancillary data (otherwise None is returned for them)
         :return: (raster, ancillary) xarray.Datasets; ancillary is None for zarr stores without
                  'ancillary' group
         """
 
         if is_zarr(l2a_path):
             return (open_zarr_image(l2a_path, level=self.level if level is None else level),
-                    open_zarr_ancillary(l2a_path))
+                    open_zarr_ancillary(l2a_path) if ancillary else None)
 
         basename = os.path.basename(l2a_path.rstrip('/'))
         main_file = opj(l2a_path, basename + '.nc')
@@ -152,8 +177,7 @@ class L2grs():
         raster = xr.open_dataset(main_file,
                                  decode_coords='all',
                                  chunks=self._chunks)
-        ancillary = xr.open_dataset(ancillary_file,
-                                    decode_coords='all')
+        ancillary = xr.open_dataset(ancillary_file, decode_coords='all') if ancillary else None
 
         if raster.attrs.get('metadata_profile') != 'beam':
             return raster, ancillary
@@ -166,7 +190,7 @@ class L2grs():
 
         Rrs_vars = ['Rrs_{:d}'.format(int(wl)) for wl in wls]
 
-        Rrs = raster[Rrs_vars].to_array(dim='wl', name='Rrs').chunk(self._chunks)
+        Rrs = raster[Rrs_vars].to_array(dim='wl', name='Rrs').chunk({'wl': -1, **self._chunks})
         Rrs = Rrs.assign_coords({'wl': wls})
         raster = raster.drop_vars(Rrs_vars)
         return xr.merge([raster, Rrs]), ancillary
@@ -182,20 +206,23 @@ class L2grs():
         """
         if is_zarr(l2b_path):
             return open_zarr_image(l2b_path, level=self.level if level is None else level)
-        return xr.open_dataset(l2b_path, decode_coords='all', chunks={'x': self.xchunk, 'y': self.ychunk})
+        chunks = {dim: size for dim, size in self._chunks.items() if dim != 'wl'}
+        return xr.open_dataset(l2b_path, decode_coords='all', chunks=chunks)
 
-    def subset_xy(self, ds, bbox):
+    def subset_xy(self, ds, bbox, load=True):
         """
-        Crop ``ds`` to the bounding box of ``bbox`` and load the result in memory.
+        Crop ``ds`` to the bounding box of ``bbox``.
 
         :param ds: xarray object with a CRS (rio accessor) and descending y coordinates
         :param bbox: geopandas.GeoDataFrame, only the bounds of its first geometry are used
-        :return: cropped (and loaded) xarray object
+        :param load: load the result in memory (otherwise it stays lazy)
+        :return: cropped xarray object
         """
 
         bbox = bbox.to_crs(epsg=ds.rio.crs.to_epsg())
         minx, miny, maxx, maxy = bbox.bounds.values[0]
-        return ds.sel(x=slice(minx, maxx), y=slice(maxy, miny)).load()
+        ds = ds.sel(x=slice(minx, maxx), y=slice(maxy, miny))
+        return ds.load() if load else ds
 
     def _finalize_datacube(self, product):
         self.datacube = product
@@ -208,7 +235,8 @@ class L2grs():
                          reproject=False,
                          nodata_thresh=0.5,
                          epsg_out=3857,
-                         FLAG_NAME='flags'):
+                         FLAG_NAME='flags',
+                         scheduler=None):
         """
         Load all L2A ``self.files`` into ``self.datacube`` (concatenated along 'time').
 
@@ -222,12 +250,16 @@ class L2grs():
         :param nodata_thresh: maximum accepted proportion of nodata pixels
         :param epsg_out: EPSG code used when ``reproject`` is True
         :param FLAG_NAME: name of the bitmask variable
+        :param scheduler: dask scheduler used to read the images (subsets, flags); default:
+                          single thread for netCDF files (HDF5 reads are serialized), dask default
+                          for Zarr stores or when a dask.distributed client is active
         """
 
+        # open all the images lazily
         products = []
         for file in self.files:
-            logging.info(f'loading l2a image: {file}')
-            product, anc = self.load_l2a_image(file)
+            logging.info(f'opening l2a image: {file}')
+            product, _ = self.load_l2a_image(file, ancillary=False)
 
             # add mean solar angles:
             for attribute in ['mean_solar_azimuth', 'mean_solar_zenith_angle']:
@@ -235,21 +267,30 @@ class L2grs():
                     product[attribute] = product.attrs[attribute]
 
             if subset is not None:
-                logging.info('subsetting...')
-                product = self.subset_xy(product, subset)
+                product = self.subset_xy(product, subset, load=False)
+            products.append(product)
 
-            if reproject:
-                logging.info('reprojecting...')
-                product = product.rio.reproject(epsg_out)
-                self.epsg = product.rio.crs.to_epsg()
+        # read the subsets of all the images in parallel
+        if subset is not None:
+            logging.info('loading the subsets')
+            products = list(dask.compute(*products, scheduler=self._scheduler(scheduler)))
 
-            # get flag statistics and discard images with too many nodata pixels
-            logging.info('computing flags statistics')
-            flag_stats = self.get_flag_stats(product[FLAG_NAME].expand_dims('time'))
+        if reproject:
+            logging.info('reprojecting...')
+            products = [product.rio.reproject(epsg_out) for product in products]
+            self.epsg = products[0].rio.crs.to_epsg()
+
+        # flag statistics of all the images, computed in parallel, and discard the images with too
+        # many nodata pixels
+        logging.info('computing flags statistics')
+        all_stats = dask.compute(*[self._flag_stats(product[FLAG_NAME].expand_dims('time'))
+                                   for product in products], scheduler=self._scheduler(scheduler))
+        kept = []
+        for product, flag_stats in zip(products, all_stats):
             if 'flag_nodata' in flag_stats and flag_stats.flag_nodata.values > nodata_thresh:
                 continue
-
-            products.append(xr.merge([product, flag_stats]))
+            kept.append(xr.merge([product, flag_stats]))
+        products = kept
 
         if len(products) == 0:
             self.no_product = True
@@ -268,7 +309,8 @@ class L2grs():
                          reproject=False,
                          epsg_out=3857,
                          var='Chla_OC2nasa',
-                         var_novalid='central_wavelength'):
+                         var_novalid='central_wavelength',
+                         scheduler=None):
         """
         Load all L2B ``self.files`` into ``self.datacube`` (concatenated and sorted along 'time').
 
@@ -281,32 +323,41 @@ class L2grs():
         :param epsg_out: EPSG code used when ``reproject`` is True
         :param var: variable used to count valid pixels
         :param var_novalid: variable dropped before concatenation (incompatible across dates)
+        :param scheduler: dask scheduler used to read the images, see ``get_l2a_datacube``
         """
+        # open all the images lazily
         products = []
         for file in self.files:
-
             product = self.load_l2b_image(file)
-
             if var_novalid in product:
                 product = product.drop_vars(var_novalid)
-
             if subset is not None:
-                product = self.subset_xy(product, subset)
+                product = self.subset_xy(product, subset, load=False)
+            products.append(product)
 
-            if reproject:
-                product = product.rio.reproject(epsg_out)
-                self.epsg = product.rio.crs.to_epsg()
+        # read the subsets of all the images in parallel
+        if subset is not None:
+            products = list(dask.compute(*products, scheduler=self._scheduler(scheduler)))
 
-            # check valid pixels:
+        if reproject:
+            products = [product.rio.reproject(epsg_out) for product in products]
+            self.epsg = products[0].rio.crs.to_epsg()
+
+        # count the valid pixels of all the images in parallel
+        counts = dask.compute(*[product[var].count() for product in products],
+                              scheduler=self._scheduler(scheduler))
+        kept = []
+        for product, Npix_valid in zip(products, counts):
             Npix_tot = product.sizes['x'] * product.sizes['y']
-            Npix_valid = int(product[var].count().compute())
+            Npix_valid = int(Npix_valid)
             if Npix_valid == 0:
                 continue
             product['valid_pix_prop'] = Npix_valid / Npix_tot
             product['valid_pix_prop'].attrs['description'] = 'Proportion of valid pixels for ' + var \
                                                              + ' within the image raster'
 
-            products.append(product)
+            kept.append(product)
+        products = kept
 
         if len(products) == 0:
             self.no_product = True
@@ -324,18 +375,36 @@ class L2grs():
         :return: xarray.Dataset with one ``flag_<name>`` variable (dims: time) per named flag
         '''
 
+        return L2grs._flag_stats(raster).compute()
+
+    @staticmethod
+    def _flag_stats(raster):
+        # delayed version of get_flag_stats: one numpy task per image (small dask graph), so that
+        # the statistics of several images can be computed together with dask.compute
         spatial_dims = [dim for dim in raster.dims if dim != 'time']
-        flags = raster.compute()
-        npix = flags.count(dim=spatial_dims)
+        raster = raster.transpose('time', *spatial_dims)
+        names = raster.attrs['flag_names']
+        if isinstance(names, str):
+            names = names.split(' ')
+        bits = [(bit, name) for bit, name in enumerate(names) if name not in ('None', '')]
+        times = raster.time.values
 
-        flag_stats = {}
-        for bit, flag_name in enumerate(flags.attrs['flag_names']):
-            if flag_name in ('None', ''):
-                continue
-            raised = (flags & (1 << bit)) != 0
-            flag_stats['flag_' + flag_name] = (raised.sum(dim=spatial_dims) / npix).astype(float)
+        def stats(values):
+            values = np.asarray(values)
+            fractions = {'flag_' + name: [] for _, name in bits}
+            for image in values:
+                if np.issubdtype(image.dtype, np.floating):
+                    image = image[np.isfinite(image)]
+                # a bitmask has few distinct values: count them (hash table), then the bits
+                counts = pd.Series(image.ravel()).value_counts()
+                values, counts = counts.index.values.astype(np.int64), counts.values
+                for bit, name in bits:
+                    fractions['flag_' + name].append(
+                        counts[(values >> bit) & 1 == 1].sum() / image.size if image.size else np.nan)
+            return xr.Dataset({var: ('time', np.array(val, dtype=float)) for var, val in fractions.items()},
+                              coords={'time': times})
 
-        return xr.Dataset(flag_stats).reset_coords(drop=True).assign_coords({'time': raster.time.values})
+        return dask.delayed(stats)(raster.data)
 
     def reshape_raster(self, bands=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4',
                                     'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',

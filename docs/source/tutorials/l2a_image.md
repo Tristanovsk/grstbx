@@ -7,8 +7,9 @@ This notebook walks through a single GRS L2A product, from loading to simple wat
   overlay of cloud / land flags on the true-colour image,
 - quick-looks: true colour, sunglint, aerosol optical thickness, viewing geometry, per-band maps,
 - selection of the water pixels,
-- interactive exploration with {class}`~grstbx.visual.ViewSpectral`: spectra of drawn points,
-  statistics of $R_{rs}$ over drawn polygons,
+- interactive exploration with {class}`~grstbx.visual.ViewSpectral`: multiscale display of the
+  Zarr pyramid over a free basemap (CARTO, OpenStreetMap, Esri...), colormaps adapted to water
+  reflectance, spectra of drawn points, statistics of $R_{rs}$ over drawn polygons,
 - empirical water-quality algorithms: chlorophyll-a (NASA OC2), CDOM absorption
   (Brezonik et al., 2015) and suspended particulate matter (Nechad et al., 2010, 2016), displayed
   with {class}`~grstbx.visual.ViewParam`.

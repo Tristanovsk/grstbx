@@ -89,12 +89,20 @@ Interactive visualization
 
    grstbx.visual.basemap_tiles
    grstbx.visual.set_stadia_api_key
+   grstbx.visual.get_colormap
 
 The basemaps proposed by the viewers (``grstbx.visual.BASEMAPS``) are free XYZ tile services: CARTO
 (Positron, Dark Matter, Voyager), OpenStreetMap, OpenTopoMap, Esri (World Imagery, World Topo, Ocean)
 and the Stamen / Alidade styles of Stadia Maps. Stadia Maps tiles are free without key when the
 notebook runs on ``localhost``; otherwise create a free account and set its API key with
 :func:`grstbx.visual.set_stadia_api_key` or the ``STADIA_API_KEY`` environment variable.
+
+The single bands of :class:`~grstbx.visual.ViewSpectral` are drawn with sequential, perceptually
+uniform colormaps (``grstbx.visual.RRS_COLORMAPS``) named after the water feature they enhance:
+rainbow (CET_R1, default), turbid water and sediments (cmocean *turbid*), clear / shallow water
+(cmocean *deep*), algae (cmocean *algae*), water masses (cmocean *haline*), Gouldian, viridis,
+cividis (colour-blind safe), blues, fire and grey; they can be reversed in the widget and the
+initial one is set with ``cmap=`` (label, colorcet, ``'cmo.<name>'`` or matplotlib name).
 
 Utilities
 ---------

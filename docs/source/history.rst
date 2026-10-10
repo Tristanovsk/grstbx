@@ -10,6 +10,14 @@ v2.3.0
    composite and the full-resolution spectra of the drawn points. Free basemaps: CARTO, OpenStreetMap,
    OpenTopoMap, Esri and the Stamen styles of Stadia Maps (:data:`~grstbx.visual.BASEMAPS`).
    Drawn geometries are returned in the right CRS when the map is not reprojected.
+   ``basemap=`` sets the initial basemap. ``ViewSpectral`` colormaps: sequential, perceptually
+   uniform maps named after the water feature they enhance (:data:`~grstbx.visual.RRS_COLORMAPS`,
+   colorcet and cmocean), with previews, a reverse toggle and ``cmap=``; fix of the crash when
+   switching between the RGB composite and a single band.
+   Faster datacubes (:class:`~grstbx.driver.L2grs`): images opened with the chunks of the files,
+   flag statistics and subsets of all the images computed in a single dask call (one task per
+   image), ancillary files skipped, ``scheduler`` option (single thread by default for netCDF,
+   whose HDF5 reads are serialized); about 4x faster to build and 5x faster to read.
 
 v2.2.0
    Crop L2A products to an area of interest and export the subsets as GRS products (NetCDF or Zarr)

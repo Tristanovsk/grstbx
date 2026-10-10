@@ -12,6 +12,7 @@ authors = [{ name = "T. Harmel", email = "tristan.harmel@gmail.com" }]
 keywords = ["Sentinel-2", "Landsat", "ocean color", "remote sensing reflectance", "water quality",
             "sunglint", "xarray", "datacube"]
 classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -48,6 +49,7 @@ dependencies = [
     "holoviews>=1.18",
     "datashader>=0.16",
     "colorcet>=3.0",
+    "cmocean>=3.0",           # water colormaps of ViewSpectral
     "param>=2.0",
     "panel>=1.3",
     # statistics of the matchups (grstbx.utils.Plotting.add_stats)

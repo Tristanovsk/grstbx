@@ -15,9 +15,12 @@ v2.1.1: open Zarr v3 multiscale (pyramid) images, groups '0', '1', '2', ...
 v2.2.0: crop L2A products to an AOI and export the subsets (grstbx.subset); ancillary group of Zarr products;
         map helpers utm_projection and plot_rgb
         packaging: dependency lower bounds, extras (notebook, regrid, docs, all), environment.yml
+v2.3.0: multiscale viewers (grstbx.visual): ViewSpectral / ViewParam read only the visible pixels at screen
+        resolution from Zarr pyramids (or levels computed on demand), RGB composite, spectra of the drawn
+        points, free basemaps (CARTO, OSM, OpenTopoMap, Esri, Stamen via Stadia Maps)
 '''
 
-__version__ = '2.2.0'
+__version__ = '2.3.0'
 
 from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels
 #from .driver_v1 import l2grs_v1

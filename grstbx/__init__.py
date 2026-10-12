@@ -18,9 +18,11 @@ v2.2.0: crop L2A products to an AOI and export the subsets (grstbx.subset); anci
 v2.3.0: multiscale viewers (grstbx.visual): ViewSpectral / ViewParam read only the visible pixels at screen
         resolution from Zarr pyramids (or levels computed on demand), RGB composite, spectra of the drawn
         points, free basemaps (CARTO, OSM, OpenTopoMap, Esri, Stamen via Stadia Maps)
+v2.3.1: add live stream to visualize L2A data and reflectance spectra interactively
+
 '''
 
-__version__ = '2.3.0'
+__version__ = '2.3.1'
 
 from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels
 #from .driver_v1 import l2grs_v1

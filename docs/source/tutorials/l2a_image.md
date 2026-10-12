@@ -9,10 +9,11 @@ This notebook walks through a single GRS L2A product, from loading to simple wat
 - selection of the water pixels,
 - interactive exploration with {class}`~grstbx.visual.ViewSpectral`: multiscale display of the
   Zarr pyramid over a free basemap (CARTO, OpenStreetMap, Esri...), colormaps adapted to water
-  reflectance, spectra of drawn points, statistics of $R_{rs}$ over drawn polygons,
+  reflectance, live spectrum of the pixel under the mouse, spectra of drawn points, statistics of
+  $R_{rs}$ over drawn polygons,
 - empirical water-quality algorithms: chlorophyll-a (NASA OC2), CDOM absorption
   (Brezonik et al., 2015) and suspended particulate matter (Nechad et al., 2010, 2016), displayed
-  with {class}`~grstbx.visual.ViewParam`.
+  with {class}`~grstbx.visual.ViewParam` (same colormap picker as `ViewSpectral`).
 
 It is rendered with the outputs of its last run, where no geometry was drawn on the interactive
 maps (the interactive widgets are not functional in this page). The input image is not distributed

@@ -1,6 +1,14 @@
 History
 =======
 
+v2.3.1
+   :class:`~grstbx.visual.ViewSpectral`: live full-resolution spectrum of the pixel under the mouse
+   (*Live spectrum* checkbox), plotted with the spectra of the drawn points; the pixels are read by
+   blocks aligned on the Zarr chunks, with all the bands, and the last blocks are kept in memory
+   (:meth:`~grstbx.visual.Multiscale.pixel`). :class:`~grstbx.visual.ViewParam`: same colormaps as
+   ``ViewSpectral`` (:data:`~grstbx.visual.RRS_COLORMAPS`, previews, reverse toggle) and ``cmap=``
+   option; the former list ``COLORMAPS`` is removed.
+
 v2.3.0
    Multiscale interactive viewers: :class:`~grstbx.visual.ViewSpectral` and
    :class:`~grstbx.visual.ViewParam` read only the pixels visible on the screen, at the screen

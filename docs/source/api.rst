@@ -97,12 +97,20 @@ and the Stamen / Alidade styles of Stadia Maps. Stadia Maps tiles are free witho
 notebook runs on ``localhost``; otherwise create a free account and set its API key with
 :func:`grstbx.visual.set_stadia_api_key` or the ``STADIA_API_KEY`` environment variable.
 
-The single bands of :class:`~grstbx.visual.ViewSpectral` are drawn with sequential, perceptually
-uniform colormaps (``grstbx.visual.RRS_COLORMAPS``) named after the water feature they enhance:
+The single bands of :class:`~grstbx.visual.ViewSpectral` and the parameters of
+:class:`~grstbx.visual.ViewParam` are drawn with sequential, perceptually uniform colormaps
+(``grstbx.visual.RRS_COLORMAPS``) named after the water feature they enhance:
 rainbow (CET_R1, default), turbid water and sediments (cmocean *turbid*), clear / shallow water
 (cmocean *deep*), algae (cmocean *algae*), water masses (cmocean *haline*), Gouldian, viridis,
 cividis (colour-blind safe), blues, fire and grey; they can be reversed in the widget and the
-initial one is set with ``cmap=`` (label, colorcet, ``'cmo.<name>'`` or matplotlib name).
+initial one is set with ``cmap=`` (label, colorcet, ``'cmo.<name>'`` or matplotlib name). For L2B
+parameters better shown with a diverging map, pass it with ``cmap=`` (e.g. ``cmap='CET_D13'``): it is
+added to the list.
+
+:class:`~grstbx.visual.ViewSpectral` plots live the full-resolution spectrum of the pixel under the
+mouse (*Live spectrum* checkbox), next to the spectra of the drawn points. The block of pixels around
+the mouse, aligned on the Zarr chunks, is read once with all the bands and kept in memory
+(:meth:`grstbx.visual.Multiscale.pixel`), so that hovering nearby does not read the data again.
 
 Utilities
 ---------

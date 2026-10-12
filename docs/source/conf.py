@@ -31,7 +31,7 @@ for _target, _notebooks in NOTEBOOKS.items():
 # -- Project information -----------------------------------------------------
 
 project = 'grstbx'
-copyright = '2026, Tristan Harmel'
+copyright = '2021-2026, Tristan Harmel'
 author = 'Tristan Harmel'
 version = grstbx.__version__
 release = grstbx.__version__

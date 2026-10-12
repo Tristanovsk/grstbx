@@ -84,11 +84,7 @@ def basemap_tiles(name):
     return hv.Tiles(url, name=name)
 
 
-# colormaps proposed in the ViewParam widget
-COLORMAPS = ['CET_D13', 'bky', 'CET_D1A', 'CET_CBL2', 'CET_L10', 'CET_C6s',
-             'kbc', 'blues_r', 'kb', 'rainbow', 'fire', 'kgy', 'bjy', 'gray']
-
-# Colormaps of the ViewSpectral widget: sequential and perceptually uniform (Rrs is a positive
+# Colormaps of the ViewSpectral and ViewParam widgets: sequential and perceptually uniform (Rrs is a positive
 # quantity with no meaningful centre, diverging or cyclic maps are misleading), named after the
 # water feature they enhance. Values: colorcet name, 'cmo.<name>' (cmocean) or matplotlib name.
 RRS_COLORMAPS = {
@@ -479,6 +475,9 @@ class Multiscale():
         self.min_size = min_size
         self.crs = images[0][0].rio.crs
         self._cache = {}
+        # full-resolution blocks (all wavelengths) read for the spectra, last ones kept in memory
+        self._blocks = OrderedDict()
+        self._max_blocks = 16
 
     @classmethod
     def from_xarray(cls, obj, min_size=512):
@@ -579,14 +578,41 @@ class Multiscale():
         yslice = slice(ymax + res, ymin - res) if da.y[0] > da.y[-1] else slice(ymin - res, ymax + res)
         return da.sel(x=slice(xmin - res, xmax + res), y=yslice).load(), level
 
+    @staticmethod
+    def _block_size(da, dim, default=256, max_size=512):
+        """Size of the blocks read for the spectra: chunk size of the store, bounded."""
+        size = None
+        if da.chunks:
+            size = da.chunks[da.get_axis_num(dim)][0]
+        elif dim in da.encoding.get('preferred_chunks', {}):
+            size = da.encoding['preferred_chunks'][dim]
+        return int(min(size or default, max_size))
+
     def pixel(self, idate, x, y):
-        """Full-resolution values (all wavelengths for Rrs) of the pixel nearest to (x, y), or None outside."""
+        """
+        Full-resolution values (all wavelengths for Rrs) of the pixel nearest to (x, y), or None outside.
+
+        The block of pixels around (x, y), aligned on the chunks of the store, is read once and kept in
+        memory, so that successive calls nearby (e.g. when hovering the map) do not read the data again.
+        """
         obj = self.images[idate][0]
         da = obj['Rrs'] if isinstance(obj, xr.Dataset) and 'Rrs' in obj else obj
         xmin, ymin, xmax, ymax = self.bounds(idate)
         if not (xmin <= x <= xmax and ymin <= y <= ymax):
             return None
-        return da.sel(x=x, y=y, method='nearest').load()
+        xs, ys = da.x.values, da.y.values
+        ix = int(np.clip(np.rint((x - xs[0]) / (xs[1] - xs[0])), 0, len(xs) - 1))
+        iy = int(np.clip(np.rint((y - ys[0]) / (ys[1] - ys[0])), 0, len(ys) - 1))
+        bx, by = self._block_size(da, 'x'), self._block_size(da, 'y')
+        key = (idate, ix // bx, iy // by)
+        if key in self._blocks:
+            self._blocks.move_to_end(key)
+        else:
+            self._blocks[key] = da.isel(x=slice(key[1] * bx, (key[1] + 1) * bx),
+                                        y=slice(key[2] * by, (key[2] + 1) * by)).load()
+            if len(self._blocks) > self._max_blocks:
+                self._blocks.popitem(last=False)
+        return self._blocks[key].isel(x=ix % bx, y=iy % by)
 
 
 class _MultiscaleViewer(Utils):
@@ -600,7 +626,7 @@ class _MultiscaleViewer(Utils):
     """
 
     def __init__(self, data, dates=None, reproject=False, minmaxvalues=(0, 0.02), minmax=(0, 0.06),
-                 width=1200, height=800, min_size=512, basemap=DEFAULT_BASEMAP):
+                 width=1200, height=800, min_size=512, basemap=DEFAULT_BASEMAP, cmap=DEFAULT_RRS_COLORMAP):
         if not isinstance(data, Multiscale):
             if isinstance(data, (str, os.PathLike)) or (
                     isinstance(data, (list, tuple)) and isinstance(data[0], (str, os.PathLike))):
@@ -621,7 +647,14 @@ class _MultiscaleViewer(Utils):
         self.width, self.height = width, height
         self.minmaxvalues = minmaxvalues
         self.minmax = minmax
-        self.colormaps = COLORMAPS
+
+        # colormaps of the picker (label -> colours); a custom colormap is added to the list
+        self.colormaps = {label: get_colormap(name) for label, name in RRS_COLORMAPS.items()}
+        labels = {name: label for label, name in RRS_COLORMAPS.items()}
+        cmap = labels.get(cmap, cmap)   # e.g. 'cmo.turbid' -> its label
+        if cmap not in self.colormaps:
+            self.colormaps[str(cmap)] = get_colormap(cmap)
+        self.cmap = str(cmap)
 
         # display CRS and transformations from / to the CRS of the images
         self.reproject = reproject
@@ -717,6 +750,15 @@ class _MultiscaleViewer(Utils):
         options = {str(dt): idate for idate, dt in enumerate(self.datetimes)}
         return pn.widgets.Select(value=0, options=options)
 
+    def _colormap_widgets(self):
+        """Colormap picker with swatches, reverse toggle and the bound list of colours."""
+        pn_colormap = pn.widgets.ColorMap(options=self.colormaps, value_name=self.cmap, swatch_width=120,
+                                          width=260)
+        pn_reverse = pn.widgets.Checkbox(name='Reverse', value=False)
+        cmap = pn.bind(lambda colors, reverse: list(colors)[::-1] if reverse else list(colors),
+                       pn_colormap, pn_reverse)
+        return pn_colormap, pn_reverse, cmap
+
     def _map(self, layer_widget, date_widget, cmap_widget, opacity_widget, range_widget, basemap_widget,
              title_func, log_widget=False):
         """Overlay of the basemap and of the multiscale image driven by the widgets and the viewport."""
@@ -774,7 +816,8 @@ class ViewSpectral(_MultiscaleViewer):
     """
     Interactive viewer of L2A images (Rrs with 'wl' and optional 'time' dimensions): true-colour
     composite or single bands, areas of interest (polygons) and points of interest whose
-    full-resolution spectra are plotted.
+    full-resolution spectra are plotted. The spectrum of the pixel under the mouse is also plotted
+    live (dashed line), which can be turned off with the 'Live spectrum' checkbox.
 
     Only the pixels visible on the screen are read, from the coarsest resolution level that matches
     the zoom: the pyramids of the GRS Zarr products are used directly, and coarser levels are computed
@@ -821,16 +864,8 @@ class ViewSpectral(_MultiscaleViewer):
                  cmap=DEFAULT_RRS_COLORMAP):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
-                         width=width, height=height, basemap=basemap)
+                         width=width, height=height, basemap=basemap, cmap=cmap)
         self.title = '## S2 L2A'
-
-        # colormaps of the single bands (label -> colours); a custom colormap is added to the list
-        self.colormaps = {label: get_colormap(name) for label, name in RRS_COLORMAPS.items()}
-        labels = {name: label for label, name in RRS_COLORMAPS.items()}
-        cmap = labels.get(cmap, cmap)   # e.g. 'cmo.turbid' -> its label
-        if cmap not in self.colormaps:
-            self.colormaps[str(cmap)] = get_colormap(cmap)
-        self.cmap = str(cmap)
 
         image = self.data.images[self.indexes[0]][0]
         wls = (image['Rrs'] if isinstance(image, xr.Dataset) else image).wl.values
@@ -901,6 +936,16 @@ class ViewSpectral(_MultiscaleViewer):
             opts.Curve(width=450, height=350, tools=['hover'], line_width=2, show_grid=True),
             opts.NdOverlay(show_legend=False, title='Spectra of the points (full resolution)'))
 
+    def _live_spectrum(self, date, live, x=None, y=None):
+        """Full-resolution spectrum of the pixel under the mouse."""
+        label = r'Rrs (sr-1)'
+        spectrum = None
+        if live and x is not None and y is not None:
+            spectrum = self.data.pixel(self.indexes[date], *self._to_native.transform(x, y))
+        if spectrum is None:
+            return hv.Curve([], 'Wavelength (nm)', label)
+        return hv.Curve((spectrum.wl.values, spectrum.values), 'Wavelength (nm)', label)
+
     def visu(self):
         """Return the panel layout of the viewer."""
 
@@ -908,13 +953,9 @@ class ViewSpectral(_MultiscaleViewer):
         layers.update({'{:.0f}'.format(wl): wl for wl in self.bands})
         pn_band = pn.widgets.RadioButtonGroup(value='RGB', options=layers)
         pn_date = self._date_widget()
-        # colormap picker with swatches and reverse toggle
-        pn_colormap = pn.widgets.ColorMap(options=self.colormaps, value_name=self.cmap, swatch_width=120,
-                                          width=260)
-        pn_reverse = pn.widgets.Checkbox(name='Reverse', value=False)
-        cmap = pn.bind(lambda colors, reverse: list(colors)[::-1] if reverse else list(colors),
-                       pn_colormap, pn_reverse)
+        pn_colormap, pn_reverse, cmap = self._colormap_widgets()
         pn_log = pn.widgets.Checkbox(name='Log scale', value=False)
+        pn_live = pn.widgets.Checkbox(name='Live spectrum', value=True)
         pn_opacity = pn.widgets.FloatSlider(name='Opacity', value=0.95, start=0, end=1, step=0.05)
         range_slider = pn.widgets.EditableRangeSlider(name='Range Slider', start=self.minmax[0],
                                                       end=self.minmax[1], value=self.minmaxvalues, step=0.0001)
@@ -926,12 +967,18 @@ class ViewSpectral(_MultiscaleViewer):
 
         map_ = self._map(pn_band, pn_date, cmap, pn_opacity, range_slider, pn_basemaps, title, pn_log)
         spectra = hv.DynamicMap(pn.bind(self._spectra, date=pn_date), streams=[self.poi_stream])
+        # spectrum under the mouse (HoloViews throttles the pointer events and keeps the last one)
+        pointer = hv.streams.PointerXY(x=None, y=None, source=self.poi_points)
+        live = hv.DynamicMap(pn.bind(self._live_spectrum, date=pn_date, live=pn_live),
+                             streams=[pointer]).opts(
+            opts.Curve(color='black', line_dash='dashed', line_width=1.5, framewise=True))
+        spectra = (spectra * live).opts(title='Spectra of the points and under the mouse (full resolution)')
 
         return pn.Column(
             pn.WidgetBox(
                 self.title,
                 pn.Column(
-                    pn.Row('### Band', pn_band),
+                    pn.Row('### Band', pn_band, pn_live),
                     pn.Row(
                         pn.Row('### Date', pn_date),
                         pn.Row('#### Basemap', pn_basemaps)
@@ -973,6 +1020,9 @@ class ViewParam(_MultiscaleViewer):
                     with {X}, {Y}, {Z}; it can be changed in the widget
     :param minmaxvalues: initial color range
     :param minmax: bounds of the color range slider
+    :param cmap: initial colormap, label of :data:`RRS_COLORMAPS`
+                 (e.g. 'Algae, chlorophyll (cmocean algae)'), or any colorcet, cmocean
+                 ('cmo.<name>') or matplotlib name
     :param width: width of the map (pixels)
     :param height: height of the map (pixels)
     """
@@ -984,10 +1034,11 @@ class ViewParam(_MultiscaleViewer):
                  minmax=(0, 10),
                  width=1200,
                  height=800,
-                 basemap=DEFAULT_BASEMAP):
+                 basemap=DEFAULT_BASEMAP,
+                 cmap=DEFAULT_RRS_COLORMAP):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
-                         width=width, height=height, basemap=basemap)
+                         width=width, height=height, basemap=basemap, cmap=cmap)
         self.title = '## S2 L2B'
 
         image = self.data.images[self.indexes[0]][0]
@@ -1002,7 +1053,7 @@ class ViewParam(_MultiscaleViewer):
 
         pn_param = pn.widgets.Select(value=self.params[0], options=self.params)
         pn_date = self._date_widget()
-        pn_colormap = pn.widgets.Select(value='CET_D13', options=self.colormaps)
+        pn_colormap, pn_reverse, cmap = self._colormap_widgets()
         pn_log = pn.widgets.Checkbox(name='Log scale', value=False)
         pn_opacity = pn.widgets.FloatSlider(name='Opacity', value=0.95, start=0, end=1, step=0.05)
         range_slider = pn.widgets.EditableRangeSlider(name='Range Slider', start=self.minmax[0],
@@ -1012,7 +1063,7 @@ class ViewParam(_MultiscaleViewer):
         def title(date, param):
             return '{}, {}'.format(self.datetimes[date], param)
 
-        map_ = self._map(pn_param, pn_date, pn_colormap, pn_opacity, range_slider, pn_basemaps, title, pn_log)
+        map_ = self._map(pn_param, pn_date, cmap, pn_opacity, range_slider, pn_basemaps, title, pn_log)
 
         return pn.Column(
             pn.WidgetBox(
@@ -1025,7 +1076,7 @@ class ViewParam(_MultiscaleViewer):
                     ),
                     pn.Row(range_slider,
                            pn.Row('#### Opacity', pn_opacity),
-                           pn.Row('#### Colormap', pn_colormap, pn_log)
+                           pn.Row('#### Colormap', pn_colormap, pn.Column(pn_reverse, pn_log))
                            )
                 ),
             ),

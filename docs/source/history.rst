@@ -7,7 +7,8 @@ v2.3.1
    blocks aligned on the Zarr chunks, with all the bands, and the last blocks are kept in memory
    (:meth:`~grstbx.visual.Multiscale.pixel`). :class:`~grstbx.visual.ViewParam`: same colormaps as
    ``ViewSpectral`` (:data:`~grstbx.visual.RRS_COLORMAPS`, previews, reverse toggle) and ``cmap=``
-   option; the former list ``COLORMAPS`` is removed.
+   option; the former list ``COLORMAPS`` is removed. Default basemap: CARTO Positron, which needs no API key
+   (the Stadia Maps tiles return error 401 outside ``localhost``, e.g. on Read the Docs).
 
 v2.3.0
    Multiscale interactive viewers: :class:`~grstbx.visual.ViewSpectral` and

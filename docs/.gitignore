@@ -3,4 +3,5 @@ source/generated
 source/tutorials/validation
 source/tutorials/case_studies
 source/tutorials/l2a_image
+source/tutorials/l2b_datacube
 source/tutorials/subset_export

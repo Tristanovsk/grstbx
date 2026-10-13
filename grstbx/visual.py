@@ -27,13 +27,13 @@ import geopandas as gpd
 import holoviews as hv
 from holoviews.element import tiles as hvts
 from holoviews import opts
-from holoviews.plotting.links import DataLink
 
 import bokeh
 import colorcet as cc
 import panel as pn
 import param as pm
-from shapely.geometry import Polygon
+import shapely.wkt
+from shapely.geometry import Point, Polygon
 
 hv.extension('bokeh')
 
@@ -101,6 +101,11 @@ RRS_COLORMAPS = {
     'Grey (CET_L1)': 'gray',
 }
 DEFAULT_RRS_COLORMAP = 'Rainbow (CET_R1)'
+
+# Colours of the points drawn on the viewers, cycled in the drawing order (Category10 without grey,
+# kept for the black live curve and the grey date line)
+POINT_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#bcbd22',
+                '#17becf']
 
 
 def get_colormap(cmap, n=256):
@@ -475,9 +480,11 @@ class Multiscale():
         self.min_size = min_size
         self.crs = images[0][0].rio.crs
         self._cache = {}
-        # full-resolution blocks (all wavelengths) read for the spectra, last ones kept in memory
+        self._bounds = {}
+        # full-resolution blocks (all wavelengths) read for the spectra and time series, last ones kept
+        # in memory (at least two per image, so that a time series is not read again when hovering)
         self._blocks = OrderedDict()
-        self._max_blocks = 16
+        self._max_blocks = max(16, 2 * len(images))
 
     @classmethod
     def from_xarray(cls, obj, min_size=512):
@@ -541,7 +548,9 @@ class Multiscale():
 
     def bounds(self, idate=0):
         """(xmin, ymin, xmax, ymax) of the image ``idate`` in its CRS."""
-        return self.images[idate][0].rio.bounds()
+        if idate not in self._bounds:
+            self._bounds[idate] = self.images[idate][0].rio.bounds()
+        return self._bounds[idate]
 
     def layer(self, idate, name, level=0):
         """Lazy (stored levels) or in-memory (computed levels) 2-D or 3-D layer of an image."""
@@ -588,15 +597,21 @@ class Multiscale():
             size = da.encoding['preferred_chunks'][dim]
         return int(min(size or default, max_size))
 
-    def pixel(self, idate, x, y):
+    def pixel(self, idate, x, y, name=None):
         """
         Full-resolution values (all wavelengths for Rrs) of the pixel nearest to (x, y), or None outside.
 
         The block of pixels around (x, y), aligned on the chunks of the store, is read once and kept in
         memory, so that successive calls nearby (e.g. when hovering the map) do not read the data again.
+
+        :param name: layer to read (variable name or wavelength, see :meth:`layer`); default: Rrs
+                     (all wavelengths) or the whole image
         """
         obj = self.images[idate][0]
-        da = obj['Rrs'] if isinstance(obj, xr.Dataset) and 'Rrs' in obj else obj
+        if name is not None:
+            da = self._select(obj, name)
+        else:
+            da = obj['Rrs'] if isinstance(obj, xr.Dataset) and 'Rrs' in obj else obj
         xmin, ymin, xmax, ymax = self.bounds(idate)
         if not (xmin <= x <= xmax and ymin <= y <= ymax):
             return None
@@ -604,15 +619,32 @@ class Multiscale():
         ix = int(np.clip(np.rint((x - xs[0]) / (xs[1] - xs[0])), 0, len(xs) - 1))
         iy = int(np.clip(np.rint((y - ys[0]) / (ys[1] - ys[0])), 0, len(ys) - 1))
         bx, by = self._block_size(da, 'x'), self._block_size(da, 'y')
-        key = (idate, ix // bx, iy // by)
+        key = (idate, name, ix // bx, iy // by)
         if key in self._blocks:
             self._blocks.move_to_end(key)
         else:
-            self._blocks[key] = da.isel(x=slice(key[1] * bx, (key[1] + 1) * bx),
-                                        y=slice(key[2] * by, (key[2] + 1) * by)).load()
+            self._blocks[key] = da.isel(x=slice(key[2] * bx, (key[2] + 1) * bx),
+                                        y=slice(key[3] * by, (key[3] + 1) * by)).load()
             if len(self._blocks) > self._max_blocks:
                 self._blocks.popitem(last=False)
         return self._blocks[key].isel(x=ix % bx, y=iy % by)
+
+    def timeseries(self, name, x, y, indexes=None):
+        """
+        Full-resolution time series of a layer at the pixel nearest to (x, y).
+
+        :param name: variable name or wavelength
+        :param indexes: indexes of the images (default: all)
+        :return: pandas.Series indexed by acquisition time (images not covering (x, y) are skipped)
+        """
+        indexes = range(len(self.images)) if indexes is None else indexes
+        times, values = [], []
+        for idate in indexes:
+            value = self.pixel(idate, x, y, name)
+            if value is not None:
+                times.append(self.times[idate])
+                values.append(float(value))
+        return pd.Series(values, index=pd.DatetimeIndex(times), name=name, dtype=float)
 
 
 class _MultiscaleViewer(Utils):
@@ -626,7 +658,8 @@ class _MultiscaleViewer(Utils):
     """
 
     def __init__(self, data, dates=None, reproject=False, minmaxvalues=(0, 0.02), minmax=(0, 0.06),
-                 width=1200, height=800, min_size=512, basemap=DEFAULT_BASEMAP, cmap=DEFAULT_RRS_COLORMAP):
+                 width=1200, height=800, min_size=512, basemap=DEFAULT_BASEMAP, cmap=DEFAULT_RRS_COLORMAP,
+                 aoi=None, poi=None):
         if not isinstance(data, Multiscale):
             if isinstance(data, (str, os.PathLike)) or (
                     isinstance(data, (list, tuple)) and isinstance(data[0], (str, os.PathLike))):
@@ -665,13 +698,53 @@ class _MultiscaleViewer(Utils):
         self._windows = OrderedDict()
         self._max_windows = 16
 
-        # declare streaming object to get Area of Interest (AOI), in the CRS of the map
-        self.aoi_polygons = hv.Polygons([]).opts(opts.Polygons(
+        # declare streaming object to get Area of Interest (AOI), in the CRS of the map, with the
+        # initial polygons (if any)
+        xs, ys = self._aoi_coords(aoi)
+        self.aoi_polygons = hv.Polygons([{'x': x, 'y': y} for x, y in zip(xs, ys)]).opts(opts.Polygons(
             fill_alpha=0.3, fill_color='white', line_width=1.2))
-        self.aoi_stream = hv.streams.PolyDraw(source=self.aoi_polygons, drag=True)
+        self.aoi_stream = hv.streams.PolyDraw(source=self.aoi_polygons, drag=True,
+                                              data={'xs': xs, 'ys': ys} if xs else None)
         self.edit_stream = hv.streams.PolyEdit(source=self.aoi_polygons, vertex_style={'color': 'red'})
 
+        # declare streaming object to get Points of Interest (POI), in the CRS of the map
+        # (colours cycled in the drawing order, see :meth:`point_color`), with the initial points (if any)
+        points = self._display_geoms(poi)
+        self.poi_points = hv.Points(
+            {'x': list(points.x), 'y': list(points.y), 'color': [self.point_color(i) for i in range(len(points))]},
+            vdims='color').opts(opts.Points(
+                active_tools=['point_draw'], color='color', size=8, line_color='white',
+                hooks=[self._cycle_point_colors]))
+        self.poi_stream = hv.streams.PointDraw(data=self.poi_points.columns(), source=self.poi_points,
+                                               empty_value=POINT_COLORS[0])
+
     # -- geometries drawn on the map (in the CRS of the map)
+
+    def _display_geoms(self, geoms):
+        """
+        Initial geometries (``aoi`` or ``poi`` parameters) as a GeoSeries in the CRS of the map.
+
+        :param geoms: GeoDataFrame or GeoSeries (with its CRS), shapely geometry, WKT string, (lon, lat)
+                      tuple (points) or list of them (EPSG:4326)
+        """
+        if geoms is None:
+            return gpd.GeoSeries([], crs=self.display_crs)
+        if not isinstance(geoms, (gpd.GeoDataFrame, gpd.GeoSeries)):
+            def is_lonlat(g):
+                return isinstance(g, (list, tuple)) and len(g) == 2 and all(isinstance(v, (int, float, np.number)) for v in g)
+
+            if not isinstance(geoms, (list, tuple)) or is_lonlat(geoms):
+                geoms = [geoms]
+            geoms = gpd.GeoSeries([shapely.wkt.loads(g) if isinstance(g, str) else
+                                   Point(g) if is_lonlat(g) else g for g in geoms], crs=4326)
+        return geoms.geometry.to_crs(self.display_crs).explode(index_parts=False)
+
+    def _aoi_coords(self, aoi):
+        """Exterior coordinates (xs, ys lists, in the CRS of the map) of the initial polygons."""
+        polygons = self._display_geoms(aoi)
+        xs = [list(polygon.exterior.xy[0]) for polygon in polygons]
+        ys = [list(polygon.exterior.xy[1]) for polygon in polygons]
+        return xs, ys
 
     def get_geom(self, aoi_stream=None, crs=4326, index=-1):
         """Polygon drawn on the map (default: last one) as a GeoDataFrame in ``crs``."""
@@ -680,6 +753,28 @@ class _MultiscaleViewer(Utils):
     def get_points(self, poi_stream=None, crs=4326):
         """Points drawn on the map as a GeoDataFrame in ``crs``."""
         return Utils.get_points(poi_stream or self.poi_stream, crs=crs, src_crs=self.display_crs)
+
+    @staticmethod
+    def point_color(ipoint):
+        """Colour of the point ``ipoint`` (drawing order) and of its curve."""
+        return POINT_COLORS[ipoint % len(POINT_COLORS)]
+
+    @staticmethod
+    def _cycle_point_colors(plot, element):
+        """Bokeh hook: colour the points in the browser as they are drawn (see :meth:`point_color`)."""
+        source = plot.handles['source']
+        if source.tags and '_cycle_point_colors' in source.tags:
+            return
+        source.tags = list(source.tags) + ['_cycle_point_colors']
+        # the colours are written back to the data, which are synced to the PointDraw stream
+        source.js_on_change('data', bokeh.models.CustomJS(args=dict(source=source, palette=POINT_COLORS), code='''
+            const colors = source.data.color
+            if (colors == null)
+                return
+            const cycled = Array.from(colors, (_, i) => palette[i % palette.length])
+            if (cycled.some((color, i) => color !== colors[i]))
+                source.data = Object.assign({}, source.data, {color: cycled})
+        '''))
 
     # -- rendering
 
@@ -817,7 +912,8 @@ class ViewSpectral(_MultiscaleViewer):
     Interactive viewer of L2A images (Rrs with 'wl' and optional 'time' dimensions): true-colour
     composite or single bands, areas of interest (polygons) and points of interest whose
     full-resolution spectra are plotted. The spectrum of the pixel under the mouse is also plotted
-    live (dashed line), which can be turned off with the 'Live spectrum' checkbox.
+    live (dashed line), which can be turned off with the 'Live spectrum' checkbox. The spectra are
+    displayed beneath the map.
 
     Only the pixels visible on the screen are read, from the coarsest resolution level that matches
     the zoom: the pyramids of the GRS Zarr products are used directly, and coarser levels are computed
@@ -849,6 +945,12 @@ class ViewSpectral(_MultiscaleViewer):
                  ('cmo.<name>') or matplotlib name
     :param width: width of the map (pixels)
     :param height: height of the map (pixels)
+    :param aoi: initial polygons of the areas of interest, returned by :meth:`get_geom` until other
+                polygons are drawn (e.g. for non-interactive runs): GeoDataFrame or GeoSeries, shapely
+                (Multi)Polygon, WKT string or list of them (EPSG:4326)
+    :param poi: initial points of interest, returned by :meth:`get_points` (and plotted) until they are
+                moved or deleted: GeoDataFrame or GeoSeries, shapely Point, WKT string, (lon, lat) tuple
+                or list of them (EPSG:4326)
     """
 
     def __init__(self, raster, dates=None,
@@ -861,10 +963,13 @@ class ViewSpectral(_MultiscaleViewer):
                  width=1000,
                  height=700,
                  basemap=DEFAULT_BASEMAP,
-                 cmap=DEFAULT_RRS_COLORMAP):
+                 cmap=DEFAULT_RRS_COLORMAP,
+                 aoi=None,
+                 poi=None):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
-                         width=width, height=height, basemap=basemap, cmap=cmap)
+                         width=width, height=height, basemap=basemap, cmap=cmap, aoi=aoi,
+                         poi=poi)
         self.title = '## S2 L2A'
 
         image = self.data.images[self.indexes[0]][0]
@@ -874,14 +979,6 @@ class ViewSpectral(_MultiscaleViewer):
         self.rgb_bands = [wls[np.abs(wls - wl).argmin()] for wl in rgb_bands]
         self.gamma = gamma
         self._stretch = {}
-
-        # declare streaming object to get Point of Interest (POI), in the CRS of the map
-        self.poi_points = hv.Points([], vdims='color').opts(opts.Points(
-            active_tools=['point_draw'], color='color', size=8, line_color='white'))
-        self.poi_stream = hv.streams.PointDraw(data=self.poi_points.columns(), source=self.poi_points,
-                                               empty_value='red')
-        self.table = hv.Table(self.poi_points, ['x', 'y'], 'color').opts(opts.Table(editable=True, height=200))
-        DataLink(self.poi_points, self.table)
 
     def _rgb_stretch(self, idate):
         """Percentiles (2, 98) of the composite, from the coarsest level (one per image)."""
@@ -923,17 +1020,16 @@ class ViewSpectral(_MultiscaleViewer):
         label = r'Rrs (sr-1)'
         curves = {}
         if data:
-            for ipoint, (x, y, color) in enumerate(zip(data.get('x', []), data.get('y', []),
-                                                       data.get('color', []))):
+            for ipoint, (x, y) in enumerate(zip(data.get('x', []), data.get('y', []))):
                 spectrum = self.data.pixel(self.indexes[date], *self._to_native.transform(x, y))
                 if spectrum is None:
                     continue
                 curves[ipoint] = hv.Curve((spectrum.wl.values, spectrum.values), 'Wavelength (nm)',
-                                          label).opts(color=color or 'red')
+                                          label).opts(color=self.point_color(ipoint))
         if not curves:
             curves[0] = hv.Curve([], 'Wavelength (nm)', label)
         return hv.NdOverlay(curves, kdims='point').opts(
-            opts.Curve(width=450, height=350, tools=['hover'], line_width=2, show_grid=True),
+            opts.Curve(width=self.width, height=350, tools=['hover'], line_width=2, show_grid=True),
             opts.NdOverlay(show_legend=False, title='Spectra of the points (full resolution)'))
 
     def _live_spectrum(self, date, live, x=None, y=None):
@@ -989,17 +1085,19 @@ class ViewSpectral(_MultiscaleViewer):
                         pn.Row('#### Colormap', pn_colormap, pn.Column(pn_reverse, pn_log)))
                 ),
             ),
-            pn.Row(
-                pn.pane.HoloViews((map_ * self.poi_points).opts(
-                    opts.Points(active_tools=['point_draw'], color='color'))),
-                pn.Column(pn.pane.HoloViews(spectra), pn.pane.HoloViews(self.table))
-            )
+            pn.pane.HoloViews((map_ * self.poi_points).opts(
+                opts.Points(active_tools=['point_draw'], color='color'))),
+            pn.pane.HoloViews(spectra)
         )
 
 
 class ViewParam(_MultiscaleViewer):
     """
-    Interactive viewer of L2B images (one 2D map per parameter and date).
+    Interactive viewer of L2B images (one 2D map per parameter and date), areas of interest (polygons)
+    and points of interest whose full-resolution time series of the parameter are plotted. The time
+    series of the pixel under the mouse is also plotted live (dashed line), which can be turned off with
+    the 'Live time series' checkbox; the date displayed on the map is marked by a vertical line. The
+    time series are displayed beneath the map.
 
     Only the pixels visible on the screen are read, from the coarsest resolution level that matches
     the zoom (see :class:`ViewSpectral` and :class:`Multiscale`).
@@ -1009,6 +1107,7 @@ class ViewParam(_MultiscaleViewer):
     >>> viewer = ViewParam(['S2A_L2B_1.zarr', 'S2B_L2B_2.zarr'], reproject=True)
     >>> viewer = ViewParam(datacube, params=['SPM_nechad', 'Chla_OC2nasa'], reproject=True)
     >>> viewer.visu()
+    >>> points = viewer.get_points()       # drawn points, EPSG:4326
 
     :param raster: Dataset with dims (time, y, x) (time is optional), path or list of paths of Zarr
                    stores, or :class:`Multiscale`
@@ -1025,6 +1124,12 @@ class ViewParam(_MultiscaleViewer):
                  ('cmo.<name>') or matplotlib name
     :param width: width of the map (pixels)
     :param height: height of the map (pixels)
+    :param aoi: initial polygons of the areas of interest, returned by :meth:`get_geom` until other
+                polygons are drawn (e.g. for non-interactive runs): GeoDataFrame or GeoSeries, shapely
+                (Multi)Polygon, WKT string or list of them (EPSG:4326)
+    :param poi: initial points of interest, returned by :meth:`get_points` (and plotted) until they are
+                moved or deleted: GeoDataFrame or GeoSeries, shapely Point, WKT string, (lon, lat) tuple
+                or list of them (EPSG:4326)
     """
 
     def __init__(self, raster, dates=None,
@@ -1032,13 +1137,16 @@ class ViewParam(_MultiscaleViewer):
                  reproject=False,
                  minmaxvalues=(0, 4),
                  minmax=(0, 10),
-                 width=1200,
-                 height=800,
+                 width=1000,
+                 height=700,
                  basemap=DEFAULT_BASEMAP,
-                 cmap=DEFAULT_RRS_COLORMAP):
+                 cmap=DEFAULT_RRS_COLORMAP,
+                 aoi=None,
+                 poi=None):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
-                         width=width, height=height, basemap=basemap, cmap=cmap)
+                         width=width, height=height, basemap=basemap, cmap=cmap, aoi=aoi,
+                         poi=poi)
         self.title = '## S2 L2B'
 
         image = self.data.images[self.indexes[0]][0]
@@ -1048,6 +1156,37 @@ class ViewParam(_MultiscaleViewer):
             self.params = [param for param in image.data_vars
                            if set(image[param].dims) == {'x', 'y'}]
 
+    def _timeseries_curve(self, param, x=None, y=None, color=None):
+        """
+        Curve and markers of the full-resolution time series of the pixel at (x, y) (CRS of the map);
+        empty (but with a time axis, so that the x axis of the plot is a datetime axis) without (x, y).
+        """
+        series = pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+        if x is not None and y is not None:
+            series = self.data.timeseries(param, *self._to_native.transform(x, y),
+                                          indexes=self.indexes).dropna()
+        curve = hv.Curve((series.index, series.values), 'Time', param)
+        points = hv.Scatter((series.index, series.values), 'Time', param)
+        if color is not None:
+            curve, points = curve.opts(color=color), points.opts(color=color)
+        return curve * points
+
+    def _timeseries(self, data, date, param):
+        """Full-resolution time series of the points drawn on the map."""
+        curves = {}
+        if data:
+            for ipoint, (x, y) in enumerate(zip(data.get('x', []), data.get('y', []))):
+                curves[ipoint] = self._timeseries_curve(param, x, y, color=self.point_color(ipoint))
+        if not curves:
+            curves[0] = self._timeseries_curve(param)
+        return hv.NdOverlay(curves, kdims='point').opts(show_legend=False) * hv.VLine(self.datetimes[date])
+
+    def _live_timeseries(self, param, live, x=None, y=None):
+        """Full-resolution time series of the parameter at the pixel under the mouse."""
+        if not live:
+            x = y = None
+        return self._timeseries_curve(param, x, y)
+
     def visu(self):
         """Return the panel layout of the viewer."""
 
@@ -1055,6 +1194,7 @@ class ViewParam(_MultiscaleViewer):
         pn_date = self._date_widget()
         pn_colormap, pn_reverse, cmap = self._colormap_widgets()
         pn_log = pn.widgets.Checkbox(name='Log scale', value=False)
+        pn_live = pn.widgets.Checkbox(name='Live time series', value=True)
         pn_opacity = pn.widgets.FloatSlider(name='Opacity', value=0.95, start=0, end=1, step=0.05)
         range_slider = pn.widgets.EditableRangeSlider(name='Range Slider', start=self.minmax[0],
                                                       end=self.minmax[1], value=self.minmaxvalues, step=0.0001)
@@ -1064,6 +1204,22 @@ class ViewParam(_MultiscaleViewer):
             return '{}, {}'.format(self.datetimes[date], param)
 
         map_ = self._map(pn_param, pn_date, cmap, pn_opacity, range_slider, pn_basemaps, title, pn_log)
+        points = hv.DynamicMap(pn.bind(self._timeseries, date=pn_date, param=pn_param),
+                               streams=[self.poi_stream])
+        # time series under the mouse (HoloViews throttles the pointer events and keeps the last one)
+        pointer = hv.streams.PointerXY(x=None, y=None, source=self.poi_points)
+        live = hv.DynamicMap(pn.bind(self._live_timeseries, param=pn_param, live=pn_live),
+                             streams=[pointer]).opts(
+            opts.Curve(color='black', line_dash='dashed', line_width=1.5, framewise=True),
+            opts.Scatter(color='black', size=4, tools=['hover'], framewise=True))
+        points = points.opts(
+            opts.Curve(line_width=1.5, framewise=True),
+            opts.Scatter(size=5, tools=['hover'], framewise=True),
+            opts.VLine(color='grey', line_dash='dotted', line_width=1.5))
+        dates = bokeh.models.DatetimeTickFormatter(days='%Y-%m-%d', months='%Y-%m', years='%Y')
+        timeseries = (points * live).opts(
+            opts.Overlay(width=self.width, height=350, show_grid=True, framewise=True, xformatter=dates,
+                         xrotation=30, title='Time series of the points and under the mouse (full resolution)'))
 
         return pn.Column(
             pn.WidgetBox(
@@ -1072,7 +1228,8 @@ class ViewParam(_MultiscaleViewer):
                     pn.Row(
                         pn.Row('### Parameter', pn_param),
                         pn.Row('### Date', pn_date),
-                        pn.Row('#### Basemap', pn_basemaps)
+                        pn.Row('#### Basemap', pn_basemaps),
+                        pn_live
                     ),
                     pn.Row(range_slider,
                            pn.Row('#### Opacity', pn_opacity),
@@ -1080,5 +1237,7 @@ class ViewParam(_MultiscaleViewer):
                            )
                 ),
             ),
-            pn.pane.HoloViews(map_)
+            pn.pane.HoloViews((map_ * self.poi_points).opts(
+                opts.Points(active_tools=['point_draw'], color='color'))),
+            pn.pane.HoloViews(timeseries)
         )

@@ -54,6 +54,7 @@ It provides:
    :caption: Tutorials
 
    tutorials/l2a_image
+   tutorials/l2b_datacube
    tutorials/subset_export
    tutorials/utilities
    tutorials/validation

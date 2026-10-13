@@ -7,8 +7,13 @@ v2.3.1
    blocks aligned on the Zarr chunks, with all the bands, and the last blocks are kept in memory
    (:meth:`~grstbx.visual.Multiscale.pixel`). :class:`~grstbx.visual.ViewParam`: same colormaps as
    ``ViewSpectral`` (:data:`~grstbx.visual.RRS_COLORMAPS`, previews, reverse toggle) and ``cmap=``
-   option; the former list ``COLORMAPS`` is removed. Default basemap: CARTO Positron, which needs no API key
-   (the Stadia Maps tiles return error 401 outside ``localhost``, e.g. on Read the Docs).
+   option; the former list ``COLORMAPS`` is removed. ``ViewParam``: time series of the parameter at
+   the drawn points and live time series of the pixel under the mouse
+   (:meth:`~grstbx.visual.Multiscale.timeseries`). Both viewers: ``aoi=`` and ``poi=`` options to
+   draw initial polygons and points (GeoDataFrame, shapely geometry, WKT or (lon, lat)); the points
+   keep the same colour as their spectra and time series; plots are placed beneath the map.
+   Default basemap: CARTO Positron, which needs no API key (the Stadia Maps tiles return error 401
+   outside ``localhost``, e.g. on Read the Docs). New tutorial: GRS L2B datacube (Berre lagoon).
 
 v2.3.0
    Multiscale interactive viewers: :class:`~grstbx.visual.ViewSpectral` and

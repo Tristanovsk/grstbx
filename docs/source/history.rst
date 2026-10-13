@@ -1,6 +1,14 @@
 History
 =======
 
+v2.3.2
+   Matchups between satellite and in situ data (:mod:`grstbx.matchup`):
+   :func:`~grstbx.matchup.get_matchups` pairs each in situ sample with the closest image within a
+   maximum time lag, :func:`~grstbx.matchup.matchup_metrics` computes the agreement statistics
+   (regression, rmse, bias, mape, median symmetric accuracy and signed symmetric percentage bias) and
+   :func:`~grstbx.matchup.plot_matchup` draws the scatter plot with these statistics. They replace the
+   functions defined in the L2B validation tutorial.
+
 v2.3.1
    :class:`~grstbx.visual.ViewSpectral`: live full-resolution spectrum of the pixel under the mouse
    (*Live spectrum* checkbox), plotted with the spectra of the drawn points; the pixels are read by

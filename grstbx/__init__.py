@@ -19,10 +19,11 @@ v2.3.0: multiscale viewers (grstbx.visual): ViewSpectral / ViewParam read only t
         resolution from Zarr pyramids (or levels computed on demand), RGB composite, spectra of the drawn
         points, free basemaps (CARTO, OSM, OpenTopoMap, Esri, Stamen via Stadia Maps)
 v2.3.1: add live stream to visualize L2A data and reflectance spectra interactively
+v2.3.2: matchups between satellite and in situ data (grstbx.matchup): get_matchups, matchup_metrics, plot_matchup
 
 '''
 
-__version__ = '2.3.1'
+__version__ = '2.3.2'
 
 from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels
 #from .driver_v1 import l2grs_v1
@@ -31,6 +32,7 @@ from .masking import Masking
 from .utils import *
 from .datalake import SelectFiles
 from .subset import open_l2a, aoi_from_box, crop_l2a, export_l2a, export_rrs_geotiff, subset_path, crop_and_export
+from .matchup import matchup_metrics, plot_matchup, get_matchups
 
 
 def __getattr__(name):

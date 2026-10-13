@@ -25,6 +25,12 @@ grstbx.subset
 .. automodule:: grstbx.subset
    :no-members:
 
+grstbx.matchup
+--------------
+
+.. automodule:: grstbx.matchup
+   :no-members:
+
 grstbx.visual
 -------------
 

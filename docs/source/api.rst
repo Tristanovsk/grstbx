@@ -59,6 +59,20 @@ Cropping and export
    grstbx.subset.subset_path
    grstbx.subset.crop_and_export
 
+Matchups
+--------
+
+Pairing of satellite and in situ data, agreement statistics and scatter plots (see the L2B
+validation tutorial).
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   grstbx.matchup.get_matchups
+   grstbx.matchup.matchup_metrics
+   grstbx.matchup.plot_matchup
+
 Masking
 -------
 

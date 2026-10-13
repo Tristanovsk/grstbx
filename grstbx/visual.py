@@ -37,9 +37,10 @@ from shapely.geometry import Point, Polygon
 
 hv.extension('bokeh')
 
-# Free basemaps (XYZ tiles, web Mercator) proposed in the ViewSpectral / ViewParam widgets.
+# Free basemaps (XYZ raster tiles, web Mercator) proposed in the ViewSpectral / ViewParam widgets.
 # The Stamen styles are now served by Stadia Maps: free without key when the notebook runs on
-# localhost, otherwise a (free) API key is needed, see set_stadia_api_key.
+# localhost, otherwise a (free) API key is needed, see set_stadia_api_key. The default basemap
+# needs no key, so that maps also display on a server or in a published page (e.g. Read the Docs).
 BASEMAPS = {
     'CARTO Positron': 'https://a.basemaps.cartocdn.com/light_all/{Z}/{X}/{Y}.png',
     'CARTO Positron (no labels)': 'https://a.basemaps.cartocdn.com/light_nolabels/{Z}/{X}/{Y}.png',
@@ -57,7 +58,7 @@ BASEMAPS = {
     'Alidade Smooth (Stadia)': 'https://tiles.stadiamaps.com/tiles/alidade_smooth/{Z}/{X}/{Y}.png',
     'Alidade Smooth Dark (Stadia)': 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{Z}/{X}/{Y}.png',
 }
-DEFAULT_BASEMAP = 'Stamen Toner Lite (Stadia)'
+DEFAULT_BASEMAP = 'OpenStreetMap'
 _STADIA_API_KEY = os.environ.get('STADIA_API_KEY')
 
 

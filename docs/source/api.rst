@@ -93,8 +93,9 @@ Interactive visualization
 
 The basemaps proposed by the viewers (``grstbx.visual.BASEMAPS``) are free XYZ tile services: CARTO
 (Positron, Dark Matter, Voyager), OpenStreetMap, OpenTopoMap, Esri (World Imagery, World Topo, Ocean)
-and the Stamen / Alidade styles of Stadia Maps. Stadia Maps tiles are free without key when the
-notebook runs on ``localhost``; otherwise create a free account and set its API key with
+and the Stamen / Alidade styles of Stadia Maps. The default, OpenStreetMap, needs no key. Stadia
+Maps tiles are free without key only when the notebook runs on ``localhost`` (elsewhere, such as in
+a published page, they return error 401); otherwise create a free account and set its API key with
 :func:`grstbx.visual.set_stadia_api_key` or the ``STADIA_API_KEY`` environment variable.
 
 The single bands of :class:`~grstbx.visual.ViewSpectral` and the parameters of

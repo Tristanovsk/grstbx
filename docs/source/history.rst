@@ -12,7 +12,7 @@ v2.3.1
    (:meth:`~grstbx.visual.Multiscale.timeseries`). Both viewers: ``aoi=`` and ``poi=`` options to
    draw initial polygons and points (GeoDataFrame, shapely geometry, WKT or (lon, lat)); the points
    keep the same colour as their spectra and time series; plots are placed beneath the map.
-   Default basemap: CARTO Positron, which needs no API key (the Stadia Maps tiles return error 401
+   Default basemap: OpenStreetMap, which needs no API key (the Stadia Maps tiles return error 401
    outside ``localhost``, e.g. on Read the Docs). New tutorial: GRS L2B datacube (Berre lagoon).
 
 v2.3.0

@@ -58,7 +58,7 @@ BASEMAPS = {
     'Alidade Smooth (Stadia)': 'https://tiles.stadiamaps.com/tiles/alidade_smooth/{Z}/{X}/{Y}.png',
     'Alidade Smooth Dark (Stadia)': 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{Z}/{X}/{Y}.png',
 }
-DEFAULT_BASEMAP = 'CARTO Positron'
+DEFAULT_BASEMAP = 'OpenStreetMap'
 _STADIA_API_KEY = os.environ.get('STADIA_API_KEY')
 
 

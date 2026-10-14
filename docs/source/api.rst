@@ -43,6 +43,8 @@ Loading images and datacubes
    grstbx.driver.open_zarr_ancillary
    grstbx.driver.zarr_levels
    grstbx.driver.is_zarr
+   grstbx.driver.open_hgrs_l2a
+   grstbx.driver.is_hgrs
 
 Cropping and export
 -------------------

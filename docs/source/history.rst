@@ -1,6 +1,14 @@
 History
 =======
 
+Unreleased
+   hGRS products (hyperspectral GRS, EnMAP and PRISMA): :func:`~grstbx.driver.open_hgrs_l2a` opens an
+   hGRS L2A NetCDF file as a product (full-resolution ``Rrs`` and ``brdfg_full``) and its ancillary data
+   (aerosol, water vapor and sunglint on the coarse grid ``xc``, ``yc``), like the GRS products, so that
+   it can be cropped with :func:`~grstbx.subset.crop_l2a` and displayed with the viewers; the
+   SNAP-compliant hGRS products (one ``Rrs_<wl>`` variable per band) are reshaped into ``Rrs``.
+   :func:`~grstbx.subset.open_l2a` opens GRS and hGRS products (:func:`~grstbx.driver.is_hgrs`).
+
 v2.3.2
    Matchups between satellite and in situ data (:mod:`grstbx.matchup`):
    :func:`~grstbx.matchup.get_matchups` pairs each in situ sample with the closest image within a

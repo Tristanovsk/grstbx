@@ -32,7 +32,7 @@ import geopandas as gpd
 import rioxarray  # activate the rio accessor
 from rasterio.features import geometry_mask
 
-from .driver import L2grs, is_zarr
+from .driver import L2grs, is_zarr, is_hgrs, open_hgrs_l2a
 
 # bit of the 'nodata' flag in the GRS bitmask
 NODATA_BIT = 0
@@ -40,13 +40,16 @@ NODATA_BIT = 0
 
 def open_l2a(path, level=0):
     """
-    Open a GRS L2A product lazily, with its ancillary data.
+    Open a GRS or hGRS L2A product lazily, with its ancillary data.
 
-    :param path: ``*.zarr`` store or NetCDF product folder ``<name>/`` (see
-                 :meth:`L2grs.load_l2a_image <grstbx.driver.L2grs.load_l2a_image>`)
+    :param path: ``*.zarr`` store or NetCDF product folder ``<name>/`` of GRS (see
+                 :meth:`L2grs.load_l2a_image <grstbx.driver.L2grs.load_l2a_image>`), or NetCDF file of
+                 hGRS (see :func:`~grstbx.driver.open_hgrs_l2a`)
     :param level: pyramid level for multiscale Zarr stores (0: full resolution, -1: coarsest)
     :return: (product, ancillary) xarray.Datasets; ancillary is None when absent
     """
+    if is_hgrs(path):
+        return open_hgrs_l2a(path)
     return L2grs([path], level=level).load_l2a_image(path)
 
 

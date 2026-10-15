@@ -23,6 +23,7 @@ NOTEBOOKS = {
                              'notebook/validation/grstbx_l2b_hypernets_matchup.ipynb'],
     'tutorials/case_studies': ['notebook/case_study/clear_lake/grstbx_rgb_dem_multitemp.ipynb',
                                'notebook/case_study/bagre/grstbx_l2a_datacube_matchup.ipynb'],
+    'tutorials/hgrs_products': ['notebook/visu/grstbx_hgrs_prisma_l1_l2a.ipynb'],
 }
 for _target, _notebooks in NOTEBOOKS.items():
     (DOCS_SOURCE / _target).mkdir(exist_ok=True)

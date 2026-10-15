@@ -14,7 +14,9 @@ Unreleased
    :class:`~grstbx.visual.ViewSpectral` and :class:`~grstbx.visual.ViewParam`: ``title=`` option to
    name the viewer after the sensor (e.g. ``'## PRISMA L2A'``; default ``'## S2 L2A'`` and
    ``'## S2 L2B'``).
-   Docs: tutorial page on the hGRS products, linking to the EnMAP and PRISMA tutorials of hGRS.
+   Docs: tutorial page on the hGRS products, with the PRISMA L1-to-L2A notebook (L1 and L2C inputs
+   interpolated onto the L2A grid, composites, retrieved parameters, spectra, transect) and a link to
+   the EnMAP tutorial of hGRS.
 
 v2.3.2
    Matchups between satellite and in situ data (:mod:`grstbx.matchup`):

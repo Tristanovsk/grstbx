@@ -69,7 +69,8 @@ attrs.shaded.plot.imshow()
 ### Maps
 
 {func}`~grstbx.utils.utm_projection` returns the cartopy projection matching the CRS of an image
-(UTM zone and hemisphere for Sentinel-2 tiles, web Mercator otherwise), to plot it on map axes.
+(UTM zone and hemisphere for Sentinel-2 tiles, plate carrée for longitude-latitude grids such as the
+hGRS PRISMA products, web Mercator otherwise), to plot it on map axes.
 {func}`~grstbx.utils.plot_rgb` displays a true-colour (or false-colour) composite of $R_{rs}$, with
 the outline of an area of interest. Large images are decimated to at most `max_size` pixels per side
 (2000 by default), so that a full tile is displayed in a few seconds.

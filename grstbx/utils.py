@@ -373,12 +373,16 @@ def utm_projection(crs):
     :param crs: CRS of the image (e.g. ``raster.rio.crs``), or anything accepted by
                 :meth:`pyproj.CRS.from_user_input` (EPSG code, WKT...)
     :return: ``cartopy.crs.UTM`` for a WGS 84 / UTM CRS (EPSG 326xx: north, 327xx: south),
+             ``cartopy.crs.PlateCarree`` for a longitude-latitude grid (e.g. EPSG 4326),
              ``cartopy.crs.Mercator.GOOGLE`` (web Mercator) otherwise
     """
     import cartopy.crs as ccrs
     from pyproj import CRS
 
-    epsg = CRS.from_user_input(crs).to_epsg()
+    crs = CRS.from_user_input(crs)
+    if crs.is_geographic:
+        return ccrs.PlateCarree()
+    epsg = crs.to_epsg()
     if epsg is not None and (32601 <= epsg <= 32660 or 32701 <= epsg <= 32760):
         return ccrs.UTM(zone=epsg % 100, southern_hemisphere=epsg > 32700)
     return ccrs.Mercator.GOOGLE

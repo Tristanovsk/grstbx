@@ -8,6 +8,9 @@ Unreleased
    it can be cropped with :func:`~grstbx.subset.crop_l2a` and displayed with the viewers; the
    SNAP-compliant hGRS products (one ``Rrs_<wl>`` variable per band) are reshaped into ``Rrs``.
    :func:`~grstbx.subset.open_l2a` opens GRS and hGRS products (:func:`~grstbx.driver.is_hgrs`).
+   Fix: :func:`~grstbx.utils.utm_projection` returns the plate carrée projection for longitude-latitude
+   grids (e.g. EPSG 4326 of the hGRS PRISMA products), which :func:`~grstbx.utils.plot_rgb` drew as web
+   Mercator coordinates.
 
 v2.3.2
    Matchups between satellite and in situ data (:mod:`grstbx.matchup`):

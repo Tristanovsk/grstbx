@@ -11,6 +11,9 @@ Unreleased
    Fix: :func:`~grstbx.utils.utm_projection` returns the plate carrée projection for longitude-latitude
    grids (e.g. EPSG 4326 of the hGRS PRISMA products), which :func:`~grstbx.utils.plot_rgb` drew as web
    Mercator coordinates.
+   :class:`~grstbx.visual.ViewSpectral` and :class:`~grstbx.visual.ViewParam`: ``title=`` option to
+   name the viewer after the sensor (e.g. ``'## PRISMA L2A'``; default ``'## S2 L2A'`` and
+   ``'## S2 L2B'``).
    Docs: tutorial page on the hGRS products, linking to the EnMAP and PRISMA tutorials of hGRS.
 
 v2.3.2

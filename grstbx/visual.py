@@ -952,6 +952,8 @@ class ViewSpectral(_MultiscaleViewer):
     :param poi: initial points of interest, returned by :meth:`get_points` (and plotted) until they are
                 moved or deleted: GeoDataFrame or GeoSeries, shapely Point, WKT string, (lon, lat) tuple
                 or list of them (EPSG:4326)
+    :param title: title of the viewer, in Markdown (e.g. '## PRISMA L2A', '## Landsat 9 L2A'),
+                  default '## S2 L2A'
     """
 
     def __init__(self, raster, dates=None,
@@ -966,12 +968,13 @@ class ViewSpectral(_MultiscaleViewer):
                  basemap=DEFAULT_BASEMAP,
                  cmap=DEFAULT_RRS_COLORMAP,
                  aoi=None,
-                 poi=None):
+                 poi=None,
+                 title='## S2 L2A'):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
                          width=width, height=height, basemap=basemap, cmap=cmap, aoi=aoi,
                          poi=poi)
-        self.title = '## S2 L2A'
+        self.title = title
 
         image = self.data.images[self.indexes[0]][0]
         wls = (image['Rrs'] if isinstance(image, xr.Dataset) else image).wl.values
@@ -1131,6 +1134,7 @@ class ViewParam(_MultiscaleViewer):
     :param poi: initial points of interest, returned by :meth:`get_points` (and plotted) until they are
                 moved or deleted: GeoDataFrame or GeoSeries, shapely Point, WKT string, (lon, lat) tuple
                 or list of them (EPSG:4326)
+    :param title: title of the viewer, in Markdown (e.g. '## EnMAP L2B'), default '## S2 L2B'
     """
 
     def __init__(self, raster, dates=None,
@@ -1143,12 +1147,13 @@ class ViewParam(_MultiscaleViewer):
                  basemap=DEFAULT_BASEMAP,
                  cmap=DEFAULT_RRS_COLORMAP,
                  aoi=None,
-                 poi=None):
+                 poi=None,
+                 title='## S2 L2B'):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
                          width=width, height=height, basemap=basemap, cmap=cmap, aoi=aoi,
                          poi=poi)
-        self.title = '## S2 L2B'
+        self.title = title
 
         image = self.data.images[self.indexes[0]][0]
         self.params = params

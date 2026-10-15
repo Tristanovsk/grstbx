@@ -11,6 +11,7 @@ Unreleased
    Fix: :func:`~grstbx.utils.utm_projection` returns the plate carrée projection for longitude-latitude
    grids (e.g. EPSG 4326 of the hGRS PRISMA products), which :func:`~grstbx.utils.plot_rgb` drew as web
    Mercator coordinates.
+   Docs: tutorial page on the hGRS products, linking to the EnMAP and PRISMA tutorials of hGRS.
 
 v2.3.2
    Matchups between satellite and in situ data (:mod:`grstbx.matchup`):

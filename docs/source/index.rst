@@ -59,6 +59,7 @@ It provides:
    tutorials/utilities
    tutorials/validation
    tutorials/case_studies
+   tutorials/hgrs_products
 
 .. toctree::
    :maxdepth: 2

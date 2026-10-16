@@ -48,14 +48,16 @@ python -m ipykernel install --user --name=grstbx
 
 ## Web dashboard
 
-Explore an L2A product (GRS Zarr or NetCDF, hGRS NetCDF) in the web browser, without notebook:
+Explore GRS L2A and L2B products (Zarr or NetCDF, hGRS NetCDF), single images, time series or
+datacubes, in the web browser, without notebook:
 
 ```
-grstbx-viewer /path/to/product.zarr          # or: grstbx-viewer --root /data/satellite
+grstbx-viewer /path/to/product.zarr                  # or: grstbx-viewer --root /data/satellite
+grstbx-viewer "/data/L2B/BEFR/2024/*/*/*.nc"         # time series of L2B products
 ```
 
-Pan and zoom the image over a basemap, hover it to plot the spectrum under the mouse, draw points and
-polygons, and download their spectra and statistics. See the
+Pan and zoom the images over a basemap, hover them to plot the spectrum (L2A) or the time series (L2B)
+under the mouse, draw points and polygons, and download their values and statistics. See the
 [dashboard tutorial](https://grstbx.readthedocs.io/en/latest/tutorials/dashboard.html).
 
 ## Example of L2A image

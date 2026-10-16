@@ -25,7 +25,7 @@ It provides:
   (NetCDF, Zarr) or GeoTIFF (:mod:`grstbx.subset`),
 - interactive viewers for Jupyter notebooks, based on holoviews, datashader and panel, to browse
   the images by date and band and to draw areas or points of interest (:mod:`grstbx.visual`), and a
-  web dashboard to explore an L2A product without notebook (``grstbx-viewer``, :mod:`grstbx.app`),
+  web dashboard to explore L2A and L2B products and time series without notebook (``grstbx-viewer``, :mod:`grstbx.app`),
 - miscellaneous helpers: bounding boxes, AERONET-OC readers, solar irradiance, DEM-based
   illumination, plotting (:mod:`grstbx.utils`).
 

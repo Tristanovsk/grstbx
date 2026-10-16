@@ -140,9 +140,10 @@ Dashboard of the ``grstbx-viewer`` command (see the :doc:`tutorials/dashboard` t
 
    grstbx.app.serve
    grstbx.app.create_app
-   grstbx.app.open_rrs
+   grstbx.app.open_products
+   grstbx.app.expand_paths
    grstbx.app.is_product
-   grstbx.app.points_spectra
+   grstbx.app.points_values
    grstbx.app.polygons_statistics
 
 Utilities

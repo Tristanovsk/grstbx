@@ -1,6 +1,7 @@
 """
 Loading of GRS L2A (remote sensing reflectance) and L2B (water quality parameters)
-images into multi-temporal xarray datacubes.
+images into multi-temporal xarray datacubes, and of hGRS L2A images (hyperspectral GRS, EnMAP and
+PRISMA).
 """
 
 import os
@@ -94,6 +95,64 @@ def open_zarr_ancillary(path, group='ancillary'):
     if group not in dict(zarr.open_group(path, mode='r').groups()):
         return None
     return xr.open_zarr(path, group=group, decode_coords='all')
+
+
+def is_hgrs(path):
+    """
+    True if ``path`` is an hGRS L2A product: NetCDF file with the ``hgrs_version`` attribute.
+
+    :param path: path to a file or product
+    """
+    path = str(path)
+    if not (os.path.isfile(path) and path.endswith('.nc')):
+        return False
+    with xr.open_dataset(path) as ds:
+        return 'hgrs_version' in ds.attrs
+
+
+def open_hgrs_l2a(path, chunks={}):
+    """
+    Open an hGRS L2A product (hyperspectral GRS, EnMAP and PRISMA) lazily, split as a GRS L2A
+    product and its ancillary data.
+
+    An hGRS L2A product is a single NetCDF file holding the full-resolution variables on the ``x``, ``y``
+    grid (``Rrs`` with a ``wl`` dimension, ``brdfg_full``), the variables retrieved on the coarse grid of
+    the mega-pixels on ``xc``, ``yc`` (``aot_ref``, ``aot_ref_smoothed``, ``tcwv``, ``brdfg`` and their
+    uncertainties) and scalar atmospheric values (``pressure``, ``to3c``, ``tno2c``). The coarse-grid and
+    scalar variables are returned as the ancillary dataset, as for the GRS products, so that the product
+    can be used with :func:`~grstbx.subset.crop_l2a`, :func:`~grstbx.utils.plot_rgb` and the viewers of
+    :mod:`grstbx.visual`. hGRS products have no ``flags`` bitmask: the masked pixels are NaN in ``Rrs``.
+
+    SNAP-compliant products (``metadata_profile = 'beam'``: one variable ``Rrs_<wl>`` per band, no
+    coarse-grid variables) are reshaped into a single ``Rrs`` variable with a ``wl`` dimension.
+
+    Example
+    -------
+    >>> product, ancillary = open_hgrs_l2a('ENMAP01-____L2A_hgrs-DT0000088121_..._V1.1.2.nc')
+    >>> product.Rrs                     # (wl, y, x)
+    >>> ancillary.aot_ref_smoothed      # (yc, xc)
+
+    :param path: path to the hGRS L2A NetCDF file
+    :param chunks: dask chunks passed to ``xarray.open_dataset`` (default: chunks of the file)
+    :return: (product, ancillary) xarray.Datasets, with the attributes of the file; ancillary is None
+             when the product has no coarse-grid or scalar variables
+    """
+    ds = xr.open_dataset(path, decode_coords='all', chunks=chunks)
+    if 'hgrs_version' not in ds.attrs:
+        raise ValueError(f'{path} is not an hGRS L2A product (no hgrs_version attribute)')
+    full = [name for name in ds.data_vars if {'x', 'y'} <= set(ds[name].dims)]
+    product = ds[full]
+    ancillary = ds.drop_vars(full).drop_dims(['wl', 'x', 'y'], errors='ignore')
+    if ds.attrs.get('metadata_profile') == 'beam':
+        # SNAP-compliant products: one variable per band (Rrs_<wl>), reshaped into Rrs (wl, y, x)
+        bands = [name for name in full if name.startswith('Rrs_')]
+        wls = [float(ds[name].attrs.get('wavelength', name[4:])) for name in bands]
+        Rrs = product[bands].to_array(dim='wl', name='Rrs').assign_coords(wl=wls)
+        Rrs.attrs = {'long_name': 'Remote sensing reflectance', 'units': 'sr-1'}
+        product = xr.merge([product.drop_vars(bands), Rrs.sortby('wl')], combine_attrs='override')
+    if not ancillary.data_vars:
+        ancillary = None
+    return product, ancillary
 
 
 class L2grs():

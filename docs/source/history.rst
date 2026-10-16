@@ -1,6 +1,41 @@
 History
 =======
 
+Unreleased
+   Web dashboard ``grstbx-viewer`` (:mod:`grstbx.app`): opens GRS L2A and L2B products (Zarr stores,
+   NetCDF products, hGRS L2A files), one image, a time series of products (paths or glob patterns,
+   possibly on different grids) or a NetCDF datacube, chosen in a file browser of the server; the L2A
+   products are displayed with :class:`~grstbx.visual.ViewSpectral`, the L2B products with
+   :class:`~grstbx.visual.ViewParam` (invalid pixels hidden); exports of the full-resolution values of the
+   drawn points and of the statistics of the drawn polygons for all the dates (CSV) and of the geometries
+   (GeoJSON); it can be served on a network (``--address``). Docs: tutorial page on the dashboard.
+   Fix: the drop-down menus of :class:`~grstbx.visual.ViewSpectral` and :class:`~grstbx.visual.ViewParam`
+   (colormap picker) were clipped by the widget box: they are now drawn above the map.
+   :class:`~grstbx.visual.ViewSpectral` and :class:`~grstbx.visual.ViewParam`: contrast and brightness
+   sliders (RGB composite and colour range of the single bands or parameters); ViewSpectral: bands of the
+   RGB composite (presets: true colour, false colour, red edge, SWIR, or any band for each channel) and
+   gamma. The widgets are shown in the viewer, or placed elsewhere with ``display_controls()`` and
+   ``rgb_controls()`` (``visu(controls=False)``), as in the sidebar of ``grstbx-viewer``.
+   hGRS products (hyperspectral GRS, EnMAP and PRISMA): :func:`~grstbx.driver.open_hgrs_l2a` opens an
+   hGRS L2A NetCDF file as a product (full-resolution ``Rrs`` and ``brdfg_full``) and its ancillary data
+   (aerosol, water vapor and sunglint on the coarse grid ``xc``, ``yc``), like the GRS products, so that
+   it can be cropped with :func:`~grstbx.subset.crop_l2a` and displayed with the viewers; the
+   SNAP-compliant hGRS products (one ``Rrs_<wl>`` variable per band) are reshaped into ``Rrs``.
+   :func:`~grstbx.subset.open_l2a` opens GRS and hGRS products (:func:`~grstbx.driver.is_hgrs`).
+   Fix: :func:`~grstbx.utils.utm_projection` returns the plate carrée projection for longitude-latitude
+   grids (e.g. EPSG 4326 of the hGRS PRISMA products), which :func:`~grstbx.utils.plot_rgb` drew as web
+   Mercator coordinates.
+   Fix: :meth:`SpatioTemp.clip_raster <grstbx.utils.SpatioTemp.clip_raster>` clipped a square of side
+   1.41 ``extent_m`` instead of ``extent_m``; the clipped areas of former runs are 2 times larger
+   (:meth:`SpatioTemp.wktbox <grstbx.utils.SpatioTemp.wktbox>` has had the same correction since
+   v2.2.0: it returned a box twice the requested ``width`` and ``height`` before).
+   :class:`~grstbx.visual.ViewSpectral` and :class:`~grstbx.visual.ViewParam`: ``title=`` option to
+   name the viewer after the sensor (e.g. ``'## PRISMA L2A'``; default ``'## S2 L2A'`` and
+   ``'## S2 L2B'``).
+   Docs: tutorial page on the hGRS products, with the PRISMA L1-to-L2A notebook (L1 and L2C inputs
+   interpolated onto the L2A grid, composites, retrieved parameters, spectra, transect) and a link to
+   the EnMAP tutorial of hGRS.
+
 v2.3.2
    Matchups between satellite and in situ data (:mod:`grstbx.matchup`):
    :func:`~grstbx.matchup.get_matchups` pairs each in situ sample with the closest image within a

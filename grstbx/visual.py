@@ -108,6 +108,29 @@ DEFAULT_RRS_COLORMAP = 'Rainbow (CET_R1)'
 POINT_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#bcbd22',
                 '#17becf']
 
+# Band combinations proposed for the RGB composite of ViewSpectral (wavelengths in nm of the red, green and
+# blue channels), kept when the image has bands within RGB_PRESET_TOLERANCE nm of them
+RGB_PRESETS = {
+    'True colour': (665, 560, 490),
+    'False colour (NIR, vegetation)': (842, 665, 560),
+    'Red edge (phytoplankton)': (705, 560, 490),
+    'SWIR (land / water, clouds)': (2190, 865, 665),
+}
+RGB_PRESET_TOLERANCE = 30
+
+# Style of the widget boxes of the viewers: the drop-down menus (colormap picker, selects) may overflow the
+# box, above the map below it, instead of being clipped by the box
+_FRONT_CSS = ':host { overflow: visible !important; position: relative; z-index: 10; }'
+
+
+def _to_front(box):
+    """Let the drop-down menus of the widgets of the layout ``box`` overflow it, above the plots below."""
+    layouts = {id(box): box}
+    layouts.update({id(layout): layout for layout in box.select(pn.layout.ListPanel)})
+    for layout in layouts.values():
+        layout.stylesheets = list(layout.stylesheets) + [_FRONT_CSS]
+    return box
+
 
 def get_colormap(cmap, n=256):
     """
@@ -699,6 +722,10 @@ class _MultiscaleViewer(Utils):
         self._windows = OrderedDict()
         self._max_windows = 16
 
+        # contrast and brightness of the map (see :meth:`display_controls`)
+        self.pn_contrast = pn.widgets.FloatSlider(name='Contrast', value=1., start=0.2, end=4., step=0.05)
+        self.pn_brightness = pn.widgets.FloatSlider(name='Brightness', value=0., start=-0.5, end=0.5, step=0.01)
+
         # declare streaming object to get Area of Interest (AOI), in the CRS of the map, with the
         # initial polygons (if any)
         xs, ys = self._aoi_coords(aoi)
@@ -718,6 +745,33 @@ class _MultiscaleViewer(Utils):
                 hooks=[self._cycle_point_colors]))
         self.poi_stream = hv.streams.PointDraw(data=self.poi_points.columns(), source=self.poi_points,
                                                empty_value=POINT_COLORS[0])
+
+    def display_controls(self):
+        """
+        Contrast and brightness sliders of the map, with a reset button, e.g. to place them in another
+        layout (see :mod:`grstbx.app`). On the RGB composite, they act on the stretched values (0-1); on the
+        single bands or parameters, they narrow (contrast > 1) and shift (brightness) the colour range.
+        """
+        reset = pn.widgets.Button(name='Reset', button_type='light')
+
+        def on_reset(event):
+            self.pn_contrast.value, self.pn_brightness.value = 1., 0.
+
+        reset.on_click(on_reset)
+        return pn.Column(self.pn_contrast, self.pn_brightness, reset, sizing_mode='stretch_width')
+
+    @staticmethod
+    def _adjust_clim(clim, contrast=1., brightness=0.):
+        """Colour range narrowed by ``contrast`` around its centre, shifted down by ``brightness`` (fraction
+        of the range) so that the image looks brighter."""
+        vmin, vmax = clim
+        span = vmax - vmin
+        centre = (vmin + vmax) / 2 - brightness * span
+        return centre - span / 2 / contrast, centre + span / 2 / contrast
+
+    def _rgb_bindings(self):
+        """Widgets (or bound functions) of the RGB composite passed to :meth:`_render` (none here)."""
+        return {}
 
     # -- geometries drawn on the map (in the CRS of the map)
 
@@ -861,36 +915,40 @@ class _MultiscaleViewer(Utils):
 
         # a DynamicMap must always return the same element type: single layers (hv.Image) and
         # composites (hv.RGB) are drawn by two DynamicMaps, the inactive one returns an empty element
-        def render_image(date, layer, cmap, opacity, clim, log, x_range=None, y_range=None, width=None,
-                         height=None, scale=1.):
+        def render_image(date, layer, cmap, opacity, clim, log, contrast=1., brightness=0., x_range=None,
+                         y_range=None, width=None, height=None, scale=1.):
             if self._is_rgb(layer):
                 x_range, y_range = self._ranges(date, x_range, y_range)
                 return hv.Image(np.zeros((1, 1)), vdims=['image'],
                                 bounds=(x_range[0], y_range[0], x_range[1], y_range[1])).opts(colorbar=False, alpha=0)
             element = self._render(date, layer, title_func(date, layer), x_range, y_range, width, height)
-            vmin, vmax = clim
+            vmin, vmax = self._adjust_clim(clim, contrast, brightness)
             if log and vmin <= 0:
                 # a log color scale needs a positive lower bound
                 vmin = vmax * 1e-3 if vmax > 0 else 1e-6
             return element.opts(cmap=get_colormap(cmap), alpha=opacity, clim=(vmin, vmax), logz=log,
                                 colorbar=True, hooks=[color_scale_hook(log)])
 
-        def render_rgb(date, layer, opacity, x_range=None, y_range=None, width=None, height=None, scale=1.):
+        def render_rgb(date, layer, opacity, contrast=1., brightness=0., x_range=None, y_range=None, width=None,
+                       height=None, scale=1., **style):
             if not self._is_rgb(layer):
                 x_range, y_range = self._ranges(date, x_range, y_range)
                 return hv.RGB(np.zeros((1, 1, 4)), vdims=['R', 'G', 'B', 'A'],
                               bounds=(x_range[0], y_range[0], x_range[1], y_range[1]))
-            element = self._render(date, layer, title_func(date, layer), x_range, y_range, width, height)
+            element = self._render(date, layer, title_func(date, layer), x_range, y_range, width, height,
+                                   contrast=contrast, brightness=brightness, **style)
             return element.opts(alpha=opacity)
 
         image = hv.DynamicMap(
             pn.bind(render_image, date=date_widget, layer=layer_widget, cmap=cmap_widget,
-                    opacity=opacity_widget, clim=range_widget, log=log_widget),
+                    opacity=opacity_widget, clim=range_widget, log=log_widget, contrast=self.pn_contrast,
+                    brightness=self.pn_brightness),
             streams=[hv.streams.RangeXY(), hv.streams.PlotSize()]
         ).opts(opts.Image(**self._image_opts()))
         if self.has_rgb:
             rgb = hv.DynamicMap(
-                pn.bind(render_rgb, date=date_widget, layer=layer_widget, opacity=opacity_widget),
+                pn.bind(render_rgb, date=date_widget, layer=layer_widget, opacity=opacity_widget,
+                        contrast=self.pn_contrast, brightness=self.pn_brightness, **self._rgb_bindings()),
                 streams=[hv.streams.RangeXY(), hv.streams.PlotSize()]
             ).opts(opts.RGB(width=self.width, height=self.height, active_tools=['wheel_zoom']))
             image = rgb * image
@@ -904,7 +962,7 @@ class _MultiscaleViewer(Utils):
     def _is_rgb(self, layer):
         return False
 
-    def _render(self, date, layer, title, x_range, y_range, width, height):
+    def _render(self, date, layer, title, x_range, y_range, width, height, **style):
         return self._image(date, layer, title, x_range, y_range, width, height)
 
 
@@ -952,6 +1010,8 @@ class ViewSpectral(_MultiscaleViewer):
     :param poi: initial points of interest, returned by :meth:`get_points` (and plotted) until they are
                 moved or deleted: GeoDataFrame or GeoSeries, shapely Point, WKT string, (lon, lat) tuple
                 or list of them (EPSG:4326)
+    :param title: title of the viewer, in Markdown (e.g. '## PRISMA L2A', '## Landsat 9 L2A'),
+                  default '## S2 L2A'
     """
 
     def __init__(self, raster, dates=None,
@@ -966,49 +1026,103 @@ class ViewSpectral(_MultiscaleViewer):
                  basemap=DEFAULT_BASEMAP,
                  cmap=DEFAULT_RRS_COLORMAP,
                  aoi=None,
-                 poi=None):
+                 poi=None,
+                 title='## S2 L2A'):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
                          width=width, height=height, basemap=basemap, cmap=cmap, aoi=aoi,
                          poi=poi)
-        self.title = '## S2 L2A'
+        self.title = title
 
         image = self.data.images[self.indexes[0]][0]
         wls = (image['Rrs'] if isinstance(image, xr.Dataset) else image).wl.values
         self.wls = wls
         self.bands = wls if bands is None else np.asarray(bands)
-        self.rgb_bands = [wls[np.abs(wls - wl).argmin()] for wl in rgb_bands]
+        self.rgb_bands = [self._nearest_band(wl) for wl in rgb_bands]
         self.gamma = gamma
         self._stretch = {}
 
-    def _rgb_stretch(self, idate):
-        """Percentiles (2, 98) of the composite, from the coarsest level (one per image)."""
-        if idate not in self._stretch:
+        # bands and gamma of the RGB composite (see :meth:`rgb_controls`)
+        options = {self._band_label(wl): wl for wl in wls}
+        self.pn_red, self.pn_green, self.pn_blue = [
+            pn.widgets.Select(name=name, options=options, value=wl, width=100)
+            for name, wl in zip(['Red', 'Green', 'Blue'], self.rgb_bands)]
+        self.rgb_presets = {name: tuple(self._nearest_band(wl) for wl in bands) for name, bands in RGB_PRESETS.items()
+                            if all(abs(self._nearest_band(wl) - wl) <= RGB_PRESET_TOLERANCE for wl in bands)}
+        current = next((name for name, bands in self.rgb_presets.items() if list(bands) == self.rgb_bands), 'Custom')
+        self.pn_rgb_preset = pn.widgets.Select(name='Band combination', options=list(self.rgb_presets) + ['Custom'],
+                                               value=current)
+        self.pn_gamma = pn.widgets.FloatSlider(name='Gamma', value=gamma, start=0.2, end=1.5, step=0.05)
+        self.pn_rgb_preset.param.watch(self._on_rgb_preset, 'value')
+        for widget in (self.pn_red, self.pn_green, self.pn_blue):
+            widget.param.watch(self._on_rgb_band, 'value')
+
+    def _nearest_band(self, wl):
+        return self.wls[np.abs(self.wls - wl).argmin()]
+
+    @staticmethod
+    def _band_label(wl):
+        return '{:.1f}'.format(wl).rstrip('0').rstrip('.') + ' nm'
+
+    def _on_rgb_preset(self, event):
+        if event.new in self.rgb_presets:
+            self.pn_red.value, self.pn_green.value, self.pn_blue.value = self.rgb_presets[event.new]
+
+    def _on_rgb_band(self, event):
+        bands = (self.pn_red.value, self.pn_green.value, self.pn_blue.value)
+        if self.rgb_presets.get(self.pn_rgb_preset.value) != bands:
+            self.pn_rgb_preset.value = next(
+                (name for name, preset in self.rgb_presets.items() if preset == bands), 'Custom')
+
+    def rgb_controls(self):
+        """
+        Widgets of the RGB composite: band combination (presets), bands of the red, green and blue channels,
+        and gamma (exponent applied to Rrs to enhance the dark water pixels), e.g. to place them in another
+        layout (see :mod:`grstbx.app`).
+        """
+        return pn.Column(self.pn_rgb_preset, pn.Row(self.pn_red, self.pn_green, self.pn_blue), self.pn_gamma,
+                         sizing_mode='stretch_width')
+
+    def _rgb_bindings(self):
+        bands = pn.bind(lambda red, green, blue: (red, green, blue), self.pn_red, self.pn_green, self.pn_blue)
+        return {'bands': bands, 'gamma': self.pn_gamma}
+
+    def _rgb_stretch(self, idate, bands=None, gamma=None):
+        """Percentiles (2, 98) of the composite, from the coarsest level (one per image and band set)."""
+        bands = tuple(self.rgb_bands if bands is None else bands)
+        gamma = self.gamma if gamma is None else gamma
+        key = (idate, bands, gamma)
+        if key not in self._stretch:
             image = self.indexes[idate]
-            rgb = self.data.layer(image, self.rgb_bands, self.data.nlevels(image) - 1).load()
-            rgb = rgb.clip(min=0) ** self.gamma
-            self._stretch[idate] = (float(rgb.quantile(0.02)), float(rgb.quantile(0.98)))
-        return self._stretch[idate]
+            rgb = self.data.layer(image, list(bands), self.data.nlevels(image) - 1).load()
+            rgb = rgb.clip(min=0) ** gamma
+            self._stretch[key] = (float(rgb.quantile(0.02)), float(rgb.quantile(0.98)))
+        return self._stretch[key]
 
     has_rgb = True
 
     def _is_rgb(self, layer):
         return layer == 'RGB'
 
-    def _render(self, date, layer, title, x_range, y_range, width, height):
+    def _render(self, date, layer, title, x_range, y_range, width, height, bands=None, gamma=None, contrast=1.,
+                brightness=0.):
         if layer != 'RGB':
             return self._image(date, layer, title, x_range, y_range, width, height)
 
+        bands = list(self.rgb_bands if bands is None else bands)
+        gamma = self.gamma if gamma is None else gamma
+        title = title.replace('RGB', 'RGB {} nm'.format('/'.join('{:.0f}'.format(wl) for wl in bands)))
         x_range, y_range = self._ranges(date, x_range, y_range)
-        da = self._read(date, self.rgb_bands, x_range, y_range, width or self.width, height or self.height)
+        da = self._read(date, bands, x_range, y_range, width or self.width, height or self.height)
         if da is None:
             return hv.RGB(np.zeros((1, 1, 4)), bounds=(x_range[0], y_range[0], x_range[1], y_range[1]),
                           vdims=['R', 'G', 'B', 'A']).opts(title=title)
-        vmin, vmax = self._rgb_stretch(date)
+        vmin, vmax = self._rgb_stretch(date, bands, gamma)
         da = da.transpose('wl', 'y', 'x')
         if da.y[0] < da.y[-1]:
             da = da.isel(y=slice(None, None, -1))
-        values = ((da.values.clip(min=0) ** self.gamma - vmin) / (vmax - vmin)).clip(0, 1)
+        values = (da.values.clip(min=0) ** gamma - vmin) / (vmax - vmin)
+        values = ((values - 0.5) * contrast + 0.5 + brightness).clip(0, 1)
         alpha = np.isfinite(values).all(axis=0).astype(float)
         rgba = np.dstack([np.nan_to_num(values[i]) for i in range(3)] + [alpha])
         x, y = da.x.values, da.y.values
@@ -1043,8 +1157,13 @@ class ViewSpectral(_MultiscaleViewer):
             return hv.Curve([], 'Wavelength (nm)', label)
         return hv.Curve((spectrum.wl.values, spectrum.values), 'Wavelength (nm)', label)
 
-    def visu(self):
-        """Return the panel layout of the viewer."""
+    def visu(self, controls=True):
+        """
+        Return the panel layout of the viewer.
+
+        :param controls: show the contrast, brightness and RGB composite widgets in the viewer (otherwise they
+                         can be placed elsewhere with :meth:`display_controls` and :meth:`rgb_controls`)
+        """
 
         layers = {'RGB': 'RGB'}
         layers.update({'{:.0f}'.format(wl): wl for wl in self.bands})
@@ -1072,7 +1191,7 @@ class ViewSpectral(_MultiscaleViewer):
         spectra = (spectra * live).opts(title='Spectra of the points and under the mouse (full resolution)')
 
         return pn.Column(
-            pn.WidgetBox(
+            _to_front(pn.WidgetBox(
                 self.title,
                 pn.Column(
                     pn.Row('### Band', pn_band, pn_live),
@@ -1083,9 +1202,12 @@ class ViewSpectral(_MultiscaleViewer):
                     pn.Row(
                         pn.Row('', range_slider),
                         pn.Row('#### Opacity', pn_opacity),
-                        pn.Row('#### Colormap', pn_colormap, pn.Column(pn_reverse, pn_log)))
+                        pn.Row('#### Colormap', pn_colormap, pn.Column(pn_reverse, pn_log))),
+                    *([pn.Row('#### RGB', self.pn_rgb_preset, self.pn_red, self.pn_green, self.pn_blue,
+                              self.pn_gamma),
+                       pn.Row('#### Display', self.pn_contrast, self.pn_brightness)] if controls else [])
                 ),
-            ),
+            )),
             pn.pane.HoloViews((map_ * self.poi_points).opts(
                 opts.Points(active_tools=['point_draw'], color='color'))),
             pn.pane.HoloViews(spectra)
@@ -1131,6 +1253,7 @@ class ViewParam(_MultiscaleViewer):
     :param poi: initial points of interest, returned by :meth:`get_points` (and plotted) until they are
                 moved or deleted: GeoDataFrame or GeoSeries, shapely Point, WKT string, (lon, lat) tuple
                 or list of them (EPSG:4326)
+    :param title: title of the viewer, in Markdown (e.g. '## EnMAP L2B'), default '## S2 L2B'
     """
 
     def __init__(self, raster, dates=None,
@@ -1143,12 +1266,13 @@ class ViewParam(_MultiscaleViewer):
                  basemap=DEFAULT_BASEMAP,
                  cmap=DEFAULT_RRS_COLORMAP,
                  aoi=None,
-                 poi=None):
+                 poi=None,
+                 title='## S2 L2B'):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
                          width=width, height=height, basemap=basemap, cmap=cmap, aoi=aoi,
                          poi=poi)
-        self.title = '## S2 L2B'
+        self.title = title
 
         image = self.data.images[self.indexes[0]][0]
         self.params = params
@@ -1188,8 +1312,13 @@ class ViewParam(_MultiscaleViewer):
             x = y = None
         return self._timeseries_curve(param, x, y)
 
-    def visu(self):
-        """Return the panel layout of the viewer."""
+    def visu(self, controls=True):
+        """
+        Return the panel layout of the viewer.
+
+        :param controls: show the contrast and brightness widgets in the viewer (otherwise they can be placed
+                         elsewhere with :meth:`display_controls`)
+        """
 
         pn_param = pn.widgets.Select(value=self.params[0], options=self.params)
         pn_date = self._date_widget()
@@ -1223,7 +1352,7 @@ class ViewParam(_MultiscaleViewer):
                          xrotation=30, title='Time series of the points and under the mouse (full resolution)'))
 
         return pn.Column(
-            pn.WidgetBox(
+            _to_front(pn.WidgetBox(
                 self.title,
                 pn.Column(
                     pn.Row(
@@ -1235,9 +1364,10 @@ class ViewParam(_MultiscaleViewer):
                     pn.Row(range_slider,
                            pn.Row('#### Opacity', pn_opacity),
                            pn.Row('#### Colormap', pn_colormap, pn.Column(pn_reverse, pn_log))
-                           )
+                           ),
+                    *([pn.Row('#### Display', self.pn_contrast, self.pn_brightness)] if controls else [])
                 ),
-            ),
+            )),
             pn.pane.HoloViews((map_ * self.poi_points).opts(
                 opts.Points(active_tools=['point_draw'], color='color'))),
             pn.pane.HoloViews(timeseries)

@@ -43,6 +43,8 @@ Loading images and datacubes
    grstbx.driver.open_zarr_ancillary
    grstbx.driver.zarr_levels
    grstbx.driver.is_zarr
+   grstbx.driver.open_hgrs_l2a
+   grstbx.driver.is_hgrs
 
 Cropping and export
 -------------------
@@ -126,6 +128,23 @@ added to the list.
 mouse (*Live spectrum* checkbox), next to the spectra of the drawn points. The block of pixels around
 the mouse, aligned on the Zarr chunks, is read once with all the bands and kept in memory
 (:meth:`grstbx.visual.Multiscale.pixel`), so that hovering nearby does not read the data again.
+
+Web dashboard
+-------------
+
+Dashboard of the ``grstbx-viewer`` command (see the :doc:`tutorials/dashboard` tutorial).
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   grstbx.app.serve
+   grstbx.app.create_app
+   grstbx.app.open_products
+   grstbx.app.expand_paths
+   grstbx.app.is_product
+   grstbx.app.points_values
+   grstbx.app.polygons_statistics
 
 Utilities
 ---------

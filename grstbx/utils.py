@@ -103,17 +103,19 @@ class SpatioTemp():
     @staticmethod
     def clip_raster(raster, lat, lon, extent_m):
         '''
-        :param raster as rioxarray object with documented coordinate system
-        :param lat: latitude (float) of central point of buffer
-        :param lon: longitude (float) of central point of buffer
-        :param extent_m: extent of square centered on lat/lon
-        :param crs: crs for reprojection, use lat/lon epsg4326 otherwise.
+        Clip a raster to a square centered on a point.
+
+        The square is built in the local UTM projection of the point, then reprojected
+        into the CRS of the raster.
+
+        :param raster: DataArray or Dataset with its CRS (``rio`` accessor)
+        :param lat: latitude of the center (deg)
+        :param lon: longitude of the center (deg)
+        :param extent_m: size of the side of the square (m)
         :return: clipped raster
         '''
-        # distance is d/2 of the square buffer around the point,
-        # from center to corner;
-        # find buffer width in meters
-        buffer_width_m = extent_m / np.sqrt(2)
+        # a square buffer (cap_style=3) of distance d has sides of 2 d
+        buffer_width_m = extent_m / 2
 
         # EPSG:4326 sets Coordinate Reference System to WGS84 to match input
         wgs84_pt_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy([lon], [lat], crs='4326'))
@@ -373,12 +375,16 @@ def utm_projection(crs):
     :param crs: CRS of the image (e.g. ``raster.rio.crs``), or anything accepted by
                 :meth:`pyproj.CRS.from_user_input` (EPSG code, WKT...)
     :return: ``cartopy.crs.UTM`` for a WGS 84 / UTM CRS (EPSG 326xx: north, 327xx: south),
+             ``cartopy.crs.PlateCarree`` for a longitude-latitude grid (e.g. EPSG 4326),
              ``cartopy.crs.Mercator.GOOGLE`` (web Mercator) otherwise
     """
     import cartopy.crs as ccrs
     from pyproj import CRS
 
-    epsg = CRS.from_user_input(crs).to_epsg()
+    crs = CRS.from_user_input(crs)
+    if crs.is_geographic:
+        return ccrs.PlateCarree()
+    epsg = crs.to_epsg()
     if epsg is not None and (32601 <= epsg <= 32660 or 32701 <= epsg <= 32760):
         return ccrs.UTM(zone=epsg % 100, southern_hemisphere=epsg > 32700)
     return ccrs.Mercator.GOOGLE

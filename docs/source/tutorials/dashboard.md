@@ -24,8 +24,9 @@ be of the same level (L2A or L2B) and in the same CRS (UTM zone).
 ```{figure} ../../../illustration/grstbx_viewer_dashboard.png
 :alt: grstbx-viewer dashboard, L2A image
 
-Sentinel-2 L2A image of the Loire estuary: true-colour composite over OpenStreetMap, spectra of the
-points and under the mouse, export buttons.
+Sentinel-2 L2A image of the Loire estuary over OpenStreetMap: SWIR composite (2190, 865 and 665 nm)
+chosen in the *RGB composite* card of the sidebar, spectra of the points and under the mouse, export
+buttons.
 ```
 
 ```{figure} ../../../illustration/grstbx_viewer_dashboard_l2b.png
@@ -47,10 +48,21 @@ grstbx-viewer --root /data/satellite/Sentinel-2      # folder of the file browse
 The dashboard opens in the web browser (`--no-show` to prevent it). Type the paths or glob patterns of
 the products in the *Products* field, one per line, or add them with the *File browser* of the sidebar:
 a click on a folder opens it, a click on a product (marked with a globe) adds it to the list, and *Add
-all the products* adds those of the folder. Then click **Open**. The *Display* card sets the basemap,
+all the products* adds those of the folder. Then click **Open**. The *Options* card sets, before opening, the basemap,
 the initial colormap and colour ranges, and whether the invalid pixels of the L2B products
 (`mask != 0`) are hidden; `--basemap`, `--cmap` and `--no-reproject` (projection of the images, without
 basemap) set them from the command line.
+
+Once the products are open, two cards of the sidebar adjust the display:
+
+- **Contrast and brightness**: on the RGB composite, they act on the stretched values; on a single band
+  or an L2B parameter, they narrow (contrast > 1) and shift (brightness) the colour range set with the
+  range slider. *Reset* restores them.
+- **RGB composite (L2A)**: band combination (true colour, false colour with the NIR band for the
+  vegetation, red edge for the phytoplankton, SWIR for the land / water contrast and the clouds; the
+  combinations are proposed when the sensor has the bands), or any band of the sensor for the red, green
+  and blue channels, and the gamma applied to $R_{rs}$ to enhance the dark water pixels. The colour
+  stretch (2-98 % percentiles) is computed for the bands selected.
 
 ## Explore the images
 

@@ -9,6 +9,13 @@ Unreleased
    :class:`~grstbx.visual.ViewParam` (invalid pixels hidden); exports of the full-resolution values of the
    drawn points and of the statistics of the drawn polygons for all the dates (CSV) and of the geometries
    (GeoJSON); it can be served on a network (``--address``). Docs: tutorial page on the dashboard.
+   Fix: the drop-down menus of :class:`~grstbx.visual.ViewSpectral` and :class:`~grstbx.visual.ViewParam`
+   (colormap picker) were clipped by the widget box: they are now drawn above the map.
+   :class:`~grstbx.visual.ViewSpectral` and :class:`~grstbx.visual.ViewParam`: contrast and brightness
+   sliders (RGB composite and colour range of the single bands or parameters); ViewSpectral: bands of the
+   RGB composite (presets: true colour, false colour, red edge, SWIR, or any band for each channel) and
+   gamma. The widgets are shown in the viewer, or placed elsewhere with ``display_controls()`` and
+   ``rgb_controls()`` (``visu(controls=False)``), as in the sidebar of ``grstbx-viewer``.
    hGRS products (hyperspectral GRS, EnMAP and PRISMA): :func:`~grstbx.driver.open_hgrs_l2a` opens an
    hGRS L2A NetCDF file as a product (full-resolution ``Rrs`` and ``brdfg_full``) and its ancillary data
    (aerosol, water vapor and sunglint on the coarse grid ``xc``, ``yc``), like the GRS products, so that

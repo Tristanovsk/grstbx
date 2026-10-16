@@ -446,6 +446,9 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                                                  value=(0, 10), step=0.1)
     mask_box = pn.widgets.Checkbox(name='L2B: hide the invalid pixels (mask != 0)', value=True)
     load_button = pn.widgets.Button(name='Open', button_type='primary')
+    # controls of the opened viewer (filled when the products are opened)
+    contrast_card = pn.Card(title='Contrast and brightness', visible=False, sizing_mode='stretch_width')
+    rgb_card = pn.Card(title='RGB composite (L2A)', visible=False, sizing_mode='stretch_width')
 
     main = pn.Column(sizing_mode='stretch_width')
     intro = pn.pane.Markdown(
@@ -479,10 +482,15 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
             else:
                 viewer = visual.ViewParam(data, params=params, minmaxvalues=tuple(param_range.value),
                                           minmax=(0, max(100, param_range.value[1])), **options)
-            main.objects = [viewer.visu(), _exports(viewer)]
+            main.objects = [viewer.visu(controls=False), _exports(viewer)]
+            contrast_card.objects = [viewer.display_controls()]
+            contrast_card.visible = True
+            rgb_card.objects = [viewer.rgb_controls()] if kind == 'L2A' else []
+            rgb_card.visible = kind == 'L2A'
         except Exception as exc:
             pn.state.notifications.error(f'Cannot open the products: {exc}', duration=0)
             main.objects = [intro]
+            contrast_card.visible = rgb_card.visible = False
         finally:
             load_button.loading = False
             main.loading = False
@@ -496,8 +504,10 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         products_input,
         pn.Row(load_button, clear_button),
         pn.Card(browser, title='File browser', collapsed=bool(paths), sizing_mode='stretch_width'),
-        pn.Card(reproject_box, basemap_select, cmap_select, rrs_range, param_range, mask_box, title='Display',
-                collapsed=True, sizing_mode='stretch_width'),
+        pn.Card(reproject_box, basemap_select, cmap_select, rrs_range, param_range, mask_box,
+                title='Options (applied at opening)', collapsed=True, sizing_mode='stretch_width'),
+        contrast_card,
+        rgb_card,
     ]
     return pn.template.FastListTemplate(title='grstbx viewer', sidebar=sidebar, main=[main],
                                         sidebar_width=380, header_background='#1f4e79')

@@ -73,12 +73,22 @@ for file in sorted(glob.glob('/data/satellite/Sentinel-2/L2A/30TWT/2024/*/*/*.za
 
 ## Notebook
 
-The notebook below runs the whole workflow on a Sentinel-2 tile: preview at a coarse pyramid level,
-drawing of the AOI on an interactive map, crop, export, check of the exported product and batch
-processing. It is rendered with the outputs of its last run, where no polygon was drawn (the default
-box is used; the interactive widgets are not functional in this page). The input image is not
-distributed with grstbx: set the paths of the settings cell to run it on your own data. The notebook
-is [`notebook/grstbx_l2a_visu_subset_export.ipynb`](https://github.com/Tristanovsk/grstbx/blob/main/notebook/grstbx_l2a_visu_subset_export.ipynb).
+This notebook runs the whole workflow on a Sentinel-2 tile, with the functions of {mod}`grstbx.subset`:
+
+- preview of the image at a coarse level of the Zarr pyramid, with the three true-colour bands only,
+- default area of interest (box around a point, or vector file) or polygon drawn on the interactive
+  map of {class}`~grstbx.visual.ViewSpectral`,
+- crop of the full-resolution product and of its ancillary data ({func}`~grstbx.subset.crop_l2a`),
+  true-colour composite and valid water pixels of the subset,
+- export to Zarr or NetCDF ({func}`~grstbx.subset.export_l2a`) and to GeoTIFF
+  ({func}`~grstbx.subset.export_rrs_geotiff`),
+- check of the exported product, reopened with {class}`~grstbx.driver.L2grs`,
+- the same area of interest applied to a series of images ({func}`~grstbx.subset.crop_and_export`).
+
+The image is the Sentinel-2A acquisition of 2017-04-12 over the Loire estuary (tile 30TWT, GRS Zarr
+product). The notebook is rendered with the outputs of its last run, where no polygon was drawn (the
+default box is used; the interactive widgets are not functional in this page). The input image is not
+distributed with grstbx: set the paths of the settings cell to run it on your own data.
 
 ```{toctree}
 :maxdepth: 1

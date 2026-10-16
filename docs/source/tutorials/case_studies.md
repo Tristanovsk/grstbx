@@ -1,16 +1,47 @@
 # Case studies
 
-Applications of grstbx to time series of GRS images. The notebooks are rendered with the outputs
-of their last run: the input data are not distributed with grstbx, set the paths of their
-configuration cell to run them on your own data. The notebooks are in
-[`notebook/case_study/`](https://github.com/Tristanovsk/grstbx/tree/main/notebook/case_study).
+Applications of grstbx to time series of GRS L2A images. The notebooks are rendered with the outputs of
+their last run. The input data are not distributed with grstbx: set the paths of their configuration cell
+to run them on your own data.
 
-- **Clear Lake (California)**: multi-temporal RGB composites over the shaded relief computed for
-  the sun position of each acquisition, pixel classification flags and spectra of a cyanobacteria
-  bloom.
-- **Bagré reservoir (Burkina Faso)**: matchups between five years of Sentinel-2 images and the
-  suspended particulate matter (SPM) measured at the Kaporé station, comparison of SPM algorithms
-  from the literature with a local band-ratio model, SPM time series and maps.
+```python
+import grstbx
+
+dc = grstbx.L2grs(files)
+dc.get_l2a_datacube(subset=aoi)
+relief = grstbx.Dem.compute_dem_attributes(dc.datacube.dem, sza, azi)   # slope, illumination
+clouds = grstbx.Masking(dc.datacube.isel(time=0)).get_mask(cloud_p06=True)
+```
+
+## Clear Lake (California): multi-temporal RGB over shaded relief
+
+The first notebook explores a spring time series of Clear Lake, a large shallow eutrophic lake
+surrounded by mountains and subject to recurrent cyanobacteria blooms:
+
+- datacube of the lake from the Sentinel-2 tile 10SEJ (22 images, April-May 2024, 20 m; about 20 GB of
+  memory),
+- cloud cover and proportion of valid water pixels of each image,
+- shaded relief computed from the DEM for the sun position of each acquisition
+  ({meth}`~grstbx.utils.Dem.compute_dem_attributes`), under RGB composites of $R_{rs}$ at 705, 560 and
+  490 nm, where the blooms appear in red and the terrain shadows near the shores are visible,
+- pixel classification flags ({class}`~grstbx.masking.Masking`),
+- $R_{rs}$ spectra of an area of the main basin for each date.
+
+## Bagré reservoir (Burkina Faso): Sentinel-2 / in situ SPM matchups
+
+The second notebook evaluates the retrieval of the suspended particulate matter (SPM) in a Sahelian
+reservoir loaded with mineral particles:
+
+- datacube of a 2 km box around the Kaporé station (tile 30PYT, 2018-2022), image quality from the
+  flags and water pixels of a 200 m disk around the station,
+- matchups with the in situ SPM within ±2 days,
+- $R_{rs}$ and band ratios against SPM, calibration of a local band-ratio model with leave-one-out
+  errors,
+- comparison with SPM algorithms from the literature (Nechad et al., 2010; Han et al., 2016; OBS2CO),
+- SPM time series and maps.
+
+The notebooks are in
+[`notebook/case_study/`](https://github.com/Tristanovsk/grstbx/tree/main/notebook/case_study).
 
 ```{toctree}
 :maxdepth: 1

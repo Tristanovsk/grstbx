@@ -5,3 +5,4 @@ sphinx-copybutton
 myst-nb>=1.0
 linkify-it-py
 ipython
+sphinxcontrib-mermaid

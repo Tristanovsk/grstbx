@@ -50,6 +50,7 @@ extensions = [
     'sphinx.ext.viewcode',
     'sphinx_copybutton',
     'myst_nb',
+    'sphinxcontrib.mermaid',
 ]
 
 templates_path = ['_templates']

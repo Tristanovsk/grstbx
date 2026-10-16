@@ -78,6 +78,7 @@ docs = [
     "myst-nb>=1.0",
     "linkify-it-py",
     "ipython",
+    "sphinxcontrib-mermaid",
 ]
 # everything installable with pip (xesmf excepted)
 all = ["grstbx[notebook,docs]"]

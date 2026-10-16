@@ -69,6 +69,7 @@ or, without notebook, the web dashboard (see :doc:`tutorials/dashboard`):
 
    installation
    products
+   processing_chain
 
 .. toctree::
    :maxdepth: 2

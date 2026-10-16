@@ -1,0 +1,46 @@
+flowchart LR
+    subgraph main["Input Main data"]
+        IN1["GRS L2A products<br/>Zarr (pyramids) or NetCDF<br/>hGRS L2A: NetCDF<br/>Disk/POSIX"]
+        IN2["GRS L2B products<br/>Zarr or NetCDF<br/>Disk/POSIX"]
+    end
+
+    subgraph aux["Input auxiliary data"]
+        IN3["Area of interest (optional)<br/>GeoDataFrame, vector file,<br/>box or drawn polygon"]
+        IN4["In situ data (optional)<br/>CSV, NetCDF<br/>Disk/POSIX"]
+        IN5["NetCDF datacube (optional)<br/>time series of a site<br/>Disk/POSIX"]
+    end
+
+    PROC1["Subset extraction<br/>grstbx.subset<br/>crop_and_export"]
+    PROC2["Datacubes and matchups<br/>grstbx.driver.L2grs<br/>grstbx.matchup"]
+    PROC3["Interactive exploration<br/>grstbx-viewer (grstbx.app)<br/>grstbx.visual"]
+
+    subgraph out["Output Data"]
+        OUT1["L2A subsets<br/>Zarr (pyramids) or NetCDF,<br/>GeoTIFF of Rrs<br/>Disk/POSIX"]
+        OUT2["Datacubes, matchup tables,<br/>figures<br/>xarray / pandas, NetCDF, PNG"]
+        OUT3["Values of points, statistics<br/>of polygons, geometries<br/>CSV, GeoJSON (download)"]
+    end
+
+    IN1 --> PROC1
+    IN3 --> PROC1
+    IN1 --> PROC2
+    IN2 --> PROC2
+    IN3 --> PROC2
+    IN4 --> PROC2
+    IN1 --> PROC3
+    IN2 --> PROC3
+    IN5 --> PROC3
+    PROC1 --> OUT1
+    PROC2 --> OUT2
+    PROC3 --> OUT3
+
+    classDef mainStyle fill:#3d85c6,stroke:#1c4587,stroke-width:2px,color:#ffffff
+    classDef auxStyle fill:#8e7cc3,stroke:#4a2d84,stroke-width:2px,color:#ffffff
+    classDef procStyle fill:#e69138,stroke:#a35a00,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef outStyle fill:#6aa84f,stroke:#274e13,stroke-width:2px,color:#ffffff
+    classDef groupStyle fill:#f3f3f3,stroke:#999999,stroke-dasharray: 4 3,color:#333333
+
+    class IN1,IN2 mainStyle
+    class IN3,IN4,IN5 auxStyle
+    class PROC1,PROC2,PROC3 procStyle
+    class OUT1,OUT2,OUT3 outStyle
+    class main,aux,out groupStyle

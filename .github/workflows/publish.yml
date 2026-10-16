@@ -1,6 +1,8 @@
 # Build grstbx and publish it on PyPI with Trusted Publishing (no API token stored).
-#   - push a tag vX.Y.Z (equal to grstbx.__version__)  -> PyPI
+#   - push a tag vX.Y.Z (equal to grstbx.__version__)  -> PyPI, then GitHub release
 #   - run the workflow manually (Actions tab)           -> TestPyPI
+# The GitHub release is created once the package is on PyPI, with the wheel and sdist attached and
+# the notes of .github/release-notes/vX.Y.Z.md (notes generated from the commits if the file is absent).
 # One-time setup: on pypi.org and test.pypi.org, add a trusted publisher for
 # owner Tristanovsk, repository grstbx, workflow publish.yml, and environment pypi / testpypi.
 name: publish
@@ -64,3 +66,28 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    if: github.ref_type == 'tag'
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes" ]; then
+            notes_option=(--notes-file "$notes")
+          else
+            notes_option=(--generate-notes)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "grstbx ${GITHUB_REF_NAME}" \
+            "${notes_option[@]}"

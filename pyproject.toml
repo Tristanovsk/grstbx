@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,7 @@ name = "grstbx"
 dynamic = ["version"]
 description = "Visualization and post-processing of GRS (Glint Removal for Sentinel-2-like sensors) L2A and L2B images"
 readme = "README.md"
-license = { file = "LICENSE" }
+license-files = ["LICENSE"]
 authors = [{ name = "T. Harmel", email = "tristan.harmel@gmail.com" }]
 keywords = ["Sentinel-2", "Landsat", "ocean color", "remote sensing reflectance", "water quality",
             "sunglint", "xarray", "datacube"]

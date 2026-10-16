@@ -23,7 +23,7 @@ v2.3.2: matchups between satellite and in situ data (grstbx.matchup): get_matchu
 
 '''
 
-__version__ = '2.3.2'
+__version__ = '2.4.0'
 
 from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels, open_hgrs_l2a, is_hgrs
 #from .driver_v1 import l2grs_v1

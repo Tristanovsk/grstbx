@@ -3,7 +3,7 @@
 
 
 ## Example
-![example gif](illustration/grstbx_visual_tool.gif)
+![example gif](https://raw.githubusercontent.com/Tristanovsk/grstbx/main/illustration/grstbx_visual_tool.gif)
 
 ## Documentation
 
@@ -11,9 +11,16 @@ Tutorials and API reference: https://grstbx.readthedocs.io
 
 ## Installation
 
-grstbx requires Python >= 3.11. Clone [the repository](https://github.com/Tristanovsk/grstbx) and
-create the conda environment (recommended: GDAL, PROJ and xesmf come from conda-forge), which also
-installs grstbx in editable mode:
+grstbx requires Python >= 3.11. Install it from [PyPI](https://pypi.org/project/grstbx/):
+
+```
+pip install grstbx                 # library and web dashboard (grstbx-viewer)
+pip install "grstbx[notebook]"     # + JupyterLab environment for the notebooks
+```
+
+To run the notebooks of the repository or to develop grstbx, clone
+[the repository](https://github.com/Tristanovsk/grstbx) and create the conda environment
+(recommended: GDAL, PROJ and xesmf come from conda-forge), which also installs grstbx in editable mode:
 
 ```
 git clone https://github.com/Tristanovsk/grstbx.git
@@ -22,7 +29,7 @@ conda env create -f environment.yml
 conda activate grstbx
 ```
 
-or install it with pip in an existing environment:
+or install the clone with pip in an existing environment:
 
 ```
 pip install ".[notebook]"      # library + JupyterLab environment
@@ -62,4 +69,4 @@ under the mouse, draw points and polygons, and download their values and statist
 
 ## Example of L2A image
 
-![example files](illustration/le_leman_bleu.png)
+![example files](https://raw.githubusercontent.com/Tristanovsk/grstbx/main/illustration/le_leman_bleu.png)

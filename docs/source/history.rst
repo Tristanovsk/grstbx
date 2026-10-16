@@ -11,6 +11,10 @@ Unreleased
    Fix: :func:`~grstbx.utils.utm_projection` returns the plate carrée projection for longitude-latitude
    grids (e.g. EPSG 4326 of the hGRS PRISMA products), which :func:`~grstbx.utils.plot_rgb` drew as web
    Mercator coordinates.
+   Fix: :meth:`SpatioTemp.clip_raster <grstbx.utils.SpatioTemp.clip_raster>` clipped a square of side
+   1.41 ``extent_m`` instead of ``extent_m``; the clipped areas of former runs are 2 times larger
+   (:meth:`SpatioTemp.wktbox <grstbx.utils.SpatioTemp.wktbox>` has had the same correction since
+   v2.2.0: it returned a box twice the requested ``width`` and ``height`` before).
    :class:`~grstbx.visual.ViewSpectral` and :class:`~grstbx.visual.ViewParam`: ``title=`` option to
    name the viewer after the sensor (e.g. ``'## PRISMA L2A'``; default ``'## S2 L2A'`` and
    ``'## S2 L2B'``).

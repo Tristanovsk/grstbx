@@ -103,17 +103,19 @@ class SpatioTemp():
     @staticmethod
     def clip_raster(raster, lat, lon, extent_m):
         '''
-        :param raster as rioxarray object with documented coordinate system
-        :param lat: latitude (float) of central point of buffer
-        :param lon: longitude (float) of central point of buffer
-        :param extent_m: extent of square centered on lat/lon
-        :param crs: crs for reprojection, use lat/lon epsg4326 otherwise.
+        Clip a raster to a square centered on a point.
+
+        The square is built in the local UTM projection of the point, then reprojected
+        into the CRS of the raster.
+
+        :param raster: DataArray or Dataset with its CRS (``rio`` accessor)
+        :param lat: latitude of the center (deg)
+        :param lon: longitude of the center (deg)
+        :param extent_m: size of the side of the square (m)
         :return: clipped raster
         '''
-        # distance is d/2 of the square buffer around the point,
-        # from center to corner;
-        # find buffer width in meters
-        buffer_width_m = extent_m / np.sqrt(2)
+        # a square buffer (cap_style=3) of distance d has sides of 2 d
+        buffer_width_m = extent_m / 2
 
         # EPSG:4326 sets Coordinate Reference System to WGS84 to match input
         wgs84_pt_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy([lon], [lat], crs='4326'))

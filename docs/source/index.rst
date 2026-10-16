@@ -24,7 +24,8 @@ It provides:
 - the cropping of L2A products to an area of interest and the export of the subsets as GRS products
   (NetCDF, Zarr) or GeoTIFF (:mod:`grstbx.subset`),
 - interactive viewers for Jupyter notebooks, based on holoviews, datashader and panel, to browse
-  the images by date and band and to draw areas or points of interest (:mod:`grstbx.visual`),
+  the images by date and band and to draw areas or points of interest (:mod:`grstbx.visual`), and a
+  web dashboard to explore an L2A product without notebook (``grstbx-viewer``, :mod:`grstbx.app`),
 - miscellaneous helpers: bounding boxes, AERONET-OC readers, solar irradiance, DEM-based
   illumination, plotting (:mod:`grstbx.utils`).
 
@@ -54,6 +55,7 @@ It provides:
    :caption: Tutorials
 
    tutorials/l2a_image
+   tutorials/dashboard
    tutorials/l2b_datacube
    tutorials/subset_export
    tutorials/utilities

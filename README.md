@@ -46,6 +46,18 @@ To register the environment as a Jupyter kernel:
 python -m ipykernel install --user --name=grstbx
 ```
 
+## Web dashboard
+
+Explore an L2A product (GRS Zarr or NetCDF, hGRS NetCDF) in the web browser, without notebook:
+
+```
+grstbx-viewer /path/to/product.zarr          # or: grstbx-viewer --root /data/satellite
+```
+
+Pan and zoom the image over a basemap, hover it to plot the spectrum under the mouse, draw points and
+polygons, and download their spectra and statistics. See the
+[dashboard tutorial](https://grstbx.readthedocs.io/en/latest/tutorials/dashboard.html).
+
 ## Example of L2A image
 
 ![example files](illustration/le_leman_bleu.png)

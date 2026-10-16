@@ -2,6 +2,11 @@ History
 =======
 
 Unreleased
+   Web dashboard ``grstbx-viewer`` (:mod:`grstbx.app`): opens a GRS L2A Zarr store or NetCDF product, or an
+   hGRS L2A file, chosen in a file browser of the server, in :class:`~grstbx.visual.ViewSpectral`, and
+   exports the full-resolution spectra of the drawn points and the statistics of the drawn polygons
+   (CSV) and the geometries (GeoJSON); it can be served on a network (``--address``). Docs: tutorial
+   page on the dashboard.
    hGRS products (hyperspectral GRS, EnMAP and PRISMA): :func:`~grstbx.driver.open_hgrs_l2a` opens an
    hGRS L2A NetCDF file as a product (full-resolution ``Rrs`` and ``brdfg_full``) and its ancillary data
    (aerosol, water vapor and sunglint on the coarse grid ``xc``, ``yc``), like the GRS products, so that

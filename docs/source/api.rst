@@ -129,6 +129,22 @@ mouse (*Live spectrum* checkbox), next to the spectra of the drawn points. The b
 the mouse, aligned on the Zarr chunks, is read once with all the bands and kept in memory
 (:meth:`grstbx.visual.Multiscale.pixel`), so that hovering nearby does not read the data again.
 
+Web dashboard
+-------------
+
+Dashboard of the ``grstbx-viewer`` command (see the :doc:`tutorials/dashboard` tutorial).
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   grstbx.app.serve
+   grstbx.app.create_app
+   grstbx.app.open_rrs
+   grstbx.app.is_product
+   grstbx.app.points_spectra
+   grstbx.app.polygons_statistics
+
 Utilities
 ---------
 

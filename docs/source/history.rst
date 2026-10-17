@@ -1,6 +1,19 @@
 History
 =======
 
+Unreleased
+   - ``grstbx-viewer``: time series from folders, e.g. the tree ``<tile>/YYYY/MM/DD/<product>`` of the GRS
+     batches (:func:`~grstbx.app.find_products`), with the GRS >= 3 product folders ``<name>/<name>.zarr``;
+     *Time series* card (and ``--tile``, ``--start``, ``--end``, ``--all-processings``) to select the tile
+     (required when the folders hold several UTM zones), the period and the last processing of each
+     acquisition (:func:`~grstbx.app.select_products`). The products of a series are opened when they are
+     displayed, so that hundreds of products open in a second; for more than 30 dates the live time series
+     of L2B is off at opening. The level of the products is checked on their content when their names
+     disagree.
+   - :class:`~grstbx.visual.ViewSpectral` and :class:`~grstbx.visual.ViewParam`: ``live=`` option (initial
+     state of the live spectrum / time series); widgets on four rows, so that the *Live*, *Reverse* and
+     *Log scale* checkboxes are no longer cut at the right of the map.
+
 v2.4.0
    First release published on PyPI (``pip install grstbx``).
 

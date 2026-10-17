@@ -141,6 +141,10 @@ Dashboard of the ``grstbx-viewer`` command (see the :doc:`tutorials/dashboard` t
    grstbx.app.serve
    grstbx.app.create_app
    grstbx.app.open_products
+   grstbx.app.find_products
+   grstbx.app.select_products
+   grstbx.app.catalogue
+   grstbx.app.product_info
    grstbx.app.expand_paths
    grstbx.app.is_product
    grstbx.app.points_values

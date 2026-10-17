@@ -39,7 +39,9 @@ Application Domain (Granule)
   matchups pair the images of the datacube with the in situ data of the site.
 - **Interactive exploration**: one dashboard session opens **one product, a series of products in the
   same CRS (UTM zone), or one NetCDF datacube**, of one level (L2A or L2B). The products of a series can
-  be on different grids (e.g. subsets of several tiles of one UTM zone).
+  be on different grids (e.g. subsets of several tiles of one UTM zone); a series can be given as folders
+  (e.g. one tile of the tree ``<tile>/YYYY/MM/DD/<product>`` of the GRS batches, over a period). The
+  products are opened when they are displayed.
 
 Scheduling and Triggers
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -95,6 +97,11 @@ Inputs
      - 0..n
      - Measurements of the site for the matchups: e.g. HYPERNETS radiometer (NetCDF), monitoring
        networks (CSV), AERONET-OC (:meth:`~grstbx.utils.Data.read_aeronet_ocv3`).
+   * - Folder of products
+     - 0..n
+     - Tree ``<tile>/YYYY/MM/DD/<product>`` of the GRS batches (root, tile, year or month folder), explored
+       by :func:`~grstbx.app.find_products`; selection by tile, period and last processing of each
+       acquisition (:func:`~grstbx.app.select_products`).
    * - NetCDF datacube
      - 0..1
      - Datacube with a ``time`` dimension saved from :class:`~grstbx.driver.L2grs`, reopened by the
@@ -274,7 +281,8 @@ measured on a workstation (40 cores, 62 GB of RAM, local disk) with the test pro
    * - RAM, dashboard
      - < 1 GB per session for a Sentinel-2 tile (peak 0.8 GB); NetCDF datacubes smaller than 1 GB are
        loaded in memory
-     - only the pixels displayed are read
+     - only the pixels displayed are read; the products of a time series are opened when displayed (a
+       series of 108 L2B tiles opens in 0.3 s)
    * - Execution time
      - subset extraction: 2 to 5 s per product (NetCDF, Zarr); datacube of 95 L2B subsets: 3 min;
        dashboard: 4 s to open and draw a Sentinel-2 tile, exports in 1 s for one product, about 30 s for

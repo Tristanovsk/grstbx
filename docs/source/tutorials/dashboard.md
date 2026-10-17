@@ -16,6 +16,7 @@ It opens a single image, a **time series** of products, or a **datacube**:
 | GRS L2B NetCDF file | `S2A_MSIL2B_....nc` |
 | hGRS L2A NetCDF file (EnMAP, PRISMA) | `PRS_L2A_hgrs_..._V1.1.2.nc` |
 | several products: paths or glob patterns, one per line | `/data/L2B/BEFR/2024/*/*/*.nc` |
+| folder of products, e.g. the tree `<tile>/YYYY/MM/DD/<product>` of the GRS batches | `/data/L2A_zarr/31TEJ` |
 | NetCDF datacube with a `time` dimension (e.g. saved by {class}`~grstbx.driver.L2grs`) | `BEFR_2017-01-01_2024-12-31_H03.nc` |
 
 The products of a time series can be on different grids (e.g. subsets, Zarr and NetCDF mixed) but must
@@ -42,6 +43,8 @@ chlorophyll-a (OC2) of the first date, the invalid pixels hidden.
 grstbx-viewer                                        # choose the products in the sidebar
 grstbx-viewer /data/S2A_MSIL2AGRS_..._V3.0.1.zarr    # open a product at start-up
 grstbx-viewer "/data/L2B/BEFR/2024/*/*/*.nc"         # time series (quote the glob pattern)
+grstbx-viewer /data/L2A_zarr --tile 31TEJ            # time series of a tile, from a folder
+grstbx-viewer /data/L2B/30TWT --start 2022-01-01 --end 2022-12-31
 grstbx-viewer --root /data/satellite/Sentinel-2      # folder of the file browser
 ```
 
@@ -63,6 +66,29 @@ Once the products are open, two cards of the sidebar adjust the display:
   combinations are proposed when the sensor has the bands), or any band of the sensor for the red, green
   and blue channels, and the gamma applied to $R_{rs}$ to enhance the dark water pixels. The colour
   stretch (2-98 % percentiles) is computed for the bands selected.
+
+## Time series from folders
+
+A folder adds all the products below it, e.g. the tree `<tile>/YYYY/MM/DD/<product>` written by the
+GRS batches: the root of the tree, a tile, a year or a month folder. The products are recognized from their
+names ({func}`~grstbx.app.find_products`): GRS L2A product folders `<name>/<name>.zarr` (GRS >= 3) or
+`<name>/<name>.nc` (GRS 2), Zarr stores and NetCDF files. Add a folder by typing its path in the *Products*
+field, or with *Add this folder (time series)* in the file browser.
+
+The **Time series** card of the sidebar lists the products of the folders (*Scan the products*: tiles,
+levels, number of products and period), and selects:
+
+- the **tile**: the products of a time series must be in one UTM zone; when the folders hold several
+  zones (e.g. tiles 31TEJ and 32TQR), the dashboard asks to choose one (`--tile` from the command line);
+- the **period** (*From*, *To*; `--start`, `--end`);
+- the **last processing of each acquisition** (default): when an acquisition was processed several times,
+  only the latest processing is kept, a release being preferred to a `dev` version
+  (`--all-processings` keeps them all).
+
+The products are read only when they are displayed ({func}`~grstbx.app.open_products`): a time series of
+hundreds of products opens in a second, and each date is read when it is selected (about 0.5 s for a Zarr
+pyramid, 2 s for a NetCDF tile). The time series under the mouse reads one block of each date: for more
+than 30 dates, *Live time series* (L2B) is off at opening, tick it to turn it on, or draw points.
 
 ## Explore the images
 

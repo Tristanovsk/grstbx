@@ -1012,6 +1012,7 @@ class ViewSpectral(_MultiscaleViewer):
                 or list of them (EPSG:4326)
     :param title: title of the viewer, in Markdown (e.g. '## PRISMA L2A', '## Landsat 9 L2A'),
                   default '## S2 L2A'
+    :param live: initial state of the *Live spectrum* checkbox
     """
 
     def __init__(self, raster, dates=None,
@@ -1027,12 +1028,14 @@ class ViewSpectral(_MultiscaleViewer):
                  cmap=DEFAULT_RRS_COLORMAP,
                  aoi=None,
                  poi=None,
-                 title='## S2 L2A'):
+                 title='## S2 L2A',
+                 live=True):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
                          width=width, height=height, basemap=basemap, cmap=cmap, aoi=aoi,
                          poi=poi)
         self.title = title
+        self.live = live
 
         image = self.data.images[self.indexes[0]][0]
         wls = (image['Rrs'] if isinstance(image, xr.Dataset) else image).wl.values
@@ -1171,7 +1174,7 @@ class ViewSpectral(_MultiscaleViewer):
         pn_date = self._date_widget()
         pn_colormap, pn_reverse, cmap = self._colormap_widgets()
         pn_log = pn.widgets.Checkbox(name='Log scale', value=False)
-        pn_live = pn.widgets.Checkbox(name='Live spectrum', value=True)
+        pn_live = pn.widgets.Checkbox(name='Live spectrum', value=self.live)
         pn_opacity = pn.widgets.FloatSlider(name='Opacity', value=0.95, start=0, end=1, step=0.05)
         range_slider = pn.widgets.EditableRangeSlider(name='Range Slider', start=self.minmax[0],
                                                       end=self.minmax[1], value=self.minmaxvalues, step=0.0001)
@@ -1199,10 +1202,8 @@ class ViewSpectral(_MultiscaleViewer):
                         pn.Row('### Date', pn_date),
                         pn.Row('#### Basemap', pn_basemaps)
                     ),
-                    pn.Row(
-                        pn.Row('', range_slider),
-                        pn.Row('#### Opacity', pn_opacity),
-                        pn.Row('#### Colormap', pn_colormap, pn.Column(pn_reverse, pn_log))),
+                    pn.Row(pn.Row('', range_slider), pn.Row('#### Opacity', pn_opacity)),
+                    pn.Row('#### Colormap', pn_colormap, pn.Column(pn_reverse, pn_log)),
                     *([pn.Row('#### RGB', self.pn_rgb_preset, self.pn_red, self.pn_green, self.pn_blue,
                               self.pn_gamma),
                        pn.Row('#### Display', self.pn_contrast, self.pn_brightness)] if controls else [])
@@ -1254,6 +1255,8 @@ class ViewParam(_MultiscaleViewer):
                 moved or deleted: GeoDataFrame or GeoSeries, shapely Point, WKT string, (lon, lat) tuple
                 or list of them (EPSG:4326)
     :param title: title of the viewer, in Markdown (e.g. '## EnMAP L2B'), default '## S2 L2B'
+    :param live: initial state of the *Live time series* checkbox (reading the time series under the mouse
+                 reads one block of each date: untick it for long time series)
     """
 
     def __init__(self, raster, dates=None,
@@ -1267,12 +1270,14 @@ class ViewParam(_MultiscaleViewer):
                  cmap=DEFAULT_RRS_COLORMAP,
                  aoi=None,
                  poi=None,
-                 title='## S2 L2B'):
+                 title='## S2 L2B',
+                 live=True):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
                          width=width, height=height, basemap=basemap, cmap=cmap, aoi=aoi,
                          poi=poi)
         self.title = title
+        self.live = live
 
         image = self.data.images[self.indexes[0]][0]
         self.params = params
@@ -1324,7 +1329,7 @@ class ViewParam(_MultiscaleViewer):
         pn_date = self._date_widget()
         pn_colormap, pn_reverse, cmap = self._colormap_widgets()
         pn_log = pn.widgets.Checkbox(name='Log scale', value=False)
-        pn_live = pn.widgets.Checkbox(name='Live time series', value=True)
+        pn_live = pn.widgets.Checkbox(name='Live time series', value=self.live)
         pn_opacity = pn.widgets.FloatSlider(name='Opacity', value=0.95, start=0, end=1, step=0.05)
         range_slider = pn.widgets.EditableRangeSlider(name='Range Slider', start=self.minmax[0],
                                                       end=self.minmax[1], value=self.minmaxvalues, step=0.0001)
@@ -1355,16 +1360,13 @@ class ViewParam(_MultiscaleViewer):
             _to_front(pn.WidgetBox(
                 self.title,
                 pn.Column(
+                    pn.Row('### Parameter', pn_param, pn_live),
                     pn.Row(
-                        pn.Row('### Parameter', pn_param),
                         pn.Row('### Date', pn_date),
-                        pn.Row('#### Basemap', pn_basemaps),
-                        pn_live
+                        pn.Row('#### Basemap', pn_basemaps)
                     ),
-                    pn.Row(range_slider,
-                           pn.Row('#### Opacity', pn_opacity),
-                           pn.Row('#### Colormap', pn_colormap, pn.Column(pn_reverse, pn_log))
-                           ),
+                    pn.Row(range_slider, pn.Row('#### Opacity', pn_opacity)),
+                    pn.Row('#### Colormap', pn_colormap, pn.Column(pn_reverse, pn_log)),
                     *([pn.Row('#### Display', self.pn_contrast, self.pn_brightness)] if controls else [])
                 ),
             )),

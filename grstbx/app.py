@@ -11,6 +11,7 @@ reads the pixels displayed on the screen and the spectra or time series under th
     grstbx-viewer                                   # empty dashboard, choose the products in the sidebar
     grstbx-viewer /data/S2A_MSIL2AGRS_..._V3.0.1.zarr --root /data/satellite
     grstbx-viewer "/data/L2B/BEFR/2024/*/*/*.nc"    # time series of L2B products (glob pattern)
+    grstbx-viewer /data/L2A_zarr --tile 31TEJ       # time series of a tile, folders <tile>/YYYY/MM/DD/<product>
     grstbx-viewer --address 0.0.0.0 --port 5006 --allow-websocket-origin myserver:5006
 
 or from Python with :func:`serve`. The products are read on the machine running the server: with
@@ -33,7 +34,8 @@ from .driver import is_hgrs, is_zarr
 
 ACCEPTED = ('GRS L2A or L2B Zarr stores (`*.zarr`), GRS L2A NetCDF product folders (`<name>/` with '
             '`<name>.nc` and `<name>_anc.nc`), GRS L2B NetCDF files, hGRS L2A NetCDF files (EnMAP, PRISMA), '
-            'or a NetCDF datacube with a `time` dimension')
+            'folders of products (e.g. `<tile>/YYYY/MM/DD/<product>`), or a NetCDF datacube with a `time` '
+            'dimension')
 
 # variables of the L2B products that are not parameters to display
 NOT_PARAMETERS = ('flags', 'mask', 'spatial_ref', 'dem', 'valid_pix_prop')
@@ -41,22 +43,136 @@ NOT_PARAMETERS = ('flags', 'mask', 'spatial_ref', 'dem', 'valid_pix_prop')
 PARAMETER_ORDER = ('Chla', 'SPM', 'TURB', 'acdom', 'Kd')
 # datacubes smaller than this (bytes) are loaded in memory: fast time series under the mouse and exports
 MAX_IN_MEMORY = 1e9
+# above this number of dates, the time series under the mouse (one block read per date) is off at opening
+LIVE_MAX_DATES = 30
 
 
 # -- opening of the products ------------------------------------------------------------------------
 
+# product names: <satellite>_<level>_<acquisition time>_..._T<tile>_<processing time>[_V<version>]
+_DATETIME = re.compile(r'(\d{8}T\d{6})')
+_TILE = re.compile(r'_T(\d{2}[A-Z]{3})(?=_|$)')
+_VERSION = re.compile(r'_[Vv](\d[\w.]*)$')
+
+
+def _product_file(path):
+    """
+    File or store to open for a product: the Zarr store of a GRS product folder ``<name>/`` holding
+    ``<name>.zarr`` (layout written by GRS >= 3), otherwise the path itself.
+    """
+    path = str(path).rstrip('/')
+    store = os.path.join(path, os.path.basename(path) + '.zarr')
+    if not is_zarr(path) and os.path.isdir(store):
+        return store
+    return path
+
+
 def is_product(path):
-    """True if ``path`` can be opened by :func:`open_products`: Zarr store, NetCDF file, or GRS NetCDF
-    product folder ``<name>/`` holding ``<name>.nc``."""
+    """
+    True if ``path`` is a product opened by :func:`open_products`: Zarr store, NetCDF file, or GRS product
+    folder ``<name>/`` holding ``<name>.zarr`` (GRS >= 3) or ``<name>.nc`` (GRS 2).
+    """
     path = str(path).rstrip('/')
     name = os.path.basename(path)
     return is_zarr(path) or (os.path.isfile(path) and path.endswith('.nc')) or (
-        os.path.isdir(path) and os.path.isfile(os.path.join(path, name + '.nc')))
+        os.path.isdir(path) and (os.path.isfile(os.path.join(path, name + '.nc'))
+                                 or os.path.isdir(os.path.join(path, name + '.zarr'))))
+
+
+def product_info(path):
+    """
+    Description of a product from its name (ESA convention
+    ``<satellite>_<level>_<acquisition time>_..._T<tile>_<processing time>[_V<version>]``).
+
+    :return: dict with ``path`` (file or store to open), ``name``, ``satellite``, ``level`` (``'L2A'`` or
+             ``'L2B'``), ``tile``, ``time`` (acquisition), ``processing_time``, ``version`` (missing fields
+             are None or NaT)
+    """
+    stem = re.sub(r'\.(zarr|nc)$', '', os.path.basename(str(path).rstrip('/')))
+    times = _DATETIME.findall(stem)
+    tile, version = _TILE.search(stem), _VERSION.search(stem)
+    return {'path': _product_file(path), 'name': stem, 'satellite': stem.split('_')[0],
+            'level': 'L2B' if 'L2B' in stem.upper() else 'L2A',
+            'tile': tile.group(1) if tile else None,
+            'time': pd.Timestamp(times[0]) if times else pd.NaT,
+            'processing_time': pd.Timestamp(times[1]) if len(times) > 1 else pd.NaT,
+            'version': version.group(1) if version else ''}
+
+
+def find_products(directory, maxdepth=6):
+    """
+    Products stored under ``directory``, e.g. in the tree ``<tile>/YYYY/MM/DD/<product>`` of the GRS batches
+    (``directory`` can be the root, a tile, a year or a month folder). The folders of the products are not
+    explored.
+
+    :param directory: folder to explore
+    :param maxdepth: maximum depth of the products below ``directory``
+    :return: pandas.DataFrame of :func:`product_info`, one row per product, sorted by acquisition time
+    """
+    found = []
+
+    def explore(folder, depth):
+        try:
+            names = sorted(os.listdir(folder))
+        except OSError:
+            return
+        for name in names:
+            path = os.path.join(folder, name)
+            if is_product(path):
+                found.append(product_info(path))
+            elif os.path.isdir(path) and not name.startswith('.') and depth < maxdepth:
+                explore(path, depth + 1)
+
+    explore(str(directory), 0)
+    columns = ['path', 'name', 'satellite', 'level', 'tile', 'time', 'processing_time', 'version']
+    return pd.DataFrame(found, columns=columns).sort_values('time', kind='stable').reset_index(drop=True)
+
+
+def select_products(products, tile=None, start=None, end=None, last_processing=True):
+    """
+    Selection of products listed by :func:`find_products`.
+
+    :param products: pandas.DataFrame of :func:`product_info`
+    :param tile: tile to keep (e.g. ``'31TEJ'``), None: all
+    :param start: first acquisition date (included), None: no limit
+    :param end: last acquisition date (included), None: no limit
+    :param last_processing: keep only the last processing of each acquisition (same satellite, tile and
+                            acquisition time): latest processing time, release preferred to a ``dev`` version
+    :return: pandas.DataFrame, sorted by acquisition time
+    """
+    selected = products
+    if tile:
+        selected = selected[selected.tile == tile]
+    if start is not None:
+        selected = selected[selected.time >= pd.Timestamp(start)]
+    if end is not None:
+        selected = selected[selected.time < pd.Timestamp(end) + pd.Timedelta('1D')]
+    if last_processing and len(selected):
+        release = ~selected.version.str.contains('dev', case=False)
+        selected = (selected.assign(_release=release)
+                    .sort_values(['time', 'processing_time', '_release'], kind='stable')
+                    .drop_duplicates(['satellite', 'tile', 'time'], keep='last')
+                    .drop(columns='_release'))
+    return selected.sort_values('time', kind='stable').reset_index(drop=True)
+
+
+def _utm_zone(tile):
+    """UTM zone and hemisphere of a Sentinel-2 tile (e.g. '31TEJ' -> '31N')."""
+    return tile[:2] + ('N' if tile[2] >= 'N' else 'S')
+
+
+class SeveralZones(ValueError):
+    """The selected products are in several UTM zones: a tile must be chosen (see ``tiles``)."""
+
+    def __init__(self, tiles):
+        self.tiles = tiles
+        listing = ', '.join(f'{tile} ({count} product{"s" if count > 1 else ""})' for tile, count in tiles.items())
+        super().__init__(f'the products are in several UTM zones: choose a tile among {listing}')
 
 
 def expand_paths(paths):
     """
-    List of products from paths and glob patterns.
+    Products and folders from paths and glob patterns.
 
     :param paths: path, glob pattern (e.g. ``'/data/L2B/BEFR/2024/*/*/*.nc'``), or list of them, or text
                   with one per line
@@ -80,6 +196,25 @@ def expand_paths(paths):
     return out
 
 
+def catalogue(paths):
+    """
+    Products of paths, glob patterns and folders (explored with :func:`find_products`).
+
+    :param paths: see :func:`expand_paths`
+    :return: pandas.DataFrame of :func:`product_info`, sorted by acquisition time
+    """
+    tables = []
+    for path in expand_paths(paths):
+        if is_product(path):
+            tables.append(pd.DataFrame([product_info(path)]))
+        elif os.path.isdir(path):
+            tables.append(find_products(path))
+        else:
+            raise ValueError(f'{path} is not a product nor a folder of products')
+    products = pd.concat(tables, ignore_index=True) if tables else find_products('/nonexistent')
+    return products.drop_duplicates('path').sort_values('time', kind='stable').reset_index(drop=True)
+
+
 def _image_time(ds, path):
     """Acquisition time of an image: ``time`` coordinate, attributes or date in the product name."""
     if 'time' in ds.coords and ds['time'].size == 1:
@@ -87,24 +222,30 @@ def _image_time(ds, path):
     for attr in ('acquisition_date', 'start_date', 'PRODUCT_START_TIME'):
         if attr in ds.attrs:
             return np.datetime64(pd.Timestamp(ds.attrs[attr]).tz_localize(None), 'ns')
-    match = re.search(r'(\d{8}T\d{6})', os.path.basename(path))
+    match = _DATETIME.search(os.path.basename(path))
     if match:
         return np.datetime64(pd.Timestamp(match.group(1)), 'ns')
     raise ValueError(f'no acquisition time found in {path}')
 
 
-def _open_levels(path):
-    """Resolution levels (full resolution first) of a product, as lazy xarray.Datasets."""
-    from .driver import open_zarr_image, zarr_levels, open_hgrs_l2a
+def _open_level(path, level=0):
+    """One resolution level of a product, as a lazy xarray.Dataset."""
+    from .driver import open_zarr_image, open_hgrs_l2a
     from .subset import open_l2a
 
     if is_zarr(path):
-        return [open_zarr_image(path, level=level) for level in range(max(len(zarr_levels(path)), 1))]
+        return open_zarr_image(path, level=level)
     if is_hgrs(path):
-        return [open_hgrs_l2a(path)[0]]
+        return open_hgrs_l2a(path)[0]
     if os.path.isdir(path):
-        return [open_l2a(path)[0]]
-    return [xr.open_dataset(path, decode_coords='all', chunks={})]
+        return open_l2a(path)[0]
+    return xr.open_dataset(path, decode_coords='all', chunks={})
+
+
+def _nlevels(path):
+    from .driver import zarr_levels
+
+    return max(len(zarr_levels(path)), 1) if is_zarr(path) else 1
 
 
 def _is_l2a(ds):
@@ -123,85 +264,141 @@ def _parameters(ds, dims=('y', 'x')):
 
 
 def _layers(ds, kind, params=None, mask_invalid=True):
-    """Layers displayed by the viewers: Rrs (L2A) or the parameters (L2B), masked with ``mask != 0``."""
+    """
+    Layers displayed by the viewers: Rrs (L2A) or the parameters (L2B); with ``mask_invalid``, the pixels
+    with ``mask != 0`` (not valid water pixels) are set to NaN. The parameters missing in a product are
+    filled with NaN.
+    """
     if kind == 'L2A':
-        return ds['Rrs']
-    layers = ds[params]
+        rrs = ds['Rrs']
+        if mask_invalid and 'mask' in ds:
+            rrs = rrs.where(ds['mask'] == 0)
+        return rrs
+    present = [param for param in params if param in ds]
+    if not present:
+        raise ValueError('none of the parameters is in the product')
+    layers = ds[present]
     if mask_invalid and 'mask' in ds:
         layers = layers.where(ds['mask'] == 0)
-    return layers
+    for param in params:
+        if param not in layers:
+            layers[param] = xr.full_like(layers[present[0]], np.nan)
+    return layers[params]
 
 
-def open_products(paths, mask_invalid=True, min_size=512):
+class _LazyLevels:
     """
-    Open products for the viewers, lazily.
+    Resolution levels of a product, each opened on first access (sequence used by
+    :class:`~grstbx.visual.Multiscale`): a long time series is opened instantly, the products being read
+    only when they are displayed.
+    """
+
+    def __init__(self, path, kind, params=None, mask_invalid=True):
+        self.path, self.kind, self.params, self.mask_invalid = path, kind, params, mask_invalid
+        self._levels = {}
+        self._n = None
+
+    def __len__(self):
+        if self._n is None:
+            self._n = _nlevels(self.path)
+        return self._n
+
+    def __getitem__(self, level):
+        if level < 0:
+            level += len(self)
+        if not 0 <= level < len(self):
+            raise IndexError(level)
+        if level not in self._levels:
+            self._levels[level] = _layers(_open_level(self.path, level), self.kind, self.params,
+                                          self.mask_invalid)
+        return self._levels[level]
+
+
+def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None, end=None,
+                  last_processing=True, mask_l2a=True):
+    """
+    Open products for the viewers, lazily: each product (and each resolution level) is read when it is
+    displayed, so that long time series open instantly.
 
     The products can be on different grids (e.g. subsets of several tiles), but must share the same CRS.
 
-    :param paths: path, glob pattern, or list of them (see :func:`expand_paths`): L2A or L2B products
-                  (one image each, all of the same level), or a single NetCDF datacube with a ``time``
-                  dimension
+    :param paths: paths, glob patterns or folders, or a list of them (see :func:`catalogue`): L2A or L2B
+                  products (one image each, all of the same level), folders of products (e.g. the tree
+                  ``<tile>/YYYY/MM/DD/<product>`` of the GRS batches), or a single NetCDF datacube with a
+                  ``time`` dimension
     :param mask_invalid: L2B: hide the pixels with ``mask != 0`` (not valid water pixels)
     :param min_size: size (pixels) of the coarsest level computed for the products without pyramid
+    :param tile: tile to keep (needed when the products are in several UTM zones)
+    :param start: first acquisition date (included)
+    :param end: last acquisition date (included)
+    :param last_processing: keep only the last processing of each acquisition (see :func:`select_products`)
+    :param mask_l2a: L2A: hide the pixels with ``mask != 0`` (not valid water pixels; the products without
+                     ``mask``, e.g. hGRS, are not masked)
     :return: (data, kind, params, title): :class:`~grstbx.visual.Multiscale`, ``'L2A'`` or ``'L2B'``,
              displayed parameters (L2B, None for L2A), Markdown title of the viewer
+    :raises SeveralZones: the products are in several UTM zones and no tile is given
     """
     from .visual import Multiscale
 
-    paths = expand_paths(paths)
-    if not paths:
+    items = expand_paths(paths)
+    if not items:
         raise ValueError('no product given')
 
     # NetCDF datacube: one file with a time dimension
-    if len(paths) == 1 and not is_zarr(paths[0]) and os.path.isfile(paths[0]) and not is_hgrs(paths[0]):
-        cube = xr.open_dataset(paths[0], decode_coords='all', chunks={})
+    if len(items) == 1 and not is_zarr(items[0]) and os.path.isfile(items[0]) and not is_hgrs(items[0]):
+        cube = xr.open_dataset(items[0], decode_coords='all', chunks={})
         if 'time' in cube.dims and cube.sizes['time'] > 1:
             cube = cube.sortby('time')
             kind = 'L2A' if _is_l2a(cube) else 'L2B'
             params = None if kind == 'L2A' else _parameters(cube, dims=('time', 'y', 'x'))
             if kind == 'L2B' and not params:
-                raise ValueError(f'no parameter to display in {paths[0]}')
-            layers = _layers(cube, kind, params, mask_invalid)
+                raise ValueError(f'no parameter to display in {items[0]}')
+            layers = _layers(cube, kind, params, mask_l2a if kind == 'L2A' else mask_invalid)
             if layers.nbytes < MAX_IN_MEMORY:
                 layers = layers.load()
             data = Multiscale.from_xarray(layers, min_size=min_size)
             data.scheduler = 'synchronous'   # dask scheduler of the exports (NetCDF)
-            title = f'## {os.path.basename(paths[0])}\n{kind} datacube, {cube.sizes["time"]} dates'
+            title = f'## {os.path.basename(items[0])}\n{kind} datacube, {cube.sizes["time"]} dates'
             return data, kind, params, title
 
-    products = [(path, _open_levels(path)) for path in paths]
-    kinds = {'L2A' if _is_l2a(levels[0]) else 'L2B' for _, levels in products}
-    if len(kinds) > 1:
-        raise ValueError('L2A and L2B products cannot be displayed together')
-    kind = kinds.pop()
+    products = select_products(catalogue(items), tile=tile, start=start, end=end,
+                               last_processing=last_processing)
+    if products.empty:
+        raise ValueError('no product found (check the folders, the tile and the period)')
+    if products.level.nunique() > 1:
+        # the level of the names can be wrong (e.g. L2B products named MSIL2Agrs): check the content of the
+        # first product of each level
+        content = {level: 'L2A' if _is_l2a(_open_level(group.path.iloc[0])) else 'L2B'
+                   for level, group in products.groupby('level')}
+        if len(set(content.values())) > 1:
+            counts = products.level.value_counts().to_dict()
+            raise ValueError(f'L2A and L2B products cannot be displayed together ({counts}): open the folders '
+                             'of one level')
+    tiles = products.tile.dropna()
+    if tiles.map(_utm_zone).nunique() > 1:
+        raise SeveralZones(tiles.value_counts().sort_index().to_dict())
 
-    params = None
-    if kind == 'L2B':
-        # parameters common to all the products
-        params = _parameters(products[0][1][0])
-        for _, levels in products[1:]:
-            names = set(_parameters(levels[0]))
-            params = [param for param in params if param in names]
-        if not params:
-            raise ValueError('no parameter common to all the products')
+    # level and parameters from the first product, the others are opened when displayed
+    first = _open_level(products.path[0])
+    kind = 'L2A' if _is_l2a(first) else 'L2B'
+    params = None if kind == 'L2A' else _parameters(first)
+    if kind == 'L2B' and not params:
+        raise ValueError(f'no parameter to display in {products.path[0]}')
+    mask = mask_l2a if kind == 'L2A' else mask_invalid
+    images = [_LazyLevels(path, kind, params, mask) for path in products.path]
+    images[0]._levels[0] = _layers(first, kind, params, mask)
+    times = [time if not pd.isna(time) else pd.Timestamp(_image_time(images[i][0], products.path[i]))
+             for i, time in enumerate(products.time)]
+    data = Multiscale(images, np.array(times, dtype='datetime64[ns]'), min_size=min_size)
+    data.scheduler = None if all(is_zarr(path) for path in products.path) else 'synchronous'
 
-    crs = {levels[0].rio.crs for _, levels in products}
-    if len(crs) > 1:
-        raise ValueError(f'the products are in different CRS ({", ".join(map(str, crs))}): open the products '
-                         'of one UTM zone at a time')
-
-    times = [_image_time(levels[0], path) for path, levels in products]
-    images = [[_layers(level, kind, params, mask_invalid) for level in levels] for _, levels in products]
-    order = np.argsort(times)
-    data = Multiscale([images[i] for i in order], np.array(times)[order], min_size=min_size)
-    data.scheduler = None if all(is_zarr(path) for path in paths) else 'synchronous'
-
-    if len(paths) == 1:
-        level = 'hGRS L2A' if is_hgrs(paths[0]) else f'GRS {kind}'
-        title = f'## {os.path.basename(paths[0])}\n{level}'
+    if len(products) == 1:
+        level = 'hGRS L2A' if is_hgrs(products.path[0]) else f'GRS {kind}'
+        title = f'## {os.path.basename(products.path[0])}\n{level}'
     else:
         dates = pd.DatetimeIndex(data.times)
-        title = f'## {len(paths)} {kind} products\nfrom {dates[0].date()} to {dates[-1].date()}'
+        where = f', tile {", ".join(sorted(tiles.unique()))}' if len(tiles) else ''
+        title = f'## {len(products)} {kind} products{where}\nfrom {dates[0].date()} to {dates[-1].date()}'
     return data, kind, params, title
 
 
@@ -360,6 +557,7 @@ def _file_browser(root, products_input):
     entries = pn.widgets.MultiSelect(options={}, size=16, sizing_mode='stretch_width')
     parent = pn.widgets.Button(name='Parent folder', icon='arrow-up', button_type='light')
     add_all = pn.widgets.Button(name='Add all the products', icon='list-check', button_type='light')
+    add_folder = pn.widgets.Button(name='Add this folder (time series)', icon='folder-plus', button_type='light')
 
     def listing():
         try:
@@ -398,14 +596,17 @@ def _file_browser(root, products_input):
     entries.param.watch(on_click, 'value')
     parent.on_click(on_parent)
     add_all.on_click(lambda event: add(listing()[1]))
+    add_folder.on_click(lambda event: add([folder.value.rstrip('/')]))
     refresh()
-    return pn.Column(folder, pn.Row(parent, add_all), entries,
+    return pn.Column(folder, pn.Row(parent, add_all), add_folder, entries,
                      pn.pane.Markdown('\N{GLOBE WITH MERIDIANS}: product (click to add it), '
-                                      '\N{FILE FOLDER}: folder (click to open it)'),
+                                      '\N{FILE FOLDER}: folder (click to open it). *Add this folder* adds all '
+                                      'the products below it, e.g. a tile folder `<tile>/YYYY/MM/DD/<product>`.'),
                      sizing_mode='stretch_width')
 
 
-def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, width=1000, height=700):
+def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, width=1000, height=700,
+               tile=None, start=None, end=None, last_processing=True, mask_l2a=True, mask_l2b=True):
     """
     Build the dashboard (one per browser session).
 
@@ -417,6 +618,12 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     :param cmap: initial colormap (see :class:`~grstbx.visual.ViewSpectral`)
     :param width: width of the map (pixels)
     :param height: height of the map (pixels)
+    :param tile: tile of the time series (folders with several UTM zones)
+    :param start: first acquisition date of the time series
+    :param end: last acquisition date of the time series
+    :param last_processing: keep only the last processing of each acquisition
+    :param mask_l2a: hide the invalid pixels (``mask != 0``) of the L2A products
+    :param mask_l2b: hide the invalid pixels (``mask != 0``) of the L2B products
     :return: panel template
     """
     from . import visual
@@ -431,7 +638,8 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
 
     products_input = pn.widgets.TextAreaInput(
         name='Products', value='\n'.join(map(str, paths)), height=110, sizing_mode='stretch_width',
-        placeholder='One path or glob pattern per line, e.g.\n/data/L2A/product.zarr\n/data/L2B/BEFR/2024/*/*/*.nc')
+        placeholder='One product, folder or glob pattern per line, e.g.\n/data/L2A/product.zarr\n'
+                    '/data/L2A_zarr/31TEJ\n/data/L2B/BEFR/2024/*/*/*.nc')
     browser = _file_browser(root, products_input)
     clear_button = pn.widgets.Button(name='Clear', button_type='light')
     reproject_box = pn.widgets.Checkbox(name='Basemap (reproject to web Mercator)', value=reproject)
@@ -444,8 +652,21 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                                                value=(0, 0.02), step=0.001)
     param_range = pn.widgets.EditableRangeSlider(name='L2B: initial range of the parameters', start=0, end=100,
                                                  value=(0, 10), step=0.1)
-    mask_box = pn.widgets.Checkbox(name='L2B: hide the invalid pixels (mask != 0)', value=True)
+    mask_l2a_box = pn.widgets.Checkbox(name='L2A: hide the invalid pixels (mask != 0)', value=mask_l2a)
+    mask_box = pn.widgets.Checkbox(name='L2B: hide the invalid pixels (mask != 0)', value=mask_l2b)
     load_button = pn.widgets.Button(name='Open', button_type='primary')
+    # time series of folders: tile, period and processings (see select_products)
+    scan_button = pn.widgets.Button(name='Scan the products', icon='search', button_type='light')
+    scan_summary = pn.pane.Markdown('Scan the folders of the *Products* field to list their tiles and dates.',
+                                    sizing_mode='stretch_width')
+    tile_select = pn.widgets.Select(name='Tile', options={'All the tiles': ''} | ({tile: tile} if tile else {}),
+                                    value=tile or '')
+    start_picker = pn.widgets.DatePicker(name='From', value=pd.Timestamp(start).date() if start else None,
+                                         width=160)
+    end_picker = pn.widgets.DatePicker(name='To', value=pd.Timestamp(end).date() if end else None, width=160)
+    last_box = pn.widgets.Checkbox(name='Keep the last processing of each acquisition', value=last_processing)
+    series_card = pn.Card(scan_button, scan_summary, tile_select, pn.Row(start_picker, end_picker), last_box,
+                          title='Time series (folders)', collapsed=True, sizing_mode='stretch_width')
     # controls of the opened viewer (filled when the products are opened)
     contrast_card = pn.Card(title='Contrast and brightness', visible=False, sizing_mode='stretch_width')
     rgb_card = pn.Card(title='RGB composite (L2A)', visible=False, sizing_mode='stretch_width')
@@ -456,6 +677,10 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         f'Enter the paths of {ACCEPTED} on the server, one path or glob pattern per line, or add them with '
         'the file browser, then click **Open**. Several products make a time series: they can be on different '
         'grids, but must be in the same CRS (UTM zone).\n\n'
+        'A **folder** (e.g. a tile folder `<tile>/YYYY/MM/DD/<product>` of the GRS batches) adds all the products '
+        'below it. The **Time series** card selects the tile (needed for several UTM zones), the period and '
+        'the last processing of each acquisition; the products are read only when they are displayed, so '
+        'that long time series open instantly.\n\n'
         '- **L2A** products are displayed with the spectral viewer: pick the band or the true-colour '
         'composite, hover the map to plot the full-resolution spectrum under the mouse (dashed line), '
         'add points with the **Point Draw** tool to plot their spectra;\n'
@@ -466,6 +691,32 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         'values of the points and the statistics of the polygons below the map.')
     main.append(intro)
 
+    def scan(event=None):
+        """List the products of the Products field: tiles, levels, number of products and period."""
+        try:
+            products = catalogue(products_input.value)
+        except Exception as exc:
+            scan_summary.object = f'Cannot scan the products: {exc}'
+            return None
+        if products.empty:
+            scan_summary.object = 'No product found.'
+            return products
+        rows = ['| tile | level | products | last processing | from | to |', '|---|---|---|---|---|---|']
+        options = {'All the tiles': ''}
+        for (tile_, level), group in products.fillna({'tile': '?'}).groupby(['tile', 'level']):
+            last = select_products(group)
+            rows.append(f'| {tile_} | {level} | {len(group)} | {len(last)} | {group.time.min():%Y-%m-%d} | '
+                        f'{group.time.max():%Y-%m-%d} |')
+            if tile_ != '?':
+                options[f'{tile_} ({level}, {len(last)} product{"s" if len(last) > 1 else ""})'] = tile_
+        scan_summary.object = '\n'.join(rows)
+        current = tile_select.value
+        tile_select.options = options
+        tile_select.value = current if current in options.values() else ''
+        for picker in (start_picker, end_picker):
+            picker.start, picker.end = products.time.min().date(), products.time.max().date()
+        return products
+
     def on_load(event):
         if not products_input.value.strip():
             pn.state.notifications.warning('Enter or add products first.')
@@ -473,20 +724,37 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         load_button.loading = True
         main.loading = True
         try:
-            data, kind, params, title = open_products(products_input.value, mask_invalid=mask_box.value)
+            data, kind, params, title = open_products(
+                products_input.value, mask_invalid=mask_box.value, mask_l2a=mask_l2a_box.value,
+                tile=tile_select.value or None,
+                start=start_picker.value, end=end_picker.value, last_processing=last_box.value)
+            ndates = len(data.images)
+            # the live time series of L2B reads one block per date: off at opening for long series
+            live = kind == 'L2A' or ndates <= LIVE_MAX_DATES
             options = dict(reproject=reproject_box.value, basemap=basemap_select.value, cmap=cmap_select.value,
-                           width=width, height=height, title=title)
+                           width=width, height=height, title=title, live=live)
             if kind == 'L2A':
                 viewer = visual.ViewSpectral(data, minmaxvalues=tuple(rrs_range.value),
                                              minmax=(0, max(0.1, rrs_range.value[1])), **options)
             else:
                 viewer = visual.ViewParam(data, params=params, minmaxvalues=tuple(param_range.value),
                                           minmax=(0, max(100, param_range.value[1])), **options)
+            if not live:
+                pn.state.notifications.info(
+                    f'{ndates} dates: the live time series under the mouse is off (it reads every date); tick '
+                    '"Live time series" to turn it on, or draw points.', duration=10000)
             main.objects = [viewer.visu(controls=False), _exports(viewer)]
             contrast_card.objects = [viewer.display_controls()]
             contrast_card.visible = True
             rgb_card.objects = [viewer.rgb_controls()] if kind == 'L2A' else []
             rgb_card.visible = kind == 'L2A'
+        except SeveralZones as exc:
+            scan()
+            series_card.collapsed = False
+            pn.state.notifications.warning(f'{exc}: choose it in the "Time series" card, then click Open.',
+                                           duration=0)
+            main.objects = [intro]
+            contrast_card.visible = rgb_card.visible = False
         except Exception as exc:
             pn.state.notifications.error(f'Cannot open the products: {exc}', duration=0)
             main.objects = [intro]
@@ -496,6 +764,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
             main.loading = False
 
     load_button.on_click(on_load)
+    scan_button.on_click(scan)
     clear_button.on_click(lambda event: setattr(products_input, 'value', ''))
     if paths:
         pn.state.onload(lambda: on_load(None))
@@ -504,7 +773,8 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         products_input,
         pn.Row(load_button, clear_button),
         pn.Card(browser, title='File browser', collapsed=bool(paths), sizing_mode='stretch_width'),
-        pn.Card(reproject_box, basemap_select, cmap_select, rrs_range, param_range, mask_box,
+        series_card,
+        pn.Card(reproject_box, basemap_select, cmap_select, rrs_range, param_range, mask_l2a_box, mask_box,
                 title='Options (applied at opening)', collapsed=True, sizing_mode='stretch_width'),
         contrast_card,
         rgb_card,
@@ -551,7 +821,7 @@ def main(argv=None):
                                      description='Web dashboard to explore GRS L2A and L2B products, '
                                                  'single images or time series.')
     parser.add_argument('path', nargs='*',
-                        help=f'products opened at start-up (paths or quoted glob patterns): {ACCEPTED}')
+                        help=f'products opened at start-up (paths, folders or quoted glob patterns): {ACCEPTED}')
     parser.add_argument('--root', help='directory of the file browser (default: directory of the first '
                                        'product, or current directory)')
     parser.add_argument('--port', type=int, default=5006, help='port of the server (default: 5006)')
@@ -566,6 +836,18 @@ def main(argv=None):
     parser.add_argument('--basemap', help='initial basemap, e.g. "CARTO Positron"')
     parser.add_argument('--cmap', help="initial colormap, e.g. 'cmo.turbid'")
     parser.add_argument('--stadia-api-key', help='API key of the Stadia Maps basemaps (or STADIA_API_KEY)')
+    parser.add_argument('--show-invalid-l2a', action='store_true',
+                        help='show all the pixels of the L2A products (default: only the valid water pixels, '
+                             'mask == 0)')
+    parser.add_argument('--show-invalid-l2b', action='store_true',
+                        help='show all the pixels of the L2B products (default: only the valid water pixels, '
+                             'mask == 0)')
+    series = parser.add_argument_group('time series of folders')
+    series.add_argument('--tile', help='tile to open, e.g. 31TEJ (needed when the folders hold several UTM zones)')
+    series.add_argument('--start', help='first acquisition date, e.g. 2024-01-01')
+    series.add_argument('--end', help='last acquisition date (included), e.g. 2024-12-31')
+    series.add_argument('--all-processings', action='store_true',
+                        help='keep all the processings of each acquisition (default: the last one only)')
     args = parser.parse_args(argv)
 
     if args.stadia_api_key:
@@ -573,7 +855,9 @@ def main(argv=None):
         set_stadia_api_key(args.stadia_api_key)
     serve(path=args.path, root=args.root, port=args.port, address=args.address, show=not args.no_show,
           allow_websocket_origin=args.allow_websocket_origin, reproject=not args.no_reproject,
-          basemap=args.basemap, cmap=args.cmap)
+          basemap=args.basemap, cmap=args.cmap, tile=args.tile, start=args.start, end=args.end,
+          last_processing=not args.all_processings, mask_l2a=not args.show_invalid_l2a,
+          mask_l2b=not args.show_invalid_l2b)
 
 
 if __name__ == '__main__':

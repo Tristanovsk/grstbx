@@ -13,6 +13,14 @@ Unreleased
    - ``grstbx-viewer``: the invalid pixels (``mask != 0``) of the L2A products are hidden too, by default
      (option of the *Options* card, ``--show-invalid-l2a``; ``--show-invalid-l2b`` for the L2B products;
      :func:`~grstbx.app.open_products` ``mask_l2a=``).
+   - Viewers: the colorbar is hidden when the RGB composite is displayed (it showed a meaningless -1 to 1
+     scale, or the range of the band displayed before) and shown again for the single bands and
+     parameters (:func:`~grstbx.visual.colorbar_visibility_hook`).
+   - :class:`~grstbx.visual.Multiscale`: the windows of the map are read with a margin of 25 % and kept, so
+     that panning and zooming inside it read no data (about 3 times faster); the caches (windows, coarser
+     levels computed for the images without pyramid, blocks of the spectra and time series) are bounded in
+     memory (``cache_size``, 2 GB by default, least recently used data dropped first), they were unbounded
+     or bounded in number only; ``grstbx-viewer --cache-size`` (GB per session).
    - :class:`~grstbx.visual.ViewSpectral` and :class:`~grstbx.visual.ViewParam`: ``live=`` option (initial
      state of the live spectrum / time series); widgets on four rows, so that the *Live*, *Reverse* and
      *Log scale* checkboxes are no longer cut at the right of the map.

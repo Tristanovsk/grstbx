@@ -199,6 +199,22 @@ def color_scale_hook(log):
     return hook
 
 
+def colorbar_visibility_hook(visible):
+    """
+    Holoviews hook showing or hiding the colorbar of an image. The colorbar is created at the first
+    rendering and ``colorbar=False`` in a DynamicMap does not remove it: the viewers hide it when the RGB
+    composite is displayed (no colour scale) and show it again for the single bands and parameters.
+
+    :param visible: True to show the colorbar, False to hide it
+    """
+    def hook(plot, element):
+        colorbar = plot.handles.get('colorbar')
+        if colorbar is not None and colorbar.visible != visible:
+            colorbar.visible = visible
+
+    return hook
+
+
 class ImageViewer():
     """Older interactive viewers built on param.Parameterized."""
 
@@ -477,6 +493,39 @@ def _coarsen2(da):
     return da.coarsen(x=2, y=2, boundary='trim').mean()
 
 
+class _LRUCache(OrderedDict):
+    """
+    Least-recently-used cache of arrays, bounded in memory: the oldest items are dropped when the total
+    size of the cached arrays exceeds ``max_bytes`` (one item is always kept).
+    """
+
+    def __init__(self, max_bytes):
+        super().__init__()
+        self.max_bytes = max_bytes
+        self.nbytes = 0
+
+    @staticmethod
+    def _size(value):
+        if isinstance(value, tuple):
+            return sum(_LRUCache._size(item) for item in value)
+        return int(getattr(value, 'nbytes', 0) or 0)
+
+    def get(self, key, default=None):
+        if key in self:
+            self.move_to_end(key)
+            return self[key]
+        return default
+
+    def put(self, key, value):
+        if key in self:
+            self.nbytes -= self._size(super().pop(key))
+        self[key] = value
+        self.nbytes += self._size(value)
+        while self.nbytes > self.max_bytes and len(self) > 1:
+            self.nbytes -= self._size(self.popitem(last=False)[1])
+        return value
+
+
 class Multiscale():
     """
     Lazy multiscale access to the 2-D layers (bands or variables) of a series of images, used by the
@@ -496,22 +545,29 @@ class Multiscale():
                    x, y dimensions and a CRS), full resolution first
     :param times: acquisition times of the images
     :param min_size: size (pixels) of the longest side of the coarsest computed level
+    :param cache_size: memory (bytes) of the data kept in cache: windows read for the map (with a margin,
+                       so that panning and zooming read the data again only when leaving it), coarser
+                       levels computed for the images without pyramid, and blocks read for the spectra
+                       and time series; the least recently used data are dropped first
     """
 
-    def __init__(self, images, times, min_size=512):
+    #: margin added on each side of the windows read for the map (fraction of their width and height)
+    window_margin = 0.25
+
+    def __init__(self, images, times, min_size=512, cache_size=2e9):
         self.images = images
         self.times = np.asarray(times)
         self.min_size = min_size
         self.crs = images[0][0].rio.crs
-        self._cache = {}
         self._bounds = {}
-        # full-resolution blocks (all wavelengths) read for the spectra and time series, last ones kept
-        # in memory (at least two per image, so that a time series is not read again when hovering)
-        self._blocks = OrderedDict()
-        self._max_blocks = max(16, 2 * len(images))
+        # coarser levels computed on demand, windows read for the map, and full-resolution blocks (all
+        # wavelengths) read for the spectra and time series, kept in memory within cache_size
+        self._cache = _LRUCache(cache_size * 0.25)
+        self._windows = _LRUCache(cache_size * 0.25)
+        self._blocks = _LRUCache(cache_size * 0.5)
 
     @classmethod
-    def from_xarray(cls, obj, min_size=512):
+    def from_xarray(cls, obj, min_size=512, cache_size=2e9):
         """
         :param obj: DataArray (e.g. ``Rrs`` with a ``wl`` dimension) or Dataset with x, y and optional
                     ``time`` dimensions
@@ -519,10 +575,10 @@ class Multiscale():
         if 'time' not in obj.dims:
             obj = obj.expand_dims('time')
         images = [[obj.isel(time=itime)] for itime in range(obj.sizes['time'])]
-        return cls(images, obj.time.values, min_size=min_size)
+        return cls(images, obj.time.values, min_size=min_size, cache_size=cache_size)
 
     @classmethod
-    def from_zarr(cls, paths, min_size=512):
+    def from_zarr(cls, paths, min_size=512, cache_size=2e9):
         """
         :param paths: path or list of paths of GRS Zarr stores (L2A or L2B), with or without pyramids
         """
@@ -540,7 +596,7 @@ class Multiscale():
             images.append(levels)
             times.append(np.datetime64(pd.Timestamp(np.asarray(time).ravel()[0]).tz_localize(None), 'ns'))
         order = np.argsort(times)
-        return cls([images[i] for i in order], np.array(times)[order], min_size=min_size)
+        return cls([images[i] for i in order], np.array(times)[order], min_size=min_size, cache_size=cache_size)
 
     @staticmethod
     def _select(obj, name):
@@ -582,9 +638,10 @@ class Multiscale():
         if level < len(levels):
             return self._select(levels[level], name)
         key = (idate, tuple(name) if isinstance(name, (list, tuple)) else name, level)
-        if key not in self._cache:
-            self._cache[key] = _coarsen2(self.layer(idate, name, level - 1)).load()
-        return self._cache[key]
+        cached = self._cache.get(key)
+        if cached is None:
+            cached = self._cache.put(key, _coarsen2(self.layer(idate, name, level - 1)).load())
+        return cached
 
     def select_level(self, idate, target_res):
         """Coarsest level whose pixels are not larger than ``target_res``."""
@@ -605,11 +662,31 @@ class Multiscale():
         :return: (in-memory DataArray, level)
         """
         level = self.select_level(idate, target_res)
-        da = self.layer(idate, name, level)
         res = self.resolution(idate, level)
+        key = (idate, tuple(name) if isinstance(name, (list, tuple)) else name, level)
+
+        def crop(da, xmin, ymin, xmax, ymax):
+            yslice = slice(ymax + res, ymin - res) if da.y[0] > da.y[-1] else slice(ymin - res, ymax + res)
+            return da.sel(x=slice(xmin - res, xmax + res), y=yslice)
+
+        # the last window read at this level, with its margin: panning and zooming inside it read nothing
+        # (only the part of the requested area on the image matters: there is no data outside)
+        exmin, eymin, exmax, eymax = self.bounds(idate)
+        inside = (max(bounds[0], exmin), max(bounds[1], eymin), min(bounds[2], exmax), min(bounds[3], eymax))
+        cached = self._windows.get(key)
+        if cached is not None:
+            (cxmin, cymin, cxmax, cymax), da = cached
+            if cxmin <= inside[0] and cymin <= inside[1] and inside[2] <= cxmax and inside[3] <= cymax:
+                return crop(da, *bounds), level
+
         xmin, ymin, xmax, ymax = bounds
-        yslice = slice(ymax + res, ymin - res) if da.y[0] > da.y[-1] else slice(ymin - res, ymax + res)
-        return da.sel(x=slice(xmin - res, xmax + res), y=yslice).load(), level
+        mx, my = (xmax - xmin) * self.window_margin, (ymax - ymin) * self.window_margin
+        expanded = (max(xmin - mx, exmin), max(ymin - my, eymin), min(xmax + mx, exmax), min(ymax + my, eymax))
+        # the window keeps the requested area even when it overlaps the edge of the image
+        expanded = (min(expanded[0], xmin), min(expanded[1], ymin), max(expanded[2], xmax), max(expanded[3], ymax))
+        da = crop(self.layer(idate, name, level), *expanded).load()
+        self._windows.put(key, (expanded, da))
+        return crop(da, *bounds), level
 
     @staticmethod
     def _block_size(da, dim, default=256, max_size=512):
@@ -644,14 +721,11 @@ class Multiscale():
         iy = int(np.clip(np.rint((y - ys[0]) / (ys[1] - ys[0])), 0, len(ys) - 1))
         bx, by = self._block_size(da, 'x'), self._block_size(da, 'y')
         key = (idate, name, ix // bx, iy // by)
-        if key in self._blocks:
-            self._blocks.move_to_end(key)
-        else:
-            self._blocks[key] = da.isel(x=slice(key[2] * bx, (key[2] + 1) * bx),
-                                        y=slice(key[3] * by, (key[3] + 1) * by)).load()
-            if len(self._blocks) > self._max_blocks:
-                self._blocks.popitem(last=False)
-        return self._blocks[key].isel(x=ix % bx, y=iy % by)
+        block = self._blocks.get(key)
+        if block is None:
+            block = self._blocks.put(key, da.isel(x=slice(key[2] * bx, (key[2] + 1) * bx),
+                                                  y=slice(key[3] * by, (key[3] + 1) * by)).load())
+        return block.isel(x=ix % bx, y=iy % by)
 
     def timeseries(self, name, x, y, indexes=None):
         """
@@ -920,14 +994,15 @@ class _MultiscaleViewer(Utils):
             if self._is_rgb(layer):
                 x_range, y_range = self._ranges(date, x_range, y_range)
                 return hv.Image(np.zeros((1, 1)), vdims=['image'],
-                                bounds=(x_range[0], y_range[0], x_range[1], y_range[1])).opts(colorbar=False, alpha=0)
+                                bounds=(x_range[0], y_range[0], x_range[1], y_range[1])).opts(
+                    alpha=0, hooks=[colorbar_visibility_hook(False)])
             element = self._render(date, layer, title_func(date, layer), x_range, y_range, width, height)
             vmin, vmax = self._adjust_clim(clim, contrast, brightness)
             if log and vmin <= 0:
                 # a log color scale needs a positive lower bound
                 vmin = vmax * 1e-3 if vmax > 0 else 1e-6
             return element.opts(cmap=get_colormap(cmap), alpha=opacity, clim=(vmin, vmax), logz=log,
-                                colorbar=True, hooks=[color_scale_hook(log)])
+                                colorbar=True, hooks=[color_scale_hook(log), colorbar_visibility_hook(True)])
 
         def render_rgb(date, layer, opacity, contrast=1., brightness=0., x_range=None, y_range=None, width=None,
                        height=None, scale=1., **style):

@@ -10,6 +10,9 @@ Unreleased
      displayed, so that hundreds of products open in a second; for more than 30 dates the live time series
      of L2B is off at opening. The level of the products is checked on their content when their names
      disagree.
+   - ``grstbx-viewer``: the invalid pixels (``mask != 0``) of the L2A products are hidden too, by default
+     (option of the *Options* card, ``--show-invalid-l2a``; ``--show-invalid-l2b`` for the L2B products;
+     :func:`~grstbx.app.open_products` ``mask_l2a=``).
    - :class:`~grstbx.visual.ViewSpectral` and :class:`~grstbx.visual.ViewParam`: ``live=`` option (initial
      state of the live spectrum / time series); widgets on four rows, so that the *Live*, *Reverse* and
      *Log scale* checkboxes are no longer cut at the right of the map.

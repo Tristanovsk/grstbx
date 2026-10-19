@@ -265,11 +265,15 @@ def _parameters(ds, dims=('y', 'x')):
 
 def _layers(ds, kind, params=None, mask_invalid=True):
     """
-    Layers displayed by the viewers: Rrs (L2A) or the parameters (L2B), masked with ``mask != 0``; the
-    parameters missing in a product are filled with NaN.
+    Layers displayed by the viewers: Rrs (L2A) or the parameters (L2B); with ``mask_invalid``, the pixels
+    with ``mask != 0`` (not valid water pixels) are set to NaN. The parameters missing in a product are
+    filled with NaN.
     """
     if kind == 'L2A':
-        return ds['Rrs']
+        rrs = ds['Rrs']
+        if mask_invalid and 'mask' in ds:
+            rrs = rrs.where(ds['mask'] == 0)
+        return rrs
     present = [param for param in params if param in ds]
     if not present:
         raise ValueError('none of the parameters is in the product')
@@ -311,7 +315,7 @@ class _LazyLevels:
 
 
 def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None, end=None,
-                  last_processing=True):
+                  last_processing=True, mask_l2a=True):
     """
     Open products for the viewers, lazily: each product (and each resolution level) is read when it is
     displayed, so that long time series open instantly.
@@ -328,6 +332,8 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
     :param start: first acquisition date (included)
     :param end: last acquisition date (included)
     :param last_processing: keep only the last processing of each acquisition (see :func:`select_products`)
+    :param mask_l2a: L2A: hide the pixels with ``mask != 0`` (not valid water pixels; the products without
+                     ``mask``, e.g. hGRS, are not masked)
     :return: (data, kind, params, title): :class:`~grstbx.visual.Multiscale`, ``'L2A'`` or ``'L2B'``,
              displayed parameters (L2B, None for L2A), Markdown title of the viewer
     :raises SeveralZones: the products are in several UTM zones and no tile is given
@@ -347,7 +353,7 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
             params = None if kind == 'L2A' else _parameters(cube, dims=('time', 'y', 'x'))
             if kind == 'L2B' and not params:
                 raise ValueError(f'no parameter to display in {items[0]}')
-            layers = _layers(cube, kind, params, mask_invalid)
+            layers = _layers(cube, kind, params, mask_l2a if kind == 'L2A' else mask_invalid)
             if layers.nbytes < MAX_IN_MEMORY:
                 layers = layers.load()
             data = Multiscale.from_xarray(layers, min_size=min_size)
@@ -378,8 +384,9 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
     params = None if kind == 'L2A' else _parameters(first)
     if kind == 'L2B' and not params:
         raise ValueError(f'no parameter to display in {products.path[0]}')
-    images = [_LazyLevels(path, kind, params, mask_invalid) for path in products.path]
-    images[0]._levels[0] = _layers(first, kind, params, mask_invalid)
+    mask = mask_l2a if kind == 'L2A' else mask_invalid
+    images = [_LazyLevels(path, kind, params, mask) for path in products.path]
+    images[0]._levels[0] = _layers(first, kind, params, mask)
     times = [time if not pd.isna(time) else pd.Timestamp(_image_time(images[i][0], products.path[i]))
              for i, time in enumerate(products.time)]
     data = Multiscale(images, np.array(times, dtype='datetime64[ns]'), min_size=min_size)
@@ -599,7 +606,7 @@ def _file_browser(root, products_input):
 
 
 def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, width=1000, height=700,
-               tile=None, start=None, end=None, last_processing=True):
+               tile=None, start=None, end=None, last_processing=True, mask_l2a=True, mask_l2b=True):
     """
     Build the dashboard (one per browser session).
 
@@ -615,6 +622,8 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     :param start: first acquisition date of the time series
     :param end: last acquisition date of the time series
     :param last_processing: keep only the last processing of each acquisition
+    :param mask_l2a: hide the invalid pixels (``mask != 0``) of the L2A products
+    :param mask_l2b: hide the invalid pixels (``mask != 0``) of the L2B products
     :return: panel template
     """
     from . import visual
@@ -643,7 +652,8 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                                                value=(0, 0.02), step=0.001)
     param_range = pn.widgets.EditableRangeSlider(name='L2B: initial range of the parameters', start=0, end=100,
                                                  value=(0, 10), step=0.1)
-    mask_box = pn.widgets.Checkbox(name='L2B: hide the invalid pixels (mask != 0)', value=True)
+    mask_l2a_box = pn.widgets.Checkbox(name='L2A: hide the invalid pixels (mask != 0)', value=mask_l2a)
+    mask_box = pn.widgets.Checkbox(name='L2B: hide the invalid pixels (mask != 0)', value=mask_l2b)
     load_button = pn.widgets.Button(name='Open', button_type='primary')
     # time series of folders: tile, period and processings (see select_products)
     scan_button = pn.widgets.Button(name='Scan the products', icon='search', button_type='light')
@@ -715,7 +725,8 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         main.loading = True
         try:
             data, kind, params, title = open_products(
-                products_input.value, mask_invalid=mask_box.value, tile=tile_select.value or None,
+                products_input.value, mask_invalid=mask_box.value, mask_l2a=mask_l2a_box.value,
+                tile=tile_select.value or None,
                 start=start_picker.value, end=end_picker.value, last_processing=last_box.value)
             ndates = len(data.images)
             # the live time series of L2B reads one block per date: off at opening for long series
@@ -763,7 +774,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         pn.Row(load_button, clear_button),
         pn.Card(browser, title='File browser', collapsed=bool(paths), sizing_mode='stretch_width'),
         series_card,
-        pn.Card(reproject_box, basemap_select, cmap_select, rrs_range, param_range, mask_box,
+        pn.Card(reproject_box, basemap_select, cmap_select, rrs_range, param_range, mask_l2a_box, mask_box,
                 title='Options (applied at opening)', collapsed=True, sizing_mode='stretch_width'),
         contrast_card,
         rgb_card,
@@ -825,6 +836,12 @@ def main(argv=None):
     parser.add_argument('--basemap', help='initial basemap, e.g. "CARTO Positron"')
     parser.add_argument('--cmap', help="initial colormap, e.g. 'cmo.turbid'")
     parser.add_argument('--stadia-api-key', help='API key of the Stadia Maps basemaps (or STADIA_API_KEY)')
+    parser.add_argument('--show-invalid-l2a', action='store_true',
+                        help='show all the pixels of the L2A products (default: only the valid water pixels, '
+                             'mask == 0)')
+    parser.add_argument('--show-invalid-l2b', action='store_true',
+                        help='show all the pixels of the L2B products (default: only the valid water pixels, '
+                             'mask == 0)')
     series = parser.add_argument_group('time series of folders')
     series.add_argument('--tile', help='tile to open, e.g. 31TEJ (needed when the folders hold several UTM zones)')
     series.add_argument('--start', help='first acquisition date, e.g. 2024-01-01')
@@ -839,7 +856,8 @@ def main(argv=None):
     serve(path=args.path, root=args.root, port=args.port, address=args.address, show=not args.no_show,
           allow_websocket_origin=args.allow_websocket_origin, reproject=not args.no_reproject,
           basemap=args.basemap, cmap=args.cmap, tile=args.tile, start=args.start, end=args.end,
-          last_processing=not args.all_processings)
+          last_processing=not args.all_processings, mask_l2a=not args.show_invalid_l2a,
+          mask_l2b=not args.show_invalid_l2b)
 
 
 if __name__ == '__main__':

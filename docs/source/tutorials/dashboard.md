@@ -52,9 +52,12 @@ The dashboard opens in the web browser (`--no-show` to prevent it). Type the pat
 the products in the *Products* field, one per line, or add them with the *File browser* of the sidebar:
 a click on a folder opens it, a click on a product (marked with a globe) adds it to the list, and *Add
 all the products* adds those of the folder. Then click **Open**. The *Options* card sets, before opening, the basemap,
-the initial colormap and colour ranges, and whether the invalid pixels of the L2B products
-(`mask != 0`) are hidden; `--basemap`, `--cmap` and `--no-reproject` (projection of the images, without
-basemap) set them from the command line.
+the initial colormap and colour ranges, and whether the invalid pixels (`mask != 0`: land, clouds,
+cloud shadows, sunglint... see the `flags` of the products) of the L2A and of the L2B products are hidden.
+They are hidden by default, so that the images, the spectra, the time series and the exports show the
+valid water pixels only; the products without `mask` (e.g. hGRS) are not masked. `--basemap`, `--cmap`,
+`--no-reproject` (projection of the images, without basemap), `--show-invalid-l2a` and
+`--show-invalid-l2b` set them from the command line.
 
 Once the products are open, two cards of the sidebar adjust the display:
 

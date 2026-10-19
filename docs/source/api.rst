@@ -106,6 +106,7 @@ Interactive visualization
    grstbx.visual.basemap_tiles
    grstbx.visual.set_stadia_api_key
    grstbx.visual.get_colormap
+   grstbx.visual.colorbar_visibility_hook
 
 The basemaps proposed by the viewers (``grstbx.visual.BASEMAPS``) are free XYZ tile services: CARTO
 (Positron, Dark Matter, Voyager), OpenStreetMap, OpenTopoMap, Esri (World Imagery, World Topo, Ocean)

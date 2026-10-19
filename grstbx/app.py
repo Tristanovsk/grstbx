@@ -315,7 +315,7 @@ class _LazyLevels:
 
 
 def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None, end=None,
-                  last_processing=True, mask_l2a=True):
+                  last_processing=True, mask_l2a=True, cache_size=2e9):
     """
     Open products for the viewers, lazily: each product (and each resolution level) is read when it is
     displayed, so that long time series open instantly.
@@ -334,6 +334,8 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
     :param last_processing: keep only the last processing of each acquisition (see :func:`select_products`)
     :param mask_l2a: L2A: hide the pixels with ``mask != 0`` (not valid water pixels; the products without
                      ``mask``, e.g. hGRS, are not masked)
+    :param cache_size: memory (bytes) of the data kept in cache by the viewers (see
+                       :class:`~grstbx.visual.Multiscale`)
     :return: (data, kind, params, title): :class:`~grstbx.visual.Multiscale`, ``'L2A'`` or ``'L2B'``,
              displayed parameters (L2B, None for L2A), Markdown title of the viewer
     :raises SeveralZones: the products are in several UTM zones and no tile is given
@@ -356,7 +358,7 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
             layers = _layers(cube, kind, params, mask_l2a if kind == 'L2A' else mask_invalid)
             if layers.nbytes < MAX_IN_MEMORY:
                 layers = layers.load()
-            data = Multiscale.from_xarray(layers, min_size=min_size)
+            data = Multiscale.from_xarray(layers, min_size=min_size, cache_size=cache_size)
             data.scheduler = 'synchronous'   # dask scheduler of the exports (NetCDF)
             title = f'## {os.path.basename(items[0])}\n{kind} datacube, {cube.sizes["time"]} dates'
             return data, kind, params, title
@@ -389,7 +391,7 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
     images[0]._levels[0] = _layers(first, kind, params, mask)
     times = [time if not pd.isna(time) else pd.Timestamp(_image_time(images[i][0], products.path[i]))
              for i, time in enumerate(products.time)]
-    data = Multiscale(images, np.array(times, dtype='datetime64[ns]'), min_size=min_size)
+    data = Multiscale(images, np.array(times, dtype='datetime64[ns]'), min_size=min_size, cache_size=cache_size)
     data.scheduler = None if all(is_zarr(path) for path in products.path) else 'synchronous'
 
     if len(products) == 1:
@@ -606,7 +608,8 @@ def _file_browser(root, products_input):
 
 
 def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, width=1000, height=700,
-               tile=None, start=None, end=None, last_processing=True, mask_l2a=True, mask_l2b=True):
+               tile=None, start=None, end=None, last_processing=True, mask_l2a=True, mask_l2b=True,
+               cache_size=2e9):
     """
     Build the dashboard (one per browser session).
 
@@ -624,6 +627,8 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     :param last_processing: keep only the last processing of each acquisition
     :param mask_l2a: hide the invalid pixels (``mask != 0``) of the L2A products
     :param mask_l2b: hide the invalid pixels (``mask != 0``) of the L2B products
+    :param cache_size: memory (bytes) of the data kept in cache by each session (see
+                       :class:`~grstbx.visual.Multiscale`)
     :return: panel template
     """
     from . import visual
@@ -726,7 +731,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         try:
             data, kind, params, title = open_products(
                 products_input.value, mask_invalid=mask_box.value, mask_l2a=mask_l2a_box.value,
-                tile=tile_select.value or None,
+                tile=tile_select.value or None, cache_size=cache_size,
                 start=start_picker.value, end=end_picker.value, last_processing=last_box.value)
             ndates = len(data.images)
             # the live time series of L2B reads one block per date: off at opening for long series
@@ -836,6 +841,9 @@ def main(argv=None):
     parser.add_argument('--basemap', help='initial basemap, e.g. "CARTO Positron"')
     parser.add_argument('--cmap', help="initial colormap, e.g. 'cmo.turbid'")
     parser.add_argument('--stadia-api-key', help='API key of the Stadia Maps basemaps (or STADIA_API_KEY)')
+    parser.add_argument('--cache-size', type=float, default=2.,
+                        help='memory (GB) of the data kept in cache by each session: windows of the map with a '
+                             'margin, coarser levels, blocks of the spectra and time series (default: 2)')
     parser.add_argument('--show-invalid-l2a', action='store_true',
                         help='show all the pixels of the L2A products (default: only the valid water pixels, '
                              'mask == 0)')
@@ -857,7 +865,7 @@ def main(argv=None):
           allow_websocket_origin=args.allow_websocket_origin, reproject=not args.no_reproject,
           basemap=args.basemap, cmap=args.cmap, tile=args.tile, start=args.start, end=args.end,
           last_processing=not args.all_processings, mask_l2a=not args.show_invalid_l2a,
-          mask_l2b=not args.show_invalid_l2b)
+          mask_l2b=not args.show_invalid_l2b, cache_size=args.cache_size * 1e9)
 
 
 if __name__ == '__main__':

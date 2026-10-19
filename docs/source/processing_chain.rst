@@ -279,8 +279,8 @@ measured on a workstation (40 cores, 62 GB of RAM, local disk) with the test pro
      - :doc:`tutorials/l2b_datacube`, :doc:`tutorials/case_studies`; reduce the box or the period if
        needed
    * - RAM, dashboard
-     - < 1 GB per session for a Sentinel-2 tile (peak 0.8 GB); NetCDF datacubes smaller than 1 GB are
-       loaded in memory
+     - per session: the cache of the data read (``--cache-size``, 2 GB by default) and the products in
+       use (peak 0.8 GB for a Sentinel-2 tile); NetCDF datacubes smaller than 1 GB are loaded in memory
      - only the pixels displayed are read; the products of a time series are opened when displayed (a
        series of 108 L2B tiles opens in 0.3 s)
    * - Execution time

@@ -88,6 +88,11 @@ levels, number of products and period), and selects:
   only the latest processing is kept, a release being preferred to a `dev` version
   (`--all-processings` keeps them all).
 
+Each session keeps in memory the data it has read, within `--cache-size` (2 GB by default): the windows
+of the map, read with a margin so that panning and zooming nearby read nothing again, the coarser levels
+computed for the products without pyramid, and the blocks of the spectra and time series; the least
+recently used data are dropped first.
+
 The products are read only when they are displayed ({func}`~grstbx.app.open_products`): a time series of
 hundreds of products opens in a second, and each date is read when it is selected (about 0.5 s for a Zarr
 pyramid, 2 s for a NetCDF tile). The time series under the mouse reads one block of each date: for more

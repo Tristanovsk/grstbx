@@ -90,6 +90,7 @@ or, without notebook, the web dashboard (see :doc:`tutorials/dashboard`):
 
    api
    history
+   roadmap
 
 Related projects
 ----------------

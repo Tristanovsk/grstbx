@@ -80,13 +80,16 @@ docs = [
     "ipython",
     "sphinxcontrib-mermaid",
 ]
+# run the tests (tests/, synthetic data only)
+test = ["pytest>=7"]
 # everything installable with pip (xesmf excepted)
-all = ["grstbx[notebook,docs]"]
+all = ["grstbx[notebook,docs,test]"]
 
 [project.urls]
 Repository = "https://github.com/Tristanovsk/grstbx"
 Documentation = "https://grstbx.readthedocs.io"
 Issues = "https://github.com/Tristanovsk/grstbx/issues"
+Changelog = "https://github.com/Tristanovsk/grstbx/blob/main/CHANGELOG.md"
 GRS = "https://github.com/Tristanovsk/grs"
 
 [tool.setuptools.dynamic]
@@ -100,3 +103,7 @@ include = ["grstbx*"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["__pycache__/*", "*.pyc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

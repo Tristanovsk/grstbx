@@ -7,9 +7,13 @@ build:
 
 sphinx:
   configuration: docs/source/conf.py
+  # warnings do not fail the build: the inventories of other projects (intersphinx) are sometimes
+  # unreachable; the build itself is checked by the docs job of .github/workflows/ci.yml
   fail_on_warning: false
 
-formats: all
+# HTML and PDF (the EPUB and zipped HTML of the notebooks are not useful and slow down the build)
+formats:
+  - pdf
 
 python:
   install:

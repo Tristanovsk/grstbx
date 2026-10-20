@@ -1,0 +1,59 @@
+# Checks of each push to main / develop and of each pull request:
+#   - package: build, twine check, install of the wheel, tests and command line, on the Python versions
+#     declared in pyproject.toml
+#   - docs: build of the documentation as on Read the Docs
+name: ci
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          twine check --strict dist/*
+      - name: Install the wheel with the test dependencies
+        run: |
+          wheel=$(ls dist/grstbx-*.whl)
+          python -m pip install "${wheel}[test]"
+      - name: Tests (on the installed package)
+        run: |
+          mv grstbx grstbx_source   # import the installed wheel, not the source tree
+          python -m pytest -q tests
+      - name: Command line
+        run: grstbx-viewer --help
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install grstbx with the docs dependencies
+        run: python -m pip install ".[docs]"
+      - name: Build the documentation
+        run: python -m sphinx -b html --keep-going docs/source docs/build/html

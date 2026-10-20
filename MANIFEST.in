@@ -1,8 +1,10 @@
-# Source distribution: the package, its data, README, LICENSE and pyproject.toml only
+# Source distribution: the package, its data, README, CHANGELOG, LICENSE and pyproject.toml only
 # (no tests, notebooks, docs or illustrations, which hold large data files).
 prune test
+prune tests
 prune notebook
 prune docs
 prune illustration
 prune dask-worker-space
 global-exclude __pycache__ *.py[cod]
+include CHANGELOG.md

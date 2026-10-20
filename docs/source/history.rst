@@ -30,8 +30,9 @@ Unreleased
      (e.g. ``forecast_period``, stored as a float or a timedelta depending on the products) are no longer
      concatenated along time, which failed for such mixed series.
    - Documentation: case study of the L2B time series of the Lac de Sainte-Croix (tile 31TGJ),
-     ``notebook/case_study/sainte_croix/grstbx_l2b_sainte_croix.ipynb``, replacing the Lac de Saint-Cassien
-     notebook ``notebook/validation/grstbx_l2b_matchup.ipynb``.
+     replacing the Lac de Saint-Cassien notebook.
+   - Documentation: the notebooks of the tutorials are kept (and tracked) in ``docs/source/tutorials/``,
+     they are no longer copied from ``notebook/`` at each build.
 
 v2.4.0
    First release published on PyPI (``pip install grstbx``).

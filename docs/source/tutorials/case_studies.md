@@ -58,7 +58,7 @@ of full Sentinel-2 tiles:
 - interactive exploration with {class}`~grstbx.visual.ViewParam`.
 
 The notebooks are in
-[`notebook/case_study/`](https://github.com/Tristanovsk/grstbx/tree/main/notebook/case_study).
+[`docs/source/tutorials/case_studies/`](https://github.com/Tristanovsk/grstbx/tree/main/docs/source/tutorials/case_studies).
 
 ```{toctree}
 :maxdepth: 1

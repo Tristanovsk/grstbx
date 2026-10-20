@@ -49,7 +49,7 @@ The second notebook compares the chlorophyll-a and suspended particulate matter 
   ({func}`~grstbx.matchup.matchup_metrics`, {func}`~grstbx.matchup.plot_matchup`).
 
 The notebooks are in
-[`notebook/validation/`](https://github.com/Tristanovsk/grstbx/tree/main/notebook/validation).
+[`docs/source/tutorials/validation/`](https://github.com/Tristanovsk/grstbx/tree/main/docs/source/tutorials/validation).
 
 ```{toctree}
 :maxdepth: 1

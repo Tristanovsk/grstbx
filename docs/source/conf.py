@@ -1,7 +1,6 @@
 # Configuration file for the Sphinx documentation builder.
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -13,23 +12,6 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import grstbx
 
-# The notebooks of the tutorials live in notebook/ (where they are run); they are
-# copied into the documentation source at each build (git-ignored copies).
-NOTEBOOKS = {
-    'tutorials/l2a_image': ['notebook/visu/grstbx_l2a_visu.ipynb'],
-    'tutorials/l2b_datacube': ['notebook/validation/grstbx_l2b_datacube_visu.ipynb'],
-    'tutorials/subset_export': ['notebook/grstbx_l2a_visu_subset_export.ipynb'],
-    'tutorials/validation': ['notebook/validation/grstbx_l2a_hypernets_matchup.ipynb',
-                             'notebook/validation/grstbx_l2b_hypernets_matchup.ipynb'],
-    'tutorials/case_studies': ['notebook/case_study/clear_lake/grstbx_rgb_dem_multitemp.ipynb',
-                               'notebook/case_study/bagre/grstbx_l2a_datacube_matchup.ipynb',
-                               'notebook/case_study/sainte_croix/grstbx_l2b_sainte_croix.ipynb'],
-    'tutorials/hgrs_products': ['notebook/visu/grstbx_hgrs_prisma_l1_l2a.ipynb'],
-}
-for _target, _notebooks in NOTEBOOKS.items():
-    (DOCS_SOURCE / _target).mkdir(exist_ok=True)
-    for _notebook in _notebooks:
-        shutil.copy2(REPO_ROOT / _notebook, DOCS_SOURCE / _target / Path(_notebook).name)
 
 # -- Project information -----------------------------------------------------
 

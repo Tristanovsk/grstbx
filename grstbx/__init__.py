@@ -26,7 +26,7 @@ v2.5.0: time series of folders in grstbx-viewer, bounded caches of the viewers, 
 
 '''
 
-__version__ = '2.5.0'
+__version__ = '2.6.0.dev0'
 
 from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels, open_hgrs_l2a, is_hgrs
 #from .driver_v1 import l2grs_v1

@@ -13,6 +13,7 @@ reads the pixels displayed on the screen and the spectra or time series under th
     grstbx-viewer "/data/L2B/BEFR/2024/*/*/*.nc"    # time series of L2B products (glob pattern)
     grstbx-viewer /data/L2B --tile 31TFJ            # L2B folders <tile>/YYYY/MM/DD/<product>/<product>.nc
     grstbx-viewer "/data/L2B/31TFJ/2021/*/*/*/*.json" --max-cloud-cover 20   # STAC Items of the products
+    grstbx-viewer --stac /data/L2B                  # STAC search card on the Items of a folder (or a STAC API)
     grstbx-viewer /data/L2A_zarr --tile 31TEJ       # time series of a tile, folders <tile>/YYYY/MM/DD/<product>
     grstbx-viewer --address 0.0.0.0 --port 5006 --allow-websocket-origin myserver:5006
 
@@ -26,6 +27,8 @@ import io
 import json
 import os
 import re
+import urllib.parse
+import urllib.request
 import warnings
 
 import numpy as np
@@ -61,7 +64,7 @@ _VERSION = re.compile(r'_[Vv](\d[\w.]*)$')
 
 # columns of the product tables (see product_info)
 COLUMNS = ['path', 'name', 'satellite', 'level', 'tile', 'time', 'processing_time', 'version', 'cloud_cover',
-           'crs', 'item']
+           'crs', 'bbox', 'item']
 
 
 def _read_item(path):
@@ -79,9 +82,10 @@ def _read_item(path):
     return item
 
 
-def _data_href(item, item_path):
+def _data_href(item, item_path=None):
     """Product of a STAC Item: href of its ``data`` asset (or first asset with the role ``data``), relative
-    hrefs resolved from the folder of the Item; None if there is none."""
+    hrefs resolved from the folder of the Item (local file ``item_path``) or from its ``self`` link; None if
+    there is none."""
     assets = item.get('assets', {})
     asset = assets.get('data') or next((a for a in assets.values() if 'data' in a.get('roles', [])), None)
     if not asset or 'href' not in asset:
@@ -89,6 +93,9 @@ def _data_href(item, item_path):
     href = asset['href']
     if '://' in href or os.path.isabs(href):
         return href
+    if item_path is None:
+        base = next((link['href'] for link in item.get('links', []) if link.get('rel') == 'self'), None)
+        return urllib.parse.urljoin(base, href) if base else href
     return os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(item_path)), href))
 
 
@@ -123,12 +130,15 @@ def item_info(path):
     ``eo:cloud_cover`` (%), ``crs`` its ``proj:code``; the missing fields are taken from the name of the
     product.
 
-    :param path: Item JSON file
+    :param path: Item JSON file, or Item (dict, e.g. from a STAC API: see :func:`search_items`)
     :return: dict, see :func:`product_info`
     """
-    item = _read_item(path)
-    if item is None:
-        raise ValueError(f'{path} is not a STAC Item')
+    if isinstance(path, dict):
+        item, path = path, None
+    else:
+        item = _read_item(path)
+        if item is None:
+            raise ValueError(f'{path} is not a STAC Item')
     href = _data_href(item, path)
     info = _name_info(item.get('id') or href or path)
     props = item.get('properties', {})
@@ -144,9 +154,11 @@ def item_info(path):
         'tile': tile[len('MGRS-'):] if tile.startswith('MGRS-') else None,
         'version': str(software['GRS']) if 'GRS' in software else None,
         'cloud_cover': props.get('eo:cloud_cover'),
-        'crs': props.get('proj:code'),
+        'crs': props.get('proj:code') or (f"EPSG:{props['proj:epsg']}" if props.get('proj:epsg') else None),
+        'bbox': list(item['bbox']) if item.get('bbox') else None,
     }.items() if v is not None})
-    info['item'] = os.path.abspath(path)
+    info['item'] = os.path.abspath(path) if path else next(
+        (link['href'] for link in item.get('links', []) if link.get('rel') == 'self'), item.get('id'))
     return info
 
 
@@ -195,7 +207,7 @@ def _name_info(path):
             'time': pd.Timestamp(times[0]) if times else pd.NaT,
             'processing_time': pd.Timestamp(times[1]) if len(times) > 1 else pd.NaT,
             'version': version.group(1) if version else '',
-            'cloud_cover': np.nan, 'crs': None, 'item': None}
+            'cloud_cover': np.nan, 'crs': None, 'bbox': None, 'item': None}
 
 
 def product_info(path):
@@ -276,6 +288,97 @@ def select_products(products, tile=None, start=None, end=None, last_processing=T
     return selected.sort_values('time', kind='stable').reset_index(drop=True)
 
 
+def _stac_api_items(url, body, limit, timeout=60):
+    """Items of a STAC API ``POST <url>/search`` (Item Search), following the ``next`` links."""
+    url = url.rstrip('/')
+    request = {'url': url if url.endswith('/search') else url + '/search', 'method': 'POST', 'body': body}
+    items = []
+    while request and len(items) < limit:
+        data = json.dumps(request['body']).encode() if request.get('body') is not None else None
+        method = request.get('method', 'POST' if data else 'GET')
+        req = urllib.request.Request(request['url'], data=data if method == 'POST' else None, method=method,
+                                     headers={'Content-Type': 'application/json',
+                                              'Accept': 'application/geo+json, application/json'})
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            page = json.load(response)
+        items += page.get('features', [])
+        link = next((link for link in page.get('links', []) if link.get('rel') == 'next'), None)
+        if not link or not page.get('features'):
+            break
+        # POST paging: the body of the link replaces (merge=False) or updates (merge=True) the search
+        body = link.get('body')
+        if body is not None and link.get('merge'):
+            body = {**request['body'], **body}
+        request = {'url': link['href'], 'method': link.get('method', 'GET'), 'body': body}
+    return items[:limit]
+
+
+def search_items(source, bbox=None, intersects=None, start=None, end=None, max_cloud_cover=None, tile=None,
+                 collections=None, limit=1000):
+    """
+    Products of a STAC catalogue matching an area, a period, a tile and a maximum cloud cover.
+
+    The catalogue is either a STAC API (URL ``http(s)://...``: Item Search ``POST /search``, with the
+    area, period, collections and cloud cover sent to the server, ``eo:cloud_cover`` through the query
+    extension), or local STAC Items: folders, Item files or glob patterns (see :func:`catalogue`), e.g. the
+    products of GRSl2bgen ``--product_dir --stac``. The criteria are applied again to the results, so a
+    server ignoring the query extension gives the same selection.
+
+    :param source: STAC API URL, or folder(s), Item file(s) or glob pattern(s)
+    :param bbox: area (lon_min, lat_min, lon_max, lat_max), deg
+    :param intersects: area as a shapely geometry or GeoJSON dict (lon/lat), instead of ``bbox``
+    :param start: first acquisition date (included)
+    :param end: last acquisition date (included)
+    :param max_cloud_cover: maximum cloud cover (%); the Items without ``eo:cloud_cover`` are kept
+    :param tile: tile (e.g. ``'31TFJ'``, Items with ``grid:code``)
+    :param collections: STAC API: collection id or list of ids
+    :param limit: maximum number of Items read from a STAC API
+    :return: pandas.DataFrame of :func:`product_info` (``path``: data asset), sorted by acquisition time;
+             only the products with a STAC Item
+    """
+    from shapely.geometry import box, mapping, shape
+
+    if intersects is not None and isinstance(intersects, dict):
+        intersects = shape(intersects)
+    area = intersects if intersects is not None else (box(*bbox) if bbox is not None else None)
+    start = pd.Timestamp(start) if start is not None else None
+    end = pd.Timestamp(end) + pd.Timedelta('1D') - pd.Timedelta('1ms') if end is not None else None
+
+    if isinstance(source, str) and re.match(r'https?://', source.strip()):
+        body = {'limit': min(limit, 100)}
+        if intersects is not None:
+            body['intersects'] = mapping(intersects)
+        elif bbox is not None:
+            body['bbox'] = list(bbox)
+        if start is not None or end is not None:
+            body['datetime'] = (f'{start.isoformat() + "Z" if start is not None else ".."}/'
+                                f'{end.isoformat() + "Z" if end is not None else ".."}')
+        if collections:
+            body['collections'] = [collections] if isinstance(collections, str) else list(collections)
+        if max_cloud_cover is not None:
+            body['query'] = {'eo:cloud_cover': {'lte': max_cloud_cover}}
+        rows = [item_info(item) for item in _stac_api_items(source.strip(), body, limit)]
+        products = pd.DataFrame(rows, columns=COLUMNS)
+    else:
+        products = catalogue(source)
+        products = products[products.item.notna()]
+
+    if len(products):
+        if area is not None:
+            inside = products.bbox.map(lambda b: b is not None and box(*b).intersects(area))
+            products = products[inside]
+        if start is not None:
+            products = products[products.time >= start.tz_localize(None)]
+        if end is not None:
+            products = products[products.time <= end.tz_localize(None)]
+        if tile:
+            products = products[products.tile == tile]
+        if max_cloud_cover is not None:
+            cloud = pd.to_numeric(products.cloud_cover, errors='coerce')
+            products = products[cloud.isna() | (cloud <= max_cloud_cover)]
+    return products.sort_values('time', kind='stable').reset_index(drop=True)
+
+
 def _utm_zone(tile):
     """UTM zone and hemisphere of a Sentinel-2 tile (e.g. '31TEJ' -> '31N')."""
     return tile[:2] + ('N' if tile[2] >= 'N' else 'S')
@@ -305,6 +408,11 @@ def expand_paths(paths):
         item = str(item).strip().rstrip('/')
         if not item:
             continue
+        if '://' in item:
+            # remote product (e.g. data asset of a STAC API Item), opened by xarray / fsspec
+            if item not in out:
+                out.append(item)
+            continue
         matches = sorted(glob.glob(item)) if glob.has_magic(item) else [item]
         if not matches:
             raise FileNotFoundError(f'no product matches {item}')
@@ -325,10 +433,15 @@ def catalogue(paths):
     """
     tables = []
     for path in expand_paths(paths):
-        if is_product(path):
+        if '://' in path:
+            tables.append(pd.DataFrame([_name_info(path)]))
+        elif is_product(path):
             tables.append(pd.DataFrame([product_info(path)]))
         elif os.path.isdir(path):
             tables.append(find_products(path))
+        elif path.endswith('.json'):
+            # JSON file other than a STAC Item, e.g. zarr.json of a Zarr store matched by a glob pattern
+            continue
         else:
             raise ValueError(f'{path} is not a product nor a folder of products')
     products = pd.concat(tables, ignore_index=True) if tables else pd.DataFrame(columns=COLUMNS)
@@ -731,7 +844,7 @@ def _file_browser(root, products_input):
 
 def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, width=1000, height=700,
                tile=None, start=None, end=None, last_processing=True, mask_l2a=True, mask_l2b=True,
-               cache_size=2e9, max_cloud_cover=None):
+               cache_size=2e9, max_cloud_cover=None, stac=None):
     """
     Build the dashboard (one per browser session).
 
@@ -752,6 +865,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     :param cache_size: memory (bytes) of the data kept in cache by each session (see
                        :class:`~grstbx.visual.Multiscale`)
     :param max_cloud_cover: maximum cloud cover (%) of the products with a STAC Item
+    :param stac: catalogue of the *STAC search* card (STAC API URL, or folder / glob pattern of STAC Items)
     :return: panel template
     """
     from . import visual
@@ -798,6 +912,30 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     series_card = pn.Card(scan_button, scan_summary, tile_select, pn.Row(start_picker, end_picker), last_box,
                           cloud_input,
                           title='Time series (folders)', collapsed=True, sizing_mode='stretch_width')
+    # STAC search: local Items or STAC API (see search_items)
+    stac_source = pn.widgets.TextInput(name='Catalogue: STAC API URL, or folder / glob pattern of Items',
+                                       value=stac or '', sizing_mode='stretch_width',
+                                       placeholder='/data/L2B or https://earth-search.aws.element84.com/v1')
+    stac_collections = pn.widgets.TextInput(name='Collections (STAC API, comma-separated)', value='',
+                                            sizing_mode='stretch_width', placeholder='e.g. sentinel-2-l2a')
+    stac_area = pn.widgets.RadioButtonGroup(options=['Everywhere', 'Last polygon on the map', 'Bounding box'],
+                                            value='Everywhere', button_type='light', sizing_mode='stretch_width')
+    stac_bbox = pn.widgets.TextInput(name='Bounding box: lon_min, lat_min, lon_max, lat_max (deg)', value='',
+                                     placeholder='4.4, 43.4, 4.7, 43.6', sizing_mode='stretch_width')
+    stac_start = pn.widgets.DatePicker(name='From', width=160)
+    stac_end = pn.widgets.DatePicker(name='To', width=160)
+    stac_cloud = pn.widgets.FloatInput(name='Maximum cloud cover (%)', value=None, start=0, end=100, step=5,
+                                       placeholder='no limit')
+    stac_button = pn.widgets.Button(name='Search', icon='search', button_type='light')
+    stac_summary = pn.pane.Markdown('Search the STAC Items of a catalogue by area, period and cloud cover.',
+                                    sizing_mode='stretch_width')
+    stac_open = pn.widgets.Button(name='Open the results as a time series', icon='timeline', button_type='primary',
+                                  disabled=True)
+    stac_results = {}
+    stac_card = pn.Card(stac_source, stac_collections, stac_area, stac_bbox, pn.Row(stac_start, stac_end),
+                        stac_cloud, stac_button, stac_summary, stac_open,
+                        title='STAC search', collapsed=not stac, sizing_mode='stretch_width')
+    state = {'viewer': None}
     # controls of the opened viewer (filled when the products are opened)
     contrast_card = pn.Card(title='Contrast and brightness', visible=False, sizing_mode='stretch_width')
     rgb_card = pn.Card(title='RGB composite (L2A)', visible=False, sizing_mode='stretch_width')
@@ -875,6 +1013,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                 pn.state.notifications.info(
                     f'{ndates} dates: the live time series under the mouse is off (it reads every date); tick '
                     '"Live time series" to turn it on, or draw points.', duration=10000)
+            state['viewer'] = viewer
             main.objects = [viewer.visu(controls=False), _exports(viewer)]
             contrast_card.objects = [viewer.display_controls()]
             contrast_card.visible = True
@@ -895,8 +1034,62 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
             load_button.loading = False
             main.loading = False
 
+    def stac_search(event=None):
+        """Search the catalogue of the STAC card and list the matching products."""
+        stac_open.disabled = True
+        stac_results.clear()
+        if not stac_source.value.strip():
+            pn.state.notifications.warning('Enter a STAC API URL or a folder of STAC Items first.')
+            return
+        area = {}
+        try:
+            if stac_area.value == 'Bounding box':
+                bbox = [float(v) for v in stac_bbox.value.replace(';', ',').split(',')]
+                if len(bbox) != 4:
+                    raise ValueError('the bounding box needs 4 values: lon_min, lat_min, lon_max, lat_max')
+                area['bbox'] = bbox
+            elif stac_area.value == 'Last polygon on the map':
+                viewer = state['viewer']
+                try:
+                    polygon = viewer.get_geom() if viewer is not None else None
+                except (IndexError, KeyError, TypeError):      # no polygon drawn
+                    polygon = None
+                if polygon is None or polygon.empty:
+                    raise ValueError('open products and draw a polygon on the map first (Polygon Draw tool)')
+                area['intersects'] = polygon.geometry.iloc[0]
+            collections = [c.strip() for c in stac_collections.value.split(',') if c.strip()] or None
+            stac_button.loading = True
+            found = search_items(stac_source.value.strip(), start=stac_start.value, end=stac_end.value,
+                                 max_cloud_cover=stac_cloud.value, collections=collections, **area)
+        except Exception as exc:
+            stac_summary.object = f'Search failed: {exc}'
+            return
+        finally:
+            stac_button.loading = False
+        if found.empty:
+            stac_summary.object = 'No STAC Item matches the search.'
+            return
+        rows = ['| date | tile | cloud (%) | product |', '|---|---|---|---|']
+        for _, row in found.head(15).iterrows():
+            cloud = '' if pd.isna(row.cloud_cover) else f'{row.cloud_cover:.1f}'
+            rows.append(f'| {row.time:%Y-%m-%d} | {row.tile or "?"} | {cloud} | {row["name"]} |')
+        more = f'\n\n... and {len(found) - 15} more' if len(found) > 15 else ''
+        tiles = ', '.join(f'{t} ({n})' for t, n in found.tile.fillna('?').value_counts().sort_index().items())
+        stac_summary.object = (f'**{len(found)} products** from {found.time.min():%Y-%m-%d} to '
+                               f'{found.time.max():%Y-%m-%d}, tiles {tiles}\n\n' + '\n'.join(rows) + more)
+        # local Items: their JSON files (described again at opening); STAC API: the data assets
+        stac_results['paths'] = [item if os.path.isfile(str(item)) else path
+                                 for item, path in zip(found.item, found.path)]
+        stac_open.disabled = False
+
+    def stac_to_series(event):
+        products_input.value = '\n'.join(stac_results.get('paths', []))
+        on_load(None)
+
     load_button.on_click(on_load)
     scan_button.on_click(scan)
+    stac_button.on_click(stac_search)
+    stac_open.on_click(stac_to_series)
     clear_button.on_click(lambda event: setattr(products_input, 'value', ''))
     if paths:
         pn.state.onload(lambda: on_load(None))
@@ -906,6 +1099,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         pn.Row(load_button, clear_button),
         pn.Card(browser, title='File browser', collapsed=bool(paths), sizing_mode='stretch_width'),
         series_card,
+        stac_card,
         pn.Card(reproject_box, basemap_select, cmap_select, rrs_range, param_range, mask_l2a_box, mask_box,
                 title='Options (applied at opening)', collapsed=True, sizing_mode='stretch_width'),
         contrast_card,
@@ -983,6 +1177,8 @@ def main(argv=None):
     series.add_argument('--end', help='last acquisition date (included), e.g. 2024-12-31')
     series.add_argument('--all-processings', action='store_true',
                         help='keep all the processings of each acquisition (default: the last one only)')
+    parser.add_argument('--stac', help='catalogue of the STAC search card: STAC API URL, or folder / glob pattern '
+                                       'of STAC Items (e.g. the L2B products of GRSl2bgen --stac)')
     series.add_argument('--max-cloud-cover', type=float,
                         help='maximum cloud cover (%%) of the products with a STAC Item (eo:cloud_cover); the '
                              'products without Item are kept')
@@ -996,7 +1192,7 @@ def main(argv=None):
           basemap=args.basemap, cmap=args.cmap, tile=args.tile, start=args.start, end=args.end,
           last_processing=not args.all_processings, mask_l2a=not args.show_invalid_l2a,
           mask_l2b=not args.show_invalid_l2b, cache_size=args.cache_size * 1e9,
-          max_cloud_cover=args.max_cloud_cover)
+          max_cloud_cover=args.max_cloud_cover, stac=args.stac)
 
 
 if __name__ == '__main__':

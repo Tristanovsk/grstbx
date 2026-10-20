@@ -101,7 +101,10 @@ instead of file names, and open the results directly as time series.
   time series can be filtered by cloud cover; the search in a STAC API remains to do.
 - **Dashboard**: a *STAC search* card (catalogue URL, collection, area of interest drawn on the map,
   period, maximum cloud cover) listing the matching items, opened as a time series like the folders
-  today.
+  today. *Done* (:func:`~grstbx.app.search_items`, ``grstbx-viewer --stac``): local Items or STAC API
+  (Item Search ``POST /search`` with paging, plain HTTP, no ``pystac-client``). To do: opening remote
+  data assets (``https``/``s3`` Zarr stores) is not tested yet, the search of
+  :class:`~grstbx.datalake.SelectFiles`, and the ``processing:version`` criterion.
 
 Milestones
 ----------

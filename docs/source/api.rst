@@ -148,6 +148,7 @@ Dashboard of the ``grstbx-viewer`` command (see the :doc:`tutorials/dashboard` t
    grstbx.app.product_info
    grstbx.app.item_info
    grstbx.app.is_stac_item
+   grstbx.app.search_items
    grstbx.app.expand_paths
    grstbx.app.is_product
    grstbx.app.points_values

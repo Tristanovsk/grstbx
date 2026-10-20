@@ -21,6 +21,13 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 - Maximum cloud cover of the products with a STAC Item: `select_products(max_cloud_cover=)`,
   `open_products(max_cloud_cover=)`, *Time series* card of the dashboard, `grstbx-viewer
   --max-cloud-cover`; the products without Item are kept.
+- *STAC search* card of the dashboard (`grstbx-viewer --stac <catalogue>`): catalogue (STAC API URL, or
+  folder / glob pattern of local Items), collections, area (everywhere, last polygon drawn on the map,
+  or bounding box), period and maximum cloud cover; lists the matching products and opens them as a time
+  series. `search_items` does the search: STAC API Item Search (`POST /search`, `next` links followed,
+  cloud cover through the query extension), or local Items filtered by bbox, period, tile and cloud
+  cover; plain HTTP (`urllib`), no new dependency. Remote data assets of a STAC API go to the *Products*
+  field as URLs (`expand_paths` and `catalogue` accept URLs); their opening is not tested yet.
 
 ## [2.5.0] - 2026-10-20
 

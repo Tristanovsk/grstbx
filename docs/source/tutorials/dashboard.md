@@ -86,7 +86,34 @@ levels, number of products and period), and selects:
 - the **period** (*From*, *To*; `--start`, `--end`);
 - the **last processing of each acquisition** (default): when an acquisition was processed several times,
   only the latest processing is kept, a release being preferred to a `dev` version
-  (`--all-processings` keeps them all).
+  (`--all-processings` keeps them all);
+- the **maximum cloud cover** of the products with a STAC Item (`eo:cloud_cover`, `--max-cloud-cover`;
+  the products without Item are kept).
+
+The products with a STAC Item (`<name>/<name>.json`, written by GRSl2bgen `--product_dir --stac`) are
+described from it rather than from their name ({func}`~grstbx.app.item_info`), and the Items can be
+given directly, e.g. `/data/L2B/31TFJ/*/*/*/*/*.json`.
+
+## STAC search
+
+The **STAC search** card finds products by area, period and cloud cover in a STAC catalogue
+({func}`~grstbx.app.search_items`), and opens them as a time series:
+
+- **catalogue**: a folder or glob pattern of local STAC Items (e.g. `/data/L2B`, the L2B products of
+  GRSl2bgen), or the URL of a STAC API (Item Search, e.g. `https://earth-search.aws.element84.com/v1`),
+  with its **collections**; `--stac <catalogue>` fills it at start-up;
+- **area**: everywhere, the **last polygon drawn on the map** (Polygon Draw tool, once a product is
+  open), or a **bounding box** in longitude/latitude;
+- **period** and **maximum cloud cover**.
+
+*Search* lists the matching products (date, tile, cloud cover), and *Open the results as a time series*
+puts them in the *Products* field and opens them. The products of a time series must be in one UTM
+zone: when the results span several zones, the dashboard asks to choose a tile in the *Time series*
+card. The data assets of a STAC API are remote (`https`, `s3`): their opening is not tested yet.
+
+```console
+grstbx-viewer --stac /data/satellite/Sentinel-2/L2B
+```
 
 Each session keeps in memory the data it has read, within `--cache-size` (2 GB by default): the windows
 of the map, read with a margin so that panning and zooming nearby read nothing again, the coarser levels

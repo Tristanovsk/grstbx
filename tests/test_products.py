@@ -140,3 +140,65 @@ def test_item_with_missing_data_asset_is_not_a_product(tmp_path):
     assert not is_product(item) and find_products(tmp_path).empty
     (tmp_path / 'other.json').write_text('{"type": "FeatureCollection"}')
     assert not is_stac_item(tmp_path / 'other.json')
+
+
+def test_search_items_local(l2b_items):
+    from grstbx.app import search_items
+
+    root, items = l2b_items
+    # the synthetic Items have no bbox: an area excludes them, the other criteria select them
+    assert len(search_items(str(root))) == 3
+    assert len(search_items(str(root), start='2025-01-04', max_cloud_cover=50)) == 1
+    assert search_items(str(root), bbox=(0, 0, 1, 1)).empty
+    assert search_items(str(root), tile='32TQR').empty
+
+
+def test_search_items_stac_api_paging(l2b_items):
+    """STAC API Item Search: POST /search, criteria in the body, pages followed with the next links."""
+    import http.server
+    import threading
+
+    from grstbx.app import search_items
+
+    root, items = l2b_items
+    features = []
+    for path in items:
+        with open(path) as f:
+            item = json.load(f)
+        item['bbox'] = [4.4, 43.4, 4.6, 43.6]
+        item['assets']['data']['href'] = 'https://example.org/' + item['id'] + '.zarr'
+        features.append(item)
+    bodies = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            bodies.append(body)
+            page = body.get('page', 0)
+            links = []
+            if page + 1 < len(features):
+                links = [{'rel': 'next', 'href': f'http://127.0.0.1:{port}/search', 'method': 'POST',
+                          'body': {'page': page + 1}, 'merge': True}]
+            data = json.dumps({'type': 'FeatureCollection', 'features': [features[page]], 'links': links})
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/geo+json')
+            self.end_headers()
+            self.wfile.write(data.encode())
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        found = search_items(f'http://127.0.0.1:{port}', bbox=(4.0, 43.0, 5.0, 44.0), start='2025-01-01',
+                             end='2025-01-31', collections='l2b', max_cloud_cover=50)
+    finally:
+        server.shutdown()
+    assert len(bodies) == 3 and bodies[0]['collections'] == ['l2b'] and bodies[0]['bbox'] == [4.0, 43.0, 5.0, 44.0]
+    assert bodies[0]['query'] == {'eo:cloud_cover': {'lte': 50}}
+    assert bodies[0]['datetime'].startswith('2025-01-01T00:00:00') and bodies[1]['collections'] == ['l2b']
+    # the third Item (60 %) is removed again on the client side
+    assert list(found.cloud_cover) == [5., 30.]
+    assert found.path[0] == 'https://example.org/' + os.path.basename(items[0])[:-5] + '.zarr'

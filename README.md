@@ -96,6 +96,7 @@ grstbx-viewer /path/to/product.zarr              # or: grstbx-viewer --root /dat
 grstbx-viewer "/data/L2B/BEFR/2024/*/*/*.nc"     # time series of L2B products
 grstbx-viewer /data/L2A_zarr --tile 31TEJ        # time series of a tile, folders <tile>/YYYY/MM/DD/<product>
 grstbx-viewer "/data/L2B/31TFJ/*/*/*/*/*.json" --max-cloud-cover 20   # STAC Items of GRSl2bgen products
+grstbx-viewer --stac /data/L2B                   # STAC search card: area, period, cloud cover (or a STAC API URL)
 ```
 
 Pan and zoom the images over a basemap, hover them to plot the spectrum (L2A) or the time series (L2B)

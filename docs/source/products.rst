@@ -26,6 +26,32 @@ field      column              content
 last       ``version``         processor version (file extension removed)
 =========  ==================  ============================================
 
+.. _stac-selection:
+
+Selection from STAC Items
+-------------------------
+
+Products with STAC Items, such as the L2B products of GRSl2bgen ``--product_dir --stac``
+(``<tile>/YYYY/MM/DD/<name>/<name>.json``), or the Items of a STAC API, are selected from their Items
+rather than from their names, with :meth:`~grstbx.datalake.SelectFiles.search_stac`: tile, area
+(bounding box or polygon in longitude/latitude), period, cloud cover (``eo:cloud_cover``), GRS version
+(``processing:software``) and, for a STAC API, collections. The table ``file_list`` has the same columns
+as above (``cloud_coverage`` in %, ``abspath``: data asset of the Item, a local path or a URL) plus
+``item``, and :meth:`~grstbx.datalake.SelectFiles.list_file_path` selects the dates as usual:
+
+.. code-block:: python
+
+   sf = grstbx.SelectFiles('/data/satellite/Sentinel-2/L2B')
+   sf.search_stac(tile='31TFJ', bbox=(4.5, 43.45, 4.6, 43.55), cc_max=5, version='V3.1.0')
+   files = sf.list_file_path(('2021-01-01', '2021-12-31'))
+   dc = grstbx.L2grs(list(files))
+   dc.get_l2b_datacube(subset=bbox)
+
+   sf.search_stac('https://<stac-api>/v1', collections='<collection>', bbox=(4.5, 43.45, 4.6, 43.55))
+
+On the 154 L2B products of tiles 31TEJ, 31TFJ and 32TQR, the search takes about 1 s (the Items are read
+from disk); see :func:`~grstbx.app.search_items` for the details of the STAC API search.
+
 L2A: remote-sensing reflectance
 -------------------------------
 

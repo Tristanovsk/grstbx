@@ -34,6 +34,10 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   (pyramid) full tiles served over HTTP: a tile opens in about 2 s (7 to 9 requests, about 1 MB) and a
   window at full resolution is read in 0.3 s, with the same values as the local files. Optional
   dependencies `grstbx[remote]` (fsspec, aiohttp, s3fs).
+- `SelectFiles.search_stac`: selection of the products from their STAC Items (local Items below the root
+  or a folder, Item files or glob patterns, or a STAC API) by tile, area, period, cloud cover, GRS version
+  and collections, into the usual `file_list` table (plus an `item` column), then `list_file_path`.
+- `search_items(version=)`: GRS version(s) to keep (`processing:software`, or the name).
 
 ## [2.5.0] - 2026-10-20
 

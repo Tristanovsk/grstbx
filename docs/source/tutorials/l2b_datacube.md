@@ -31,7 +31,9 @@ The datacube gathers the Sentinel-2 A/B L2B products (20 m, GRS v2.2.1) of 2024 
 of its last run: the interactive widgets are not functional in this page, and the time series and
 polygon statistics are computed over the default points and area of interest preloaded on the map with
 `poi=` and `aoi=`. The input products are not distributed with grstbx: set `L2B_DIR` and `DATACUBE_DIR`
-to run it on your own data. The same datacube can be opened in the {doc}`web dashboard <dashboard>`.
+to run it on your own data. With STAC Items next to the products (GRSl2bgen `--stac`), `files` can
+come from {meth}`SelectFiles.search_stac <grstbx.datalake.SelectFiles.search_stac>` (tile, area, period,
+cloud cover, version; see {ref}`stac-selection`). The same datacube can be opened in the {doc}`web dashboard <dashboard>`.
 
 ```{toctree}
 :maxdepth: 1

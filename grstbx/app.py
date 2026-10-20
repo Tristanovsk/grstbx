@@ -326,7 +326,7 @@ def _stac_api_items(url, body, limit, timeout=60):
 
 
 def search_items(source, bbox=None, intersects=None, start=None, end=None, max_cloud_cover=None, tile=None,
-                 collections=None, limit=1000):
+                 collections=None, version=None, limit=1000):
     """
     Products of a STAC catalogue matching an area, a period, a tile and a maximum cloud cover.
 
@@ -344,6 +344,8 @@ def search_items(source, bbox=None, intersects=None, start=None, end=None, max_c
     :param max_cloud_cover: maximum cloud cover (%); the Items without ``eo:cloud_cover`` are kept
     :param tile: tile (e.g. ``'31TFJ'``, Items with ``grid:code``)
     :param collections: STAC API: collection id or list of ids
+    :param version: GRS version(s) to keep (``version`` of :func:`product_info`, from ``processing:software``
+                    or the name, e.g. ``'3.1.0'``; a leading ``V`` is ignored), str or list
     :param limit: maximum number of Items read from a STAC API
     :return: pandas.DataFrame of :func:`product_info` (``path``: data asset), sorted by acquisition time;
              only the products with a STAC Item
@@ -388,6 +390,9 @@ def search_items(source, bbox=None, intersects=None, start=None, end=None, max_c
         if max_cloud_cover is not None:
             cloud = pd.to_numeric(products.cloud_cover, errors='coerce')
             products = products[cloud.isna() | (cloud <= max_cloud_cover)]
+        if version:
+            versions = [version] if isinstance(version, str) else list(version)
+            products = products[products.version.isin([v.lstrip('Vv') for v in versions])]
     return products.sort_values('time', kind='stable').reset_index(drop=True)
 
 

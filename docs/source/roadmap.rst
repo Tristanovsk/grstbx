@@ -103,9 +103,9 @@ instead of file names, and open the results directly as time series.
   period, maximum cloud cover) listing the matching items, opened as a time series like the folders
   today. *Done* (:func:`~grstbx.app.search_items`, ``grstbx-viewer --stac``): local Items or STAC API
   (Item Search ``POST /search`` with paging, plain HTTP, no ``pystac-client``), remote Items and Zarr
-  assets over ``https`` (tested with GRS L2A and L2B tiles served over HTTP). To do: ``s3://`` assets on
-  a real bucket (credentials), the search of :class:`~grstbx.datalake.SelectFiles`, and the
-  ``processing:version`` criterion.
+  assets over ``https`` (tested with GRS L2A and L2B tiles served over HTTP), and
+  :meth:`~grstbx.datalake.SelectFiles.search_stac` (with the GRS version criterion, from
+  ``processing:software``). To do: ``s3://`` assets on a real bucket (credentials).
 
 Milestones
 ----------

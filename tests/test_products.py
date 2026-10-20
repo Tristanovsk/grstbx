@@ -246,3 +246,60 @@ def test_open_remote_zarr_and_item(remote_l2b):
         np.testing.assert_array_equal(values, ds['Chla_OC2nasa'].values)
     with pytest.raises(ValueError):
         open_products(base + '.json', max_cloud_cover=1)
+
+
+def _serve_items(features):
+    """Minimal STAC API (POST /search, one page) on localhost; return (server, url)."""
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers['Content-Length']))
+            data = json.dumps({'type': 'FeatureCollection', 'features': features, 'links': []}).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/geo+json')
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f'http://127.0.0.1:{server.server_address[1]}'
+
+
+def test_selectfiles_search_stac_local(l2b_items):
+    from grstbx import SelectFiles
+
+    root, items = l2b_items
+    sf = SelectFiles(str(root))
+    table = sf.search_stac(tile='31TGJ', cc_max=30)
+    assert list(table.columns) == ['satellite', 'level', 'tile', 'cloud_coverage', 'version', 'abspath', 'item']
+    assert list(table.cloud_coverage) == [5., 30.] and list(table.item) == items[:2]
+    assert table.index.is_monotonic_increasing and table.index[0] == pd.Timestamp('2025-01-03 10:33:40')
+    # then selected by date as the file name listings
+    files = sf.list_file_path(('2025-01-05', '2025-01-31'))
+    assert list(files) == [items[1][:-5] + '.nc']
+    assert len(SelectFiles(str(root)).search_stac(version='V3.1.0')) == 3
+    assert SelectFiles(str(root)).search_stac(version='3.0.0').empty
+    assert len(SelectFiles(str(root)).search_stac(date_startend=('2025-01-08', '2025-01-08'))) == 1
+
+
+def test_selectfiles_search_stac_api(l2b_items):
+    from grstbx import SelectFiles
+
+    root, items = l2b_items
+    features = []
+    for path in items:
+        with open(path) as f:
+            item = json.load(f)
+        item['assets']['data']['href'] = f'https://example.org/{item["id"]}.zarr'
+        features.append(item)
+    server, url = _serve_items(features)
+    try:
+        table = SelectFiles().search_stac(url, collections='grs-l2b', cc_max=50)
+    finally:
+        server.shutdown()
+    assert len(table) == 2 and table.abspath.str.startswith('https://example.org/').all()

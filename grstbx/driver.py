@@ -369,6 +369,7 @@ class L2grs():
                          epsg_out=3857,
                          var='Chla_OC2nasa',
                          var_novalid='central_wavelength',
+                         variables=None,
                          scheduler=None):
         """
         Load all L2B ``self.files`` into ``self.datacube`` (concatenated and sorted along 'time').
@@ -382,6 +383,8 @@ class L2grs():
         :param epsg_out: EPSG code used when ``reproject`` is True
         :param var: variable used to count valid pixels
         :param var_novalid: variable dropped before concatenation (incompatible across dates)
+        :param variables: variables to load (``var`` is always loaded), None: all; selecting the variables
+                          needed saves memory and time with the large L2B products
         :param scheduler: dask scheduler used to read the images, see ``get_l2a_datacube``
         """
         # open all the images lazily
@@ -390,6 +393,8 @@ class L2grs():
             product = self.load_l2b_image(file)
             if var_novalid in product:
                 product = product.drop_vars(var_novalid)
+            if variables is not None:
+                product = product[list(dict.fromkeys([var, *variables]))]
             if subset is not None:
                 product = self.subset_xy(product, subset, load=False)
             products.append(product)
@@ -422,7 +427,10 @@ class L2grs():
             self.no_product = True
             return
 
-        self._finalize_datacube(xr.concat(products, dim='time', data_vars='all').sortby('time'))
+        # the scalar coordinates of the ancillary data (e.g. forecast_period of CAMS, float or timedelta
+        # depending on the products) are not concatenated: those of the first image are kept
+        self._finalize_datacube(xr.concat(products, dim='time', data_vars='all', coords='minimal',
+                                          compat='override').sortby('time'))
 
     @staticmethod
     def get_flag_stats(raster):

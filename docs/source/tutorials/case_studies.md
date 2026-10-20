@@ -1,6 +1,6 @@
 # Case studies
 
-Applications of grstbx to time series of GRS L2A images. The notebooks are rendered with the outputs of
+Applications of grstbx to time series of GRS L2A and L2B images. The notebooks are rendered with the outputs of
 their last run. The input data are not distributed with grstbx: set the paths of their configuration cell
 to run them on your own data.
 
@@ -40,6 +40,23 @@ reservoir loaded with mineral particles:
 - comparison with SPM algorithms from the literature (Nechad et al., 2010; Han et al., 2016; OBS2CO),
 - SPM time series and maps.
 
+## Lac de Sainte-Croix (France): L2B water-quality time series
+
+The third notebook follows the water quality of a clear Alpine-foothills reservoir from the L2B products
+of full Sentinel-2 tiles:
+
+- products of tile 31TGJ (January 2025 - April 2026) listed from their names
+  ({func}`~grstbx.app.find_products`), and selection of the relative orbit that sees the lake, from a
+  few products only: the images of the two other orbits have no data over the lake and are not opened,
+- datacube of the box around the lake with the variables studied only
+  ({meth}`~grstbx.driver.L2grs.get_l2b_datacube` with `subset=` and `variables=`), lake pixels and
+  images with enough valid pixels,
+- optical water types (Spyrakos et al., 2018),
+- maps, per-pixel median and variability, time series and seasonal cycle of the chlorophyll-a,
+  turbidity and Secchi disk depth: low chlorophyll-a all year round, turbidity peaks and lower
+  transparency in summer,
+- interactive exploration with {class}`~grstbx.visual.ViewParam`.
+
 The notebooks are in
 [`notebook/case_study/`](https://github.com/Tristanovsk/grstbx/tree/main/notebook/case_study).
 
@@ -48,4 +65,5 @@ The notebooks are in
 
 case_studies/grstbx_rgb_dem_multitemp
 case_studies/grstbx_l2a_datacube_matchup
+case_studies/grstbx_l2b_sainte_croix
 ```

@@ -12,6 +12,7 @@ reads the pixels displayed on the screen and the spectra or time series under th
     grstbx-viewer /data/S2A_MSIL2AGRS_..._V3.0.1.zarr --root /data/satellite
     grstbx-viewer "/data/L2B/BEFR/2024/*/*/*.nc"    # time series of L2B products (glob pattern)
     grstbx-viewer /data/L2B --tile 31TFJ            # L2B folders <tile>/YYYY/MM/DD/<product>/<product>.nc
+    grstbx-viewer "/data/L2B/31TFJ/2021/*/*/*/*.json" --max-cloud-cover 20   # STAC Items of the products
     grstbx-viewer /data/L2A_zarr --tile 31TEJ       # time series of a tile, folders <tile>/YYYY/MM/DD/<product>
     grstbx-viewer --address 0.0.0.0 --port 5006 --allow-websocket-origin myserver:5006
 
@@ -22,6 +23,7 @@ or from Python with :func:`serve`. The products are read on the machine running 
 import argparse
 import glob
 import io
+import json
 import os
 import re
 import warnings
@@ -35,7 +37,7 @@ from .driver import is_hgrs, is_zarr
 
 ACCEPTED = ('GRS L2A or L2B Zarr stores (`*.zarr`), GRS L2A NetCDF product folders (`<name>/` with '
             '`<name>.nc` and `<name>_anc.nc`), GRS L2B NetCDF files or product folders (`<name>/` with '
-            '`<name>.nc`, `<name>.log` and `<name>.json`), hGRS L2A NetCDF files (EnMAP, PRISMA), '
+            '`<name>.nc`, `<name>.log` and `<name>.json`) or their STAC Items (`*.json`), hGRS L2A NetCDF files (EnMAP, PRISMA), '
             'folders of products (e.g. `<tile>/YYYY/MM/DD/<product>`), or a NetCDF datacube with a `time` '
             'dimension')
 
@@ -55,6 +57,97 @@ LIVE_MAX_DATES = 30
 _DATETIME = re.compile(r'(\d{8}T\d{6})')
 _TILE = re.compile(r'_T(\d{2}[A-Z]{3})(?=_|$)')
 _VERSION = re.compile(r'_[Vv](\d[\w.]*)$')
+
+
+# columns of the product tables (see product_info)
+COLUMNS = ['path', 'name', 'satellite', 'level', 'tile', 'time', 'processing_time', 'version', 'cloud_cover',
+           'crs', 'item']
+
+
+def _read_item(path):
+    """STAC Item of a JSON file (dict), or None if ``path`` is not a STAC Item."""
+    path = str(path)
+    if not (path.endswith('.json') and os.path.isfile(path)):
+        return None
+    try:
+        with open(path) as f:
+            item = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(item, dict) or item.get('type') != 'Feature' or 'stac_version' not in item:
+        return None
+    return item
+
+
+def _data_href(item, item_path):
+    """Product of a STAC Item: href of its ``data`` asset (or first asset with the role ``data``), relative
+    hrefs resolved from the folder of the Item; None if there is none."""
+    assets = item.get('assets', {})
+    asset = assets.get('data') or next((a for a in assets.values() if 'data' in a.get('roles', [])), None)
+    if not asset or 'href' not in asset:
+        return None
+    href = asset['href']
+    if '://' in href or os.path.isabs(href):
+        return href
+    return os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(item_path)), href))
+
+
+def _item_of(path):
+    """
+    Path of the STAC Item describing a product: the path itself (Item JSON file), ``<name>/<name>.json`` in
+    a product folder (GRSl2bgen ``--product_dir --stac``) or ``<name>.json`` next to ``<name>.nc`` /
+    ``<name>.zarr``; None if there is none.
+    """
+    path = str(path).rstrip('/')
+    if path.endswith('.json'):
+        return path if _read_item(path) else None
+    if os.path.isdir(path) and not is_zarr(path):
+        candidate = os.path.join(path, os.path.basename(path) + '.json')
+    else:
+        candidate = re.sub(r'\.(zarr|nc)$', '', path) + '.json'
+    return candidate if _read_item(candidate) else None
+
+
+def is_stac_item(path):
+    """True if ``path`` is a STAC Item JSON file whose data asset exists (or is a URL)."""
+    item = _read_item(path)
+    href = _data_href(item, path) if item else None
+    return bool(href) and ('://' in href or os.path.exists(href))
+
+
+def item_info(path):
+    """
+    Description of a product from its STAC Item (see :func:`product_info`): ``path`` is the data asset,
+    ``time`` the Item ``datetime``, ``tile`` its ``grid:code`` (``MGRS-<tile>``), ``level`` its
+    ``processing:level``, ``version`` the GRS version of ``processing:software``, ``cloud_cover`` its
+    ``eo:cloud_cover`` (%), ``crs`` its ``proj:code``; the missing fields are taken from the name of the
+    product.
+
+    :param path: Item JSON file
+    :return: dict, see :func:`product_info`
+    """
+    item = _read_item(path)
+    if item is None:
+        raise ValueError(f'{path} is not a STAC Item')
+    href = _data_href(item, path)
+    info = _name_info(item.get('id') or href or path)
+    props = item.get('properties', {})
+    platform = str(props.get('platform', ''))
+    tile = str(props.get('grid:code', ''))
+    software = props.get('processing:software') or {}
+    if props.get('datetime'):
+        info['time'] = pd.Timestamp(props['datetime']).tz_localize(None)
+    info.update({k: v for k, v in {
+        'path': _product_file(href) if href and '://' not in href else href,
+        'satellite': ('S2' + platform[-1].upper()) if re.fullmatch(r'sentinel-2[a-d]', platform.lower()) else None,
+        'level': props.get('processing:level'),
+        'tile': tile[len('MGRS-'):] if tile.startswith('MGRS-') else None,
+        'version': str(software['GRS']) if 'GRS' in software else None,
+        'cloud_cover': props.get('eo:cloud_cover'),
+        'crs': props.get('proj:code'),
+    }.items() if v is not None})
+    info['item'] = os.path.abspath(path)
+    return info
 
 
 def _product_file(path):
@@ -79,25 +172,21 @@ def is_product(path):
     """
     True if ``path`` is a product opened by :func:`open_products`: Zarr store, NetCDF file, or product
     folder ``<name>/`` holding ``<name>.zarr`` (GRS >= 3) or ``<name>.nc`` (GRS 2 L2A, with
-    ``<name>_anc.nc``, or GRSl2bgen L2B, see :func:`_product_file`).
+    ``<name>_anc.nc``, or GRSl2bgen L2B, see :func:`_product_file`), or STAC Item of a product (see
+    :func:`is_stac_item`).
     """
     path = str(path).rstrip('/')
     name = os.path.basename(path)
+    if path.endswith('.json'):
+        return is_stac_item(path)
     return is_zarr(path) or (os.path.isfile(path) and path.endswith('.nc')) or (
         os.path.isdir(path) and (os.path.isfile(os.path.join(path, name + '.nc'))
                                  or os.path.isdir(os.path.join(path, name + '.zarr'))))
 
 
-def product_info(path):
-    """
-    Description of a product from its name (ESA convention
-    ``<satellite>_<level>_<acquisition time>_..._T<tile>_<processing time>[_V<version>]``).
-
-    :return: dict with ``path`` (file or store to open), ``name``, ``satellite``, ``level`` (``'L2A'`` or
-             ``'L2B'``), ``tile``, ``time`` (acquisition), ``processing_time``, ``version`` (missing fields
-             are None or NaT)
-    """
-    stem = re.sub(r'\.(zarr|nc)$', '', os.path.basename(str(path).rstrip('/')))
+def _name_info(path):
+    """Description of a product from its name only (see :func:`product_info`)."""
+    stem = re.sub(r'\.(zarr|nc|json)$', '', os.path.basename(str(path).rstrip('/')))
     times = _DATETIME.findall(stem)
     tile, version = _TILE.search(stem), _VERSION.search(stem)
     return {'path': _product_file(path), 'name': stem, 'satellite': stem.split('_')[0],
@@ -105,14 +194,30 @@ def product_info(path):
             'tile': tile.group(1) if tile else None,
             'time': pd.Timestamp(times[0]) if times else pd.NaT,
             'processing_time': pd.Timestamp(times[1]) if len(times) > 1 else pd.NaT,
-            'version': version.group(1) if version else ''}
+            'version': version.group(1) if version else '',
+            'cloud_cover': np.nan, 'crs': None, 'item': None}
+
+
+def product_info(path):
+    """
+    Description of a product: from its STAC Item when it has one (see :func:`item_info` and
+    :func:`_item_of`), otherwise from its name (ESA convention
+    ``<satellite>_<level>_<acquisition time>_..._T<tile>_<processing time>[_V<version>]``).
+
+    :return: dict with ``path`` (file or store to open), ``name``, ``satellite``, ``level`` (``'L2A'`` or
+             ``'L2B'``), ``tile``, ``time`` (acquisition), ``processing_time``, ``version``,
+             ``cloud_cover`` (%, STAC Items only), ``crs`` (STAC Items only), ``item`` (path of the STAC
+             Item; missing fields are None, NaN or NaT)
+    """
+    item = _item_of(path)
+    return item_info(item) if item else _name_info(path)
 
 
 def find_products(directory, maxdepth=6):
     """
     Products stored under ``directory``, e.g. in the tree ``<tile>/YYYY/MM/DD/<product>`` of the GRS batches
     (``directory`` can be the root, a tile, a year or a month folder). The folders of the products are not
-    explored.
+    explored. The products with a STAC Item are described from it (see :func:`product_info`).
 
     :param directory: folder to explore
     :param maxdepth: maximum depth of the products below ``directory``
@@ -133,11 +238,12 @@ def find_products(directory, maxdepth=6):
                 explore(path, depth + 1)
 
     explore(str(directory), 0)
-    columns = ['path', 'name', 'satellite', 'level', 'tile', 'time', 'processing_time', 'version']
-    return pd.DataFrame(found, columns=columns).sort_values('time', kind='stable').reset_index(drop=True)
+    # a product and its STAC Item side by side (flat layout) are found twice
+    return (pd.DataFrame(found, columns=COLUMNS).drop_duplicates('path')
+            .sort_values('time', kind='stable').reset_index(drop=True))
 
 
-def select_products(products, tile=None, start=None, end=None, last_processing=True):
+def select_products(products, tile=None, start=None, end=None, last_processing=True, max_cloud_cover=None):
     """
     Selection of products listed by :func:`find_products`.
 
@@ -147,9 +253,14 @@ def select_products(products, tile=None, start=None, end=None, last_processing=T
     :param end: last acquisition date (included), None: no limit
     :param last_processing: keep only the last processing of each acquisition (same satellite, tile and
                             acquisition time): latest processing time, release preferred to a ``dev`` version
+    :param max_cloud_cover: maximum cloud cover (%, ``eo:cloud_cover`` of the STAC Items); the products
+                            without cloud cover (no STAC Item) are kept. None: no limit
     :return: pandas.DataFrame, sorted by acquisition time
     """
     selected = products
+    if max_cloud_cover is not None and 'cloud_cover' in selected:
+        cloud = pd.to_numeric(selected.cloud_cover, errors='coerce')
+        selected = selected[cloud.isna() | (cloud <= max_cloud_cover)]
     if tile:
         selected = selected[selected.tile == tile]
     if start is not None:
@@ -220,7 +331,7 @@ def catalogue(paths):
             tables.append(find_products(path))
         else:
             raise ValueError(f'{path} is not a product nor a folder of products')
-    products = pd.concat(tables, ignore_index=True) if tables else find_products('/nonexistent')
+    products = pd.concat(tables, ignore_index=True) if tables else pd.DataFrame(columns=COLUMNS)
     return products.drop_duplicates('path').sort_values('time', kind='stable').reset_index(drop=True)
 
 
@@ -324,7 +435,7 @@ class _LazyLevels:
 
 
 def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None, end=None,
-                  last_processing=True, mask_l2a=True, cache_size=2e9):
+                  last_processing=True, mask_l2a=True, cache_size=2e9, max_cloud_cover=None):
     """
     Open products for the viewers, lazily: each product (and each resolution level) is read when it is
     displayed, so that long time series open instantly.
@@ -345,6 +456,8 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
                      ``mask``, e.g. hGRS, are not masked)
     :param cache_size: memory (bytes) of the data kept in cache by the viewers (see
                        :class:`~grstbx.visual.Multiscale`)
+    :param max_cloud_cover: maximum cloud cover (%) of the products with a STAC Item (see
+                            :func:`select_products`)
     :return: (data, kind, params, title): :class:`~grstbx.visual.Multiscale`, ``'L2A'`` or ``'L2B'``,
              displayed parameters (L2B, None for L2A), Markdown title of the viewer
     :raises SeveralZones: the products are in several UTM zones and no tile is given
@@ -373,7 +486,7 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
             return data, kind, params, title
 
     products = select_products(catalogue(items), tile=tile, start=start, end=end,
-                               last_processing=last_processing)
+                               last_processing=last_processing, max_cloud_cover=max_cloud_cover)
     if products.empty:
         raise ValueError('no product found (check the folders, the tile and the period)')
     if products.level.nunique() > 1:
@@ -618,7 +731,7 @@ def _file_browser(root, products_input):
 
 def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, width=1000, height=700,
                tile=None, start=None, end=None, last_processing=True, mask_l2a=True, mask_l2b=True,
-               cache_size=2e9):
+               cache_size=2e9, max_cloud_cover=None):
     """
     Build the dashboard (one per browser session).
 
@@ -638,6 +751,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     :param mask_l2b: hide the invalid pixels (``mask != 0``) of the L2B products
     :param cache_size: memory (bytes) of the data kept in cache by each session (see
                        :class:`~grstbx.visual.Multiscale`)
+    :param max_cloud_cover: maximum cloud cover (%) of the products with a STAC Item
     :return: panel template
     """
     from . import visual
@@ -679,7 +793,10 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                                          width=160)
     end_picker = pn.widgets.DatePicker(name='To', value=pd.Timestamp(end).date() if end else None, width=160)
     last_box = pn.widgets.Checkbox(name='Keep the last processing of each acquisition', value=last_processing)
+    cloud_input = pn.widgets.FloatInput(name='Maximum cloud cover (%, products with a STAC Item)',
+                                        value=max_cloud_cover, start=0, end=100, step=5, placeholder='no limit')
     series_card = pn.Card(scan_button, scan_summary, tile_select, pn.Row(start_picker, end_picker), last_box,
+                          cloud_input,
                           title='Time series (folders)', collapsed=True, sizing_mode='stretch_width')
     # controls of the opened viewer (filled when the products are opened)
     contrast_card = pn.Card(title='Contrast and brightness', visible=False, sizing_mode='stretch_width')
@@ -741,7 +858,8 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
             data, kind, params, title = open_products(
                 products_input.value, mask_invalid=mask_box.value, mask_l2a=mask_l2a_box.value,
                 tile=tile_select.value or None, cache_size=cache_size,
-                start=start_picker.value, end=end_picker.value, last_processing=last_box.value)
+                start=start_picker.value, end=end_picker.value, last_processing=last_box.value,
+                max_cloud_cover=cloud_input.value)
             ndates = len(data.images)
             # the live time series of L2B reads one block per date: off at opening for long series
             live = kind == 'L2A' or ndates <= LIVE_MAX_DATES
@@ -865,6 +983,9 @@ def main(argv=None):
     series.add_argument('--end', help='last acquisition date (included), e.g. 2024-12-31')
     series.add_argument('--all-processings', action='store_true',
                         help='keep all the processings of each acquisition (default: the last one only)')
+    series.add_argument('--max-cloud-cover', type=float,
+                        help='maximum cloud cover (%%) of the products with a STAC Item (eo:cloud_cover); the '
+                             'products without Item are kept')
     args = parser.parse_args(argv)
 
     if args.stadia_api_key:
@@ -874,7 +995,8 @@ def main(argv=None):
           allow_websocket_origin=args.allow_websocket_origin, reproject=not args.no_reproject,
           basemap=args.basemap, cmap=args.cmap, tile=args.tile, start=args.start, end=args.end,
           last_processing=not args.all_processings, mask_l2a=not args.show_invalid_l2a,
-          mask_l2b=not args.show_invalid_l2b, cache_size=args.cache_size * 1e9)
+          mask_l2b=not args.show_invalid_l2b, cache_size=args.cache_size * 1e9,
+          max_cloud_cover=args.max_cloud_cover)
 
 
 if __name__ == '__main__':

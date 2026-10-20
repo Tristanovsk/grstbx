@@ -95,6 +95,7 @@ series or datacubes, in the web browser, without notebook:
 grstbx-viewer /path/to/product.zarr              # or: grstbx-viewer --root /data/satellite
 grstbx-viewer "/data/L2B/BEFR/2024/*/*/*.nc"     # time series of L2B products
 grstbx-viewer /data/L2A_zarr --tile 31TEJ        # time series of a tile, folders <tile>/YYYY/MM/DD/<product>
+grstbx-viewer "/data/L2B/31TFJ/*/*/*/*/*.json" --max-cloud-cover 20   # STAC Items of GRSl2bgen products
 ```
 
 Pan and zoom the images over a basemap, hover them to plot the spectrum (L2A) or the time series (L2B)

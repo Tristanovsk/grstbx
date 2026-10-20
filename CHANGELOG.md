@@ -12,6 +12,15 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   its log `<name>.log` and its STAC Item `<name>.json`, in the tree `<tile>/YYYY/MM/DD/<name>/`. They
   are found by `find_products` and the file browser, and opened from their NetCDF file (`grstbx-viewer
   /data/L2B --tile 31TFJ`), instead of being taken for GRS 2 L2A folders (which hold `<name>_anc.nc`).
+- STAC Items of the products: a product with an Item (`<name>/<name>.json`, or `<name>.json` next to the
+  product) is described from it rather than from its name (`product_info`, `item_info`): acquisition
+  time (`datetime`), tile (`grid:code`), level (`processing:level`), GRS version (`processing:software`),
+  and the new columns `cloud_cover` (`eo:cloud_cover`), `crs` (`proj:code`) and `item`. Items can be
+  given directly, e.g. a glob pattern `.../*/*/*/*/*.json` (`is_stac_item`: the data asset, a relative
+  `href`, must exist). Plain JSON reading, no new dependency.
+- Maximum cloud cover of the products with a STAC Item: `select_products(max_cloud_cover=)`,
+  `open_products(max_cloud_cover=)`, *Time series* card of the dashboard, `grstbx-viewer
+  --max-cloud-cover`; the products without Item are kept.
 
 ## [2.5.0] - 2026-10-20
 

@@ -89,7 +89,9 @@ Inputs
      - 0..n
      - Zarr store or NetCDF file of the water-quality parameters, for the L2B datacubes, the matchups and
        the dashboard; or GRSl2bgen product folder ``<name>/`` (``--product_dir``) holding ``<name>.nc``
-       (or ``<name>.zarr``), its log ``<name>.log`` and its STAC Item ``<name>.json``.
+       (or ``<name>.zarr``), its log ``<name>.log`` and its STAC Item ``<name>.json``. A product with a
+       STAC Item is described from it (date, tile, level, version, cloud cover, CRS), and the Items can be
+       given directly (e.g. ``<tile>/*/*/*/*/*.json``).
    * - Area of interest
      - 0..1 (mandatory for the subset extraction)
      - Polygon(s) in any CRS: ``geopandas.GeoDataFrame``, vector file (GeoJSON, shapefile, GeoPackage),

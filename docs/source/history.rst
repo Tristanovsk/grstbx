@@ -25,6 +25,14 @@ Unreleased
      state of the live spectrum / time series); widgets on four rows, so that the *Live*, *Reverse* and
      *Log scale* checkboxes are no longer cut at the right of the map.
 
+   - :meth:`L2grs.get_l2b_datacube <grstbx.driver.L2grs.get_l2b_datacube>`: ``variables=`` option to read
+     only the variables needed from the large L2B products; the scalar coordinates of the ancillary data
+     (e.g. ``forecast_period``, stored as a float or a timedelta depending on the products) are no longer
+     concatenated along time, which failed for such mixed series.
+   - Documentation: case study of the L2B time series of the Lac de Sainte-Croix (tile 31TGJ),
+     ``notebook/case_study/sainte_croix/grstbx_l2b_sainte_croix.ipynb``, replacing the Lac de Saint-Cassien
+     notebook ``notebook/validation/grstbx_l2b_matchup.ipynb``.
+
 v2.4.0
    First release published on PyPI (``pip install grstbx``).
 

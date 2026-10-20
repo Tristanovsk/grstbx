@@ -27,7 +27,13 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   series. `search_items` does the search: STAC API Item Search (`POST /search`, `next` links followed,
   cloud cover through the query extension), or local Items filtered by bbox, period, tile and cloud
   cover; plain HTTP (`urllib`), no new dependency. Remote data assets of a STAC API go to the *Products*
-  field as URLs (`expand_paths` and `catalogue` accept URLs); their opening is not tested yet.
+  field as their Item URLs (`expand_paths` and `catalogue` accept URLs).
+- Remote products: Zarr stores over `https` (and `s3`) and remote STAC Items (`https://.../item.json`
+  or the `.../items/<id>` of a STAC API), fetched and described from the Item, their relative data
+  asset resolved from the Item URL. Tested with GRS L2A (sharded, read with byte ranges) and L2B
+  (pyramid) full tiles served over HTTP: a tile opens in about 2 s (7 to 9 requests, about 1 MB) and a
+  window at full resolution is read in 0.3 s, with the same values as the local files. Optional
+  dependencies `grstbx[remote]` (fsspec, aiohttp, s3fs).
 
 ## [2.5.0] - 2026-10-20
 

@@ -70,6 +70,8 @@ notebook = [
 # grstbx.utils.Reproj.regridding; xesmf depends on ESMF, install it with conda:
 # conda install -c conda-forge xesmf
 regrid = ["xesmf>=0.8"]
+# remote products (STAC API assets, buckets): Zarr stores over https and s3
+remote = ["fsspec>=2023.1", "aiohttp>=3.8", "s3fs>=2023.1"]
 # build the documentation (see docs/ and .readthedocs.yaml)
 docs = [
     "sphinx>=7",
@@ -81,9 +83,10 @@ docs = [
     "sphinxcontrib-mermaid",
 ]
 # run the tests (tests/, synthetic data only)
-test = ["pytest>=7"]
+# the tests of the remote products (HTTP server on localhost) need fsspec and aiohttp
+test = ["pytest>=7", "fsspec>=2023.1", "aiohttp>=3.8"]
 # everything installable with pip (xesmf excepted)
-all = ["grstbx[notebook,docs,test]"]
+all = ["grstbx[notebook,docs,test,remote]"]
 
 [project.urls]
 Repository = "https://github.com/Tristanovsk/grstbx"

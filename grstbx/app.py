@@ -288,6 +288,18 @@ def select_products(products, tile=None, start=None, end=None, last_processing=T
     return selected.sort_values('time', kind='stable').reset_index(drop=True)
 
 
+def _fetch_item(url, timeout=60):
+    """STAC Item at a URL (dict), with a ``self`` link to the URL so that its relative hrefs resolve."""
+    req = urllib.request.Request(url, headers={'Accept': 'application/geo+json, application/json'})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        item = json.load(response)
+    if not isinstance(item, dict) or item.get('type') != 'Feature':
+        raise ValueError(f'{url} is not a STAC Item')
+    if not any(link.get('rel') == 'self' for link in item.get('links', [])):
+        item.setdefault('links', []).append({'rel': 'self', 'href': url})
+    return item
+
+
 def _stac_api_items(url, body, limit, timeout=60):
     """Items of a STAC API ``POST <url>/search`` (Item Search), following the ``next`` links."""
     url = url.rstrip('/')
@@ -428,12 +440,17 @@ def catalogue(paths):
     """
     Products of paths, glob patterns and folders (explored with :func:`find_products`).
 
-    :param paths: see :func:`expand_paths`
+    :param paths: see :func:`expand_paths`; URLs (``http(s)://``, ``s3://``) are remote Zarr stores or NetCDF
+                  files (by their extension), or remote STAC Items (fetched and described from the Item)
     :return: pandas.DataFrame of :func:`product_info`, sorted by acquisition time
     """
     tables = []
     for path in expand_paths(paths):
-        if '://' in path:
+        if '://' in path and not re.search(r'\.(zarr|nc)$', path):
+            # remote STAC Item (e.g. result of a STAC API search, ``.../items/<id>``): described from it
+            tables.append(pd.DataFrame([item_info(_fetch_item(path))]))
+        elif '://' in path:
+            # remote product (Zarr store or NetCDF file)
             tables.append(pd.DataFrame([_name_info(path)]))
         elif is_product(path):
             tables.append(pd.DataFrame([product_info(path)]))
@@ -1077,9 +1094,10 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         tiles = ', '.join(f'{t} ({n})' for t, n in found.tile.fillna('?').value_counts().sort_index().items())
         stac_summary.object = (f'**{len(found)} products** from {found.time.min():%Y-%m-%d} to '
                                f'{found.time.max():%Y-%m-%d}, tiles {tiles}\n\n' + '\n'.join(rows) + more)
-        # local Items: their JSON files (described again at opening); STAC API: the data assets
-        stac_results['paths'] = [item if os.path.isfile(str(item)) else path
-                                 for item, path in zip(found.item, found.path)]
+        # the Items (local files, or URLs of the STAC API Items), described again at opening; the data
+        # assets for the Items without location
+        stac_results['paths'] = [item if os.path.isfile(str(item)) or re.match(r'https?://', str(item))
+                                 else path for item, path in zip(found.item, found.path)]
         stac_open.disabled = False
 
     def stac_to_series(event):

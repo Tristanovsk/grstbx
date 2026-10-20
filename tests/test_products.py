@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -202,3 +203,46 @@ def test_search_items_stac_api_paging(l2b_items):
     # the third Item (60 %) is removed again on the client side
     assert list(found.cloud_cover) == [5., 30.]
     assert found.path[0] == 'https://example.org/' + os.path.basename(items[0])[:-5] + '.zarr'
+
+
+@pytest.fixture
+def remote_l2b(tmp_path):
+    """Synthetic L2B Zarr store and its STAC Item, served over HTTP from tmp_path (like a bucket)."""
+    pytest.importorskip('fsspec')
+    pytest.importorskip('aiohttp')
+    import functools
+    import http.server
+    import threading
+
+    from conftest import l2b_product
+
+    name = 'S2A_MSIL2B_20250103T103339_N0511_R108_T31TGJ_20250103T150000_V3.1.0'
+    folder = tmp_path / name
+    folder.mkdir()
+    ds = l2b_product(pd.Timestamp('2025-01-03T10:33:39'), chla=3.0)
+    ds.to_zarr(folder / f'{name}.zarr', consolidated=True)
+    _write_item(folder / f'{name}.json', f'./{name}.zarr', '2025-01-03T10:33:39Z', 4.)
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path))
+    handler.log_message = lambda *args: None
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f'http://127.0.0.1:{server.server_address[1]}/{name}/{name}'
+    yield base, ds
+    server.shutdown()
+
+
+@pytest.mark.filterwarnings('ignore:Consolidated metadata:UserWarning')
+def test_open_remote_zarr_and_item(remote_l2b):
+    from grstbx.app import open_products
+
+    base, ds = remote_l2b
+    # remote Item: described from it (cloud cover), its relative data asset resolved to a URL
+    products = catalogue(base + '.json')
+    assert products.path[0] == base + '.zarr' and products.cloud_cover[0] == 4.
+    for path in (base + '.json', base + '.zarr'):
+        data, kind, params, title = open_products(path)
+        assert kind == 'L2B' and 'Chla_OC2nasa' in params
+        values = data.images[0][0]['Chla_OC2nasa'].values
+        np.testing.assert_array_equal(values, ds['Chla_OC2nasa'].values)
+    with pytest.raises(ValueError):
+        open_products(base + '.json', max_cloud_cover=1)

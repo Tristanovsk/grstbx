@@ -109,7 +109,14 @@ The **STAC search** card finds products by area, period and cloud cover in a STA
 *Search* lists the matching products (date, tile, cloud cover), and *Open the results as a time series*
 puts them in the *Products* field and opens them. The products of a time series must be in one UTM
 zone: when the results span several zones, the dashboard asks to choose a tile in the *Time series*
-card. The data assets of a STAC API are remote (`https`, `s3`): their opening is not tested yet.
+card.
+
+The products of a STAC API are remote: their Items (`https://.../items/<id>`) go to the *Products* field
+and are described from the Item, and their Zarr data assets are read over `https` or `s3` (install
+`pip install "grstbx[remote]"`: fsspec, aiohttp, s3fs). Only the pixels displayed are read: a full
+Sentinel-2 tile opens in about 2 s (about 1 MB of metadata and coordinates) and a window at full
+resolution takes about 0.3 s on a local network. A remote Zarr store or Item can also be typed in the
+*Products* field directly.
 
 ```console
 grstbx-viewer --stac /data/satellite/Sentinel-2/L2B

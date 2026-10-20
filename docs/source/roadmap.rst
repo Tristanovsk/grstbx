@@ -94,7 +94,9 @@ instead of file names, and open the results directly as time series.
   from the attributes of the Zarr stores: eo (bands), projection, processing, sat and view (angles)
   extensions, links from the L2B products to the L2A products they are derived from; published as a
   static catalogue (JSON files next to the products) or loaded into a STAC API. Writing the item at the
-  end of the processing would rather belong to GRS: to be coordinated with the GRS processor.
+  end of the processing would rather belong to GRS: to be coordinated with the GRS processor. GRSl2bgen
+  (>= 1.1) already writes the Item of each L2B product, ``<name>/<name>.json`` (projection, processing,
+  file, eo and grid extensions, ``derived_from`` link to the L2A), written last.
 - **Dashboard**: a *STAC search* card (catalogue URL, collection, area of interest drawn on the map,
   period, maximum cloud cover) listing the matching items, opened as a time series like the folders
   today.

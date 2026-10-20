@@ -88,7 +88,8 @@ Inputs
    * - GRS L2B product
      - 0..n
      - Zarr store or NetCDF file of the water-quality parameters, for the L2B datacubes, the matchups and
-       the dashboard.
+       the dashboard; or GRSl2bgen product folder ``<name>/`` (``--product_dir``) holding ``<name>.nc``
+       (or ``<name>.zarr``), its log ``<name>.log`` and its STAC Item ``<name>.json``.
    * - Area of interest
      - 0..1 (mandatory for the subset extraction)
      - Polygon(s) in any CRS: ``geopandas.GeoDataFrame``, vector file (GeoJSON, shapefile, GeoPackage),
@@ -319,7 +320,8 @@ Data Types
    * - GRS L2B product
      - Water-quality parameters retrieved from :math:`R_{rs}`
      - one tile or subset, one date
-     - e.g. ``S2{A,B}_MSIL2B_<datetime>_N<baseline>_R<orbit>_T<tile>_<datetime>.nc`` or ``.zarr``
+     - e.g. ``S2{A,B}_MSIL2B_<datetime>_N<baseline>_R<orbit>_T<tile>_<datetime>.nc`` or ``.zarr``,
+       possibly in a product folder ``<name>/<name>.nc``
    * - L2A subset
      - Subset of an L2A product to an AOI, GRS format
      - one AOI, one date

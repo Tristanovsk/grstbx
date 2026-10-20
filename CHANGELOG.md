@@ -6,6 +6,13 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+### Added
+
+- L2B product folders of GRSl2bgen (`--product_dir`): `<name>/` holding `<name>.nc` (or `<name>.zarr`),
+  its log `<name>.log` and its STAC Item `<name>.json`, in the tree `<tile>/YYYY/MM/DD/<name>/`. They
+  are found by `find_products` and the file browser, and opened from their NetCDF file (`grstbx-viewer
+  /data/L2B --tile 31TFJ`), instead of being taken for GRS 2 L2A folders (which hold `<name>_anc.nc`).
+
 ## [2.5.0] - 2026-10-20
 
 Time series of folders in the dashboard, faster viewers with bounded caches, tests and continuous

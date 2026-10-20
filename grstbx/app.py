@@ -11,6 +11,7 @@ reads the pixels displayed on the screen and the spectra or time series under th
     grstbx-viewer                                   # empty dashboard, choose the products in the sidebar
     grstbx-viewer /data/S2A_MSIL2AGRS_..._V3.0.1.zarr --root /data/satellite
     grstbx-viewer "/data/L2B/BEFR/2024/*/*/*.nc"    # time series of L2B products (glob pattern)
+    grstbx-viewer /data/L2B --tile 31TFJ            # L2B folders <tile>/YYYY/MM/DD/<product>/<product>.nc
     grstbx-viewer /data/L2A_zarr --tile 31TEJ       # time series of a tile, folders <tile>/YYYY/MM/DD/<product>
     grstbx-viewer --address 0.0.0.0 --port 5006 --allow-websocket-origin myserver:5006
 
@@ -33,7 +34,8 @@ import xarray as xr
 from .driver import is_hgrs, is_zarr
 
 ACCEPTED = ('GRS L2A or L2B Zarr stores (`*.zarr`), GRS L2A NetCDF product folders (`<name>/` with '
-            '`<name>.nc` and `<name>_anc.nc`), GRS L2B NetCDF files, hGRS L2A NetCDF files (EnMAP, PRISMA), '
+            '`<name>.nc` and `<name>_anc.nc`), GRS L2B NetCDF files or product folders (`<name>/` with '
+            '`<name>.nc`, `<name>.log` and `<name>.json`), hGRS L2A NetCDF files (EnMAP, PRISMA), '
             'folders of products (e.g. `<tile>/YYYY/MM/DD/<product>`), or a NetCDF datacube with a `time` '
             'dimension')
 
@@ -57,20 +59,27 @@ _VERSION = re.compile(r'_[Vv](\d[\w.]*)$')
 
 def _product_file(path):
     """
-    File or store to open for a product: the Zarr store of a GRS product folder ``<name>/`` holding
-    ``<name>.zarr`` (layout written by GRS >= 3), otherwise the path itself.
+    File or store to open for a product folder ``<name>/``: its Zarr store ``<name>.zarr`` (GRS >= 3, or
+    GRSl2bgen with ``--product_dir``), or its NetCDF file ``<name>.nc`` when there is no ancillary file
+    ``<name>_anc.nc`` (GRSl2bgen L2B product folder, with ``<name>.log`` and the STAC Item ``<name>.json``).
+    A GRS 2 L2A folder (``<name>.nc`` and ``<name>_anc.nc``) and any other path are returned unchanged.
     """
     path = str(path).rstrip('/')
-    store = os.path.join(path, os.path.basename(path) + '.zarr')
-    if not is_zarr(path) and os.path.isdir(store):
-        return store
+    if is_zarr(path) or not os.path.isdir(path):
+        return path
+    base = os.path.join(path, os.path.basename(path))
+    if os.path.isdir(base + '.zarr'):
+        return base + '.zarr'
+    if os.path.isfile(base + '.nc') and not os.path.isfile(base + '_anc.nc'):
+        return base + '.nc'
     return path
 
 
 def is_product(path):
     """
-    True if ``path`` is a product opened by :func:`open_products`: Zarr store, NetCDF file, or GRS product
-    folder ``<name>/`` holding ``<name>.zarr`` (GRS >= 3) or ``<name>.nc`` (GRS 2).
+    True if ``path`` is a product opened by :func:`open_products`: Zarr store, NetCDF file, or product
+    folder ``<name>/`` holding ``<name>.zarr`` (GRS >= 3) or ``<name>.nc`` (GRS 2 L2A, with
+    ``<name>_anc.nc``, or GRSl2bgen L2B, see :func:`_product_file`).
     """
     path = str(path).rstrip('/')
     name = os.path.basename(path)

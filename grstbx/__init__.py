@@ -20,10 +20,13 @@ v2.3.0: multiscale viewers (grstbx.visual): ViewSpectral / ViewParam read only t
         points, free basemaps (CARTO, OSM, OpenTopoMap, Esri, Stamen via Stadia Maps)
 v2.3.1: add live stream to visualize L2A data and reflectance spectra interactively
 v2.3.2: matchups between satellite and in situ data (grstbx.matchup): get_matchups, matchup_metrics, plot_matchup
+v2.4.0: first release on PyPI; web dashboard grstbx-viewer (grstbx.app), viewer controls, hGRS products
+v2.5.0: time series of folders in grstbx-viewer, bounded caches of the viewers, tests and continuous integration
+        (full history: docs/source/history.rst)
 
 '''
 
-__version__ = '2.4.0'
+__version__ = '2.5.0'
 
 from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels, open_hgrs_l2a, is_hgrs
 #from .driver_v1 import l2grs_v1

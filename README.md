@@ -110,7 +110,8 @@ https://grstbx.readthedocs.io: [installation](https://grstbx.readthedocs.io/en/l
 [GRS products](https://grstbx.readthedocs.io/en/latest/products.html), tutorials (L2A image, web
 dashboard, L2B datacube, cropping and export, validation with in situ data, case studies, hGRS
 products), [API reference](https://grstbx.readthedocs.io/en/latest/api.html) and
-[history](https://grstbx.readthedocs.io/en/latest/history.html).
+[history](https://grstbx.readthedocs.io/en/latest/history.html). Changes of each version:
+[CHANGELOG.md](https://github.com/Tristanovsk/grstbx/blob/main/CHANGELOG.md).
 
 ## Related projects
 

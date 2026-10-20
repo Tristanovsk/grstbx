@@ -2,7 +2,10 @@
 #   - push a tag vX.Y.Z (equal to grstbx.__version__)  -> PyPI, then GitHub release
 #   - run the workflow manually (Actions tab)           -> TestPyPI
 # The GitHub release is created once the package is on PyPI, with the wheel and sdist attached and
-# the notes of .github/release-notes/vX.Y.Z.md (notes generated from the commits if the file is absent).
+# the notes of the section [X.Y.Z] of CHANGELOG.md (or of .github/release-notes/vX.Y.Z.md if present).
+# Release steps: on develop, set grstbx.__version__ = 'X.Y.Z' and move the Unreleased entries of
+# CHANGELOG.md under "## [X.Y.Z] - date"; merge into main; tag main with vX.Y.Z and push the tag
+# (git push origin vX.Y.Z); then set __version__ = 'X.Y+1.0.dev0' on develop.
 # One-time setup: on pypi.org and test.pypi.org, add a trusted publisher for
 # owner Tristanovsk, repository grstbx, workflow publish.yml, and environment pypi / testpypi.
 name: publish
@@ -84,7 +87,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           notes=".github/release-notes/${GITHUB_REF_NAME}.md"
-          if [ -f "$notes" ]; then
+          version="${GITHUB_REF_NAME#v}"
+          if [ ! -f "$notes" ]; then
+            # section "## [X.Y.Z] - date" of CHANGELOG.md, up to the next version
+            notes="$RUNNER_TEMP/notes.md"
+            awk -v v="$version" '
+              index($0, "## [" v "]") == 1 {on = 1; next}
+              on && (/^## / || /^\[[^]]+\]: /) {exit}
+              on {print}' CHANGELOG.md > "$notes"
+            if [ -s "$notes" ]; then
+              printf '\n```\npip install --upgrade grstbx==%s\n```\n\nFull changelog: %s\n' "$version" \
+                "https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md" >> "$notes"
+            fi
+          fi
+          if [ -s "$notes" ]; then
             notes_option=(--notes-file "$notes")
           else
             notes_option=(--generate-notes)

@@ -140,6 +140,7 @@ Dashboard of the ``grstbx-viewer`` command (see the :doc:`tutorials/dashboard` t
    :nosignatures:
 
    grstbx.app.serve
+   grstbx.app.panel
    grstbx.app.create_app
    grstbx.app.open_products
    grstbx.app.find_products

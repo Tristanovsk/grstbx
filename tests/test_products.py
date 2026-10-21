@@ -303,3 +303,17 @@ def test_selectfiles_search_stac_api(l2b_items):
     finally:
         server.shutdown()
     assert len(table) == 2 and table.abspath.str.startswith('https://example.org/').all()
+
+
+def test_dashboard_panel_inline(tmp_path):
+    import panel as pn
+
+    from grstbx.app import create_app, panel
+
+    layout = panel(root=str(tmp_path), sidebar_width=300)
+    assert isinstance(layout, pn.Row)
+    sidebar, *main = layout
+    assert sidebar.width == 300
+    assert len(sidebar) == len(create_app(root=str(tmp_path)).sidebar)
+    assert len(main) == 1
+    layout.get_root()  # renders as in a notebook cell

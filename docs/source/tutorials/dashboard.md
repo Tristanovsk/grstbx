@@ -1,6 +1,7 @@
 # Web dashboard
 
-`grstbx-viewer` opens GRS products in a web dashboard, without writing a notebook:
+`grstbx-viewer` opens GRS products in a web dashboard, without writing a notebook (or inside one, see
+[In a Jupyter notebook](#in-a-jupyter-notebook)):
 
 - **L2A** images are displayed with {class}`~grstbx.visual.ViewSpectral` (bands, true-colour composite,
   spectra);
@@ -158,6 +159,25 @@ The values are read from the products when the button is clicked: for long time 
 files, this takes a few tens of seconds (e.g. about 30 s for 95 L2B subsets). A NetCDF datacube smaller
 than 1 GB is loaded in memory when opened, so that its time series and exports are fast.
 
+## In a Jupyter notebook
+
+{func}`grstbx.app.panel` displays the dashboard in a notebook cell, served by the kernel of the
+notebook: the sidebar on the left of the map, without the header of the web page. It takes the
+arguments of `grstbx-viewer` (see {func}`~grstbx.app.create_app`):
+
+```python
+from grstbx import app
+
+app.panel('/data/L2B/BEFR/2024/*/*/*.nc', max_cloud_cover=20)
+app.panel(root='/data/satellite/Sentinel-2', stac='/data/satellite/Sentinel-2/L2B')
+```
+
+It works the same on a remote JupyterHub, the products being read on the machine of the kernel. To open
+the full dashboard in a browser tab instead, `app.create_app(...).show()` starts its server from the
+notebook without blocking the kernel (`.stop()` on the returned server to close it); on a remote
+JupyterHub, the tab opens `localhost` on the hub, which needs `jupyter-server-proxy` to be reached
+(`https://<hub>/user/<user>/proxy/5006/`). {func}`~grstbx.app.serve` blocks: it is meant for scripts.
+
 ## Share the dashboard on a network
 
 The dashboard is a [Panel](https://panel.holoviz.org) application: a Python process reads the products
@@ -177,7 +197,8 @@ products. The basemaps are downloaded by the browser: the Stadia Maps styles nee
 `localhost` (`--stadia-api-key` or the `STADIA_API_KEY` environment variable, see
 {func}`~grstbx.visual.set_stadia_api_key`).
 
-From Python, {func}`grstbx.app.serve` starts the same server, {func}`grstbx.app.create_app` returns the
+From Python, {func}`grstbx.app.serve` starts the same server, {func}`grstbx.app.panel` displays it in a notebook,
+{func}`grstbx.app.create_app` returns the
 dashboard (to embed it in another Panel application) and {func}`grstbx.app.open_products` opens products
 for the viewers:
 

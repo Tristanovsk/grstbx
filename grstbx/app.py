@@ -17,8 +17,9 @@ reads the pixels displayed on the screen and the spectra or time series under th
     grstbx-viewer /data/L2A_zarr --tile 31TEJ       # time series of a tile, folders <tile>/YYYY/MM/DD/<product>
     grstbx-viewer --address 0.0.0.0 --port 5006 --allow-websocket-origin myserver:5006
 
-or from Python with :func:`serve`. The products are read on the machine running the server: with
-``--address 0.0.0.0``, the dashboard is reachable from other computers of the network.
+or from Python with :func:`serve`, or inline in a Jupyter notebook with :func:`panel`. The products are
+read on the machine running the server: with ``--address 0.0.0.0``, the dashboard is reachable from other
+computers of the network.
 """
 
 import argparse
@@ -1130,6 +1131,26 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     ]
     return pn.template.FastListTemplate(title='grstbx viewer', sidebar=sidebar, main=[main],
                                         sidebar_width=380, header_background='#1f4e79')
+
+
+def panel(path=None, root=None, sidebar_width=380, **kwargs):
+    """
+    Dashboard displayed inline in a Jupyter notebook: the sidebar and the map of :func:`create_app`, in a
+    row (the Panel templates are not rendered in the notebook cells), served by the kernel.
+
+    .. code-block:: python
+
+        from grstbx import app
+        app.panel('/data/L2B/BEFR/2024/*/*/*.nc')
+
+    :param path: product(s) opened at start-up (optional): path, glob pattern or list of them
+    :param root: directory of the file browser
+    :param sidebar_width: width of the sidebar (pixels)
+    :param kwargs: other arguments of :func:`create_app`
+    :return: panel layout
+    """
+    template = create_app(path=path, root=root, **kwargs)
+    return pn.Row(pn.Column(*template.sidebar, width=sidebar_width), *template.main)
 
 
 def serve(path=None, root=None, port=5006, address=None, show=True, allow_websocket_origin=None, **kwargs):

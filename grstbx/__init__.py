@@ -22,11 +22,13 @@ v2.3.1: add live stream to visualize L2A data and reflectance spectra interactiv
 v2.3.2: matchups between satellite and in situ data (grstbx.matchup): get_matchups, matchup_metrics, plot_matchup
 v2.4.0: first release on PyPI; web dashboard grstbx-viewer (grstbx.app), viewer controls, hGRS products
 v2.5.0: time series of folders in grstbx-viewer, bounded caches of the viewers, tests and continuous integration
-        (full history: docs/source/history.rst)
+v2.6.0: STAC Items and STAC search in grstbx-viewer, remote products (https, s3), GRSl2bgen L2B product folders,
+        dashboard inline in Jupyter notebooks (app.panel) and JupyterHub sessions
+        (full history: CHANGELOG.md)
 
 '''
 
-__version__ = '2.6.0.dev0'
+__version__ = '2.6.0'
 
 from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels, open_hgrs_l2a, is_hgrs
 #from .driver_v1 import l2grs_v1

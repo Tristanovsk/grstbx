@@ -6,6 +6,11 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-10-22
+
+STAC Items and STAC search in the dashboard, remote products over https / s3, GRSl2bgen L2B product
+folders, and the dashboard inline in Jupyter notebooks and JupyterHub sessions.
+
 ### Added
 
 - L2B product folders of GRSl2bgen (`--product_dir`): `<name>/` holding `<name>.nc` (or `<name>.zarr`),
@@ -225,7 +230,8 @@ Tools for L2B handling.
 Fix for reprojection in any system, especially useful for reprojection in pseudo-Mercator (EPSG:3857) for
 visualization with web mapping tools (e.g. OpenStreetMap, Google Maps).
 
-[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/Tristanovsk/grstbx/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/Tristanovsk/grstbx/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/Tristanovsk/grstbx/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/Tristanovsk/grstbx/tree/v2.3.0

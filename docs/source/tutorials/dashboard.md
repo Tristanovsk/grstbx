@@ -178,6 +178,15 @@ notebook without blocking the kernel (`.stop()` on the returned server to close 
 JupyterHub, the tab opens `localhost` on the hub, which needs `jupyter-server-proxy` to be reached
 (`https://<hub>/user/<user>/proxy/5006/`). {func}`~grstbx.app.serve` blocks: it is meant for scripts.
 
+The notebook below gives the three ways to use the dashboard in a JupyterHub session (inline, in a browser
+tab started from the notebook or from a terminal, through the hub proxy) and the common problems:
+
+```{toctree}
+:maxdepth: 1
+
+dashboard/grstbx_viewer_jupyterhub
+```
+
 ## Share the dashboard on a network
 
 The dashboard is a [Panel](https://panel.holoviz.org) application: a Python process reads the products

@@ -38,6 +38,10 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   or a folder, Item files or glob patterns, or a STAC API) by tile, area, period, cloud cover, GRS version
   and collections, into the usual `file_list` table (plus an `item` column), then `list_file_path`.
 - `search_items(version=)`: GRS version(s) to keep (`processing:software`, or the name).
+- `app.panel`: the dashboard displayed inline in a Jupyter notebook cell (sidebar and map of
+  `create_app` in a row), served by the kernel; it takes the arguments of `grstbx-viewer`. Documentation
+  of the notebook usage, with a tutorial notebook for JupyterHub sessions: inline, or in a browser tab
+  through `jupyter-server-proxy` started from the notebook or a terminal, and troubleshooting.
 
 ## [2.5.0] - 2026-10-20
 

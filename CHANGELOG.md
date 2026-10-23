@@ -6,6 +6,14 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+### Added
+
+- Documentation: *Batch processing* tutorial, from Sentinel-2 L1C (or Landsat Level-1) images to GRS L2A
+  (GRS 3.1) and GRSl2bgen L2B products, image by image, merging the batch notebooks of the two
+  processors: products already written are skipped or reused, failures logged without stopping the
+  batch, a summary table, a profiling file per image (wall time, CPU time and peak memory of each step,
+  memory curve) and the same batch from the command line profiled with GNU `time`.
+
 ## [2.6.0] - 2026-10-22
 
 STAC Items and STAC search in the dashboard, remote products over https / s3, GRSl2bgen L2B product

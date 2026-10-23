@@ -75,6 +75,7 @@ or, without notebook, the web dashboard (see :doc:`tutorials/dashboard`):
    :maxdepth: 2
    :caption: Tutorials
 
+   tutorials/batch
    tutorials/l2a_image
    tutorials/dashboard
    tutorials/l2b_datacube

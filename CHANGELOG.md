@@ -6,6 +6,41 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+### Added
+
+- `grstbx.batch`: batch processing, image by image, from Level-1 images to GRS L2A products (GRS 2.x
+  NetCDF or 3.x Zarr) and GRSl2bgen L2B products, or from L2A to L2B products. `list_images` and
+  `list_l2a_products` (with `select_versions`) list the inputs of the `<tile>/YYYY/MM/DD` trees,
+  `l2a_name` and `l2b_name` name the products as the `grs` and `GRSl2bgen` command lines,
+  `l2a_complete` and `l2b_complete` check them, `run_grs` and `run_grsl2bgen` process one image,
+  `Profiler`, `read_profiles` and `plot_memory` profile the steps (wall and CPU times, peak memory, memory
+  curve). `Batch` gathers the options of the two processors: `plan_level1` and `plan_l2a` give the state
+  of the products (`l2a_done`, `l2b_done`) and the steps to run, `run` processes them, `commands` writes
+  the shell commands of a plan. `grs` and `GRSl2bgen` are imported only to process the images; new
+  dependency `psutil`.
+- Documentation: *Batch processing* tutorial, from Sentinel-2 L1C (or Landsat Level-1) images to GRS L2A
+  (GRS 3.1) and GRSl2bgen L2B products, image by image, merging the batch notebooks of the two
+  processors: products already written are skipped or reused, failures logged without stopping the
+  batch, a summary table, a profiling file per image (wall time, CPU time and peak memory of each step,
+  memory curve) and the same batch from the command line profiled with GNU `time`. The state of the
+  products of each image (`l2a_done`, `l2b_done`) decides the steps to run: GRS for the images without
+  complete L2A product, GRSl2bgen for those without complete L2B product, an existing L2A product being
+  reused; `overwrite_l2a` and `overwrite_l2b` recompute them.
+- Documentation: batch processing from L1C to L2A with GRS alone, for GRS 2.x (NetCDF products) and GRS
+  3.x (Zarr products): the batch notebook of the GRS documentation of each version, and a bash script for
+  each, one `grs` process per image (images processed in parallel with `xargs -P`), skipping the complete
+  products, too cloudy images and images without CAMS file, checking each product after the run (`grs`
+  exits with 0 even when it fails), with a summary CSV file and a GNU `time` profile per image.
+- Documentation: batch processing from L2A to L2B with GRSl2bgen alone, the batch notebook of the
+  GRSl2bgen documentation, for the Zarr products of GRS 3.x and the NetCDF products of GRS 2.x.
+
+### Changed
+
+- Documentation: the four batch notebooks (L1C to L2A and L2B, GRS 2.x and 3.x, GRSl2bgen) use
+  `grstbx.batch` instead of their own functions; the GRS and GRSl2bgen batches also write a profile per
+  image, and the generated shell commands follow the plan; GRSl2bgen now runs when the L2A product exists,
+  also when `grs --no_clobber` skips it with the exit code 255 (it stopped the chained commands).
+
 ## [2.6.0] - 2026-10-22
 
 STAC Items and STAC search in the dashboard, remote products over https / s3, GRSl2bgen L2B product

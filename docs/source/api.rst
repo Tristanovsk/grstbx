@@ -61,6 +61,57 @@ Cropping and export
    grstbx.subset.subset_path
    grstbx.subset.crop_and_export
 
+Batch processing
+----------------
+
+Batch processing, image by image, from Level-1 images to GRS L2A products and GRSl2bgen L2B products,
+with a profile of the resources of each step (see the batch processing tutorials). ``grs`` and
+``GRSl2bgen`` are imported only to process the images.
+
+.. code-block:: python
+
+   from grstbx import batch
+
+   images = batch.list_images('/data/L1C', ['31TEJ']).loc['2025-08-01':'2025-08-04']
+   run = batch.Batch('/data/L2A', '/data/L2B', cams_file_template='/data/cams/cams_{date:%Y-%m}.nc')
+   plan = run.plan_level1(images)
+   summary = run.run(plan)
+
+.. autosummary::
+   :toctree: generated
+   :template: autosummary/class.rst
+   :nosignatures:
+
+   grstbx.batch.Batch
+   grstbx.batch.Profiler
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   grstbx.batch.list_images
+   grstbx.batch.list_l2a_products
+   grstbx.batch.select_versions
+   grstbx.batch.cloud_cover
+   grstbx.batch.l2a_name
+   grstbx.batch.l2b_name
+   grstbx.batch.image_name
+   grstbx.batch.product_name
+   grstbx.batch.item_path
+   grstbx.batch.dem_path
+   grstbx.batch.l2a_format
+   grstbx.batch.l2a_complete
+   grstbx.batch.zarr_complete
+   grstbx.batch.netcdf_complete
+   grstbx.batch.l2b_complete
+   grstbx.batch.remove_output
+   grstbx.batch.run_grs
+   grstbx.batch.run_grsl2bgen
+   grstbx.batch.grs_version
+   grstbx.batch.read_profile
+   grstbx.batch.read_profiles
+   grstbx.batch.plot_memory
+
 Matchups
 --------
 

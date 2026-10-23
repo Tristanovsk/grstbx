@@ -12,7 +12,15 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   (GRS 3.1) and GRSl2bgen L2B products, image by image, merging the batch notebooks of the two
   processors: products already written are skipped or reused, failures logged without stopping the
   batch, a summary table, a profiling file per image (wall time, CPU time and peak memory of each step,
-  memory curve) and the same batch from the command line profiled with GNU `time`.
+  memory curve) and the same batch from the command line profiled with GNU `time`. The state of the
+  products of each image (`l2a_done`, `l2b_done`) decides the steps to run: GRS for the images without
+  complete L2A product, GRSl2bgen for those without complete L2B product, an existing L2A product being
+  reused; `overwrite_l2a` and `overwrite_l2b` recompute them.
+- Documentation: batch processing from L1C to L2A with GRS alone, for GRS 2.x (NetCDF products) and GRS
+  3.x (Zarr products): the batch notebook of the GRS documentation of each version, and a bash script for
+  each, one `grs` process per image (images processed in parallel with `xargs -P`), skipping the complete
+  products, too cloudy images and images without CAMS file, checking each product after the run (`grs`
+  exits with 0 even when it fails), with a summary CSV file and a GNU `time` profile per image.
 
 ## [2.6.0] - 2026-10-22
 

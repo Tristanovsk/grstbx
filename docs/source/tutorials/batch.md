@@ -12,9 +12,12 @@ merges the batch notebooks of the two processors:
   and selection of a date range;
 - names of the L2A and L2B products, as with the `grs` and `GRSl2bgen` command lines, one folder per
   product (`<tile>/YYYY/MM/DD/<name>/`) with its log and, for the L2B, its STAC Item;
-- the batch itself: images already processed, too cloudy or without CAMS file are skipped, an existing
-  L2A product is reused, a failing step is logged and does not stop the batch, and a summary table is
-  saved;
+- the state of the products of each image (`l2a_done`, `l2b_done`), which decides the steps to run: GRS
+  for the images without complete L2A product, GRSl2bgen for those without complete L2B product, an
+  existing L2A product being reused (`overwrite_l2b` recomputes the L2B products alone, e.g. with a new
+  version of GRSl2bgen);
+- the batch itself: too cloudy images or images without CAMS file are skipped when their L2A product is
+  to be computed, a failing step is logged and does not stop the batch, and a summary table is saved;
 - a **profiling file** per image (`<l2b_dir>/profiles/<tile>/<image>_profile.json`): wall time, CPU time
   and peak memory of the L2A and L2B steps, and the memory curve sampled during the processing, to size
   the machine or the number of images processed in parallel;
@@ -47,4 +50,38 @@ to run it on your own data.
 :maxdepth: 1
 
 batch/grs_l1c_l2a_l2b_batch
+```
+
+## L1C to L2A: notebooks and bash scripts for GRS 2.x and 3.x
+
+The batch of GRS alone, from L1C to L2A, is given for each major version of GRS, as a notebook (the batch
+notebook of the GRS documentation) and as a bash script. For long batches, the script is more robust than
+a notebook: each image runs in its own `grs` process, so that the memory is fully released between
+images, the batch runs without a Jupyter kernel, and several images can be processed in parallel.
+
+| | GRS 2.x | GRS 3.x |
+|---|---|---|
+| L2A product | NetCDF `<name>.nc` and ancillary `<name>_anc.nc` | Zarr store `<name>.zarr` (pyramid) |
+| LUT folder | `config.yml` of the installed package | `~/.config/grs/config.yml` (`grs_config`) or `GRS_DATA_ROOT` |
+| option of the aerosol grid | none | `--aot_resolution` |
+| memory, full tile at 20 m | 30 to 32 GB | 9 to 13 GB |
+
+The scripts skip the complete products, too cloudy images and images without CAMS file, check each
+product after the run (`grs` exits with 0 even when it fails), write a summary CSV file, and profile each
+image with GNU `time -v` (wall time, CPU times, maximum resident memory).
+
+```{toctree}
+:maxdepth: 1
+:caption: GRS 2.x
+
+batch/grs_s2_batch_v2
+batch/grs_batch_v2
+```
+
+```{toctree}
+:maxdepth: 1
+:caption: GRS 3.x
+
+batch/grs_s2_batch_v3
+batch/grs_batch_v3
 ```

@@ -52,6 +52,24 @@ to run it on your own data.
 batch/grs_l1c_l2a_l2b_batch
 ```
 
+## L2A to L2B: notebook of GRSl2bgen
+
+When the L2A products already exist, e.g. produced by the scripts below or to recompute the L2B products
+with a new version of GRSl2bgen, the batch notebook of the
+[GRSl2bgen documentation](https://grsl2bgen.readthedocs.io/en/latest/tutorials/grsl2bgen_batch_processing.html)
+processes them alone into L2B products, for one or several tiles and a date range. It reads the products of
+both major versions of GRS, detected product by product: the Zarr stores of GRS 3.x and the NetCDF files of
+GRS 2.x (`<name>.nc` and `<name>_anc.nc`). Incomplete products are left out (e.g. a Zarr store whose
+levels lack the `Rrs` and `mask` arrays after a failed GRS run), one GRS version is kept per image, the
+products already processed (STAC Item present) are skipped, and its last section gives the same batch from
+the command line, one `GRSl2bgen` process per product.
+
+```{toctree}
+:maxdepth: 1
+
+batch/grsl2bgen_batch
+```
+
 ## L1C to L2A: notebooks and bash scripts for GRS 2.x and 3.x
 
 The batch of GRS alone, from L1C to L2A, is given for each major version of GRS, as a notebook (the batch

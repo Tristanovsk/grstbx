@@ -21,6 +21,8 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   each, one `grs` process per image (images processed in parallel with `xargs -P`), skipping the complete
   products, too cloudy images and images without CAMS file, checking each product after the run (`grs`
   exits with 0 even when it fails), with a summary CSV file and a GNU `time` profile per image.
+- Documentation: batch processing from L2A to L2B with GRSl2bgen alone, the batch notebook of the
+  GRSl2bgen documentation, for the Zarr products of GRS 3.x and the NetCDF products of GRS 2.x.
 
 ## [2.6.0] - 2026-10-22
 

@@ -26,19 +26,22 @@ merges the batch notebooks of the two processors:
   GNU `time -v`, which is more robust for long batches.
 
 ```python
-import grs
-import GRSl2bgen
+from grstbx import batch
 
-for date, row in selection.iterrows():                 # one row per Level-1 image
-    profiler = Profiler(row['name'])
-    with profiler.step('L2A'):
-        process = grs.Process()
-        process.execute(row['path'], odir=row['l2a'], cams_file=row['cams_file'], resolution=20)
-        process.write_output()                         # L2A Zarr store <l2a_folder>/<name>.zarr
-    with profiler.step('L2B'):
-        GRSl2bgen.Process(l2a_folder, row['l2b']).run()   # L2B NetCDF <l2b_folder>/<name>.nc
-    profiler.write(row['profile'])                     # wall and CPU times, peak memory per step
+images = batch.list_images('/data/L1C', ['31TEJ']).loc['2025-08-01':'2025-08-04']
+run = batch.Batch('/data/L2A', '/data/L2B', cams_file_template='/data/cams/cams_forecast_{date:%Y-%m}.nc')
+plan = run.plan_level1(images)    # names, state of the products (l2a_done, l2b_done), steps to run
+summary = run.run(plan)           # GRS then GRSl2bgen, image by image, a profile per image
 ```
+
+The notebooks of this section use the module {mod}`grstbx.batch`: listing of the Level-1 images
+({func}`~grstbx.batch.list_images`) or of the L2A products ({func}`~grstbx.batch.list_l2a_products`),
+names of the products as with the command lines of GRS and GRSl2bgen, completeness checks
+({func}`~grstbx.batch.l2a_complete`, {func}`~grstbx.batch.l2b_complete`), processing of one image
+({func}`~grstbx.batch.run_grs`, {func}`~grstbx.batch.run_grsl2bgen`), profiles
+({class}`~grstbx.batch.Profiler`, {func}`~grstbx.batch.read_profiles`, {func}`~grstbx.batch.plot_memory`)
+and the batch itself ({class}`~grstbx.batch.Batch`, also the shell commands of a plan). `grs` and
+`GRSl2bgen` are imported only to process the images.
 
 The notebook is rendered with the outputs of a short run: the three images of 1 and 2 August 2025 of tile
 31TEJ (Gulf of Lion), full tiles at 20 m with GRS 3.1.0 and GRSl2bgen 1.2 on a 40-core machine. The L2A

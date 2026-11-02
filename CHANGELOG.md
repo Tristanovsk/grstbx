@@ -8,6 +8,22 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Added
 
+- Viewers: *Time series of the polygons* plots the median and quartiles of the selected parameter or band over the
+  polygons drawn on the map, date by date with a progress bar, without freezing the page, and can be stopped; a
+  large polygon is read at a coarser level of the pyramid. `polygon_timeseries` gives the table, from
+  `Multiscale.polygon_statistics`.
+
+### Fixed
+
+- `select_products`: the last processing of an acquisition is kept per level; the L2A and L2B products of an
+  image were taken for two processings of the same product, and one of the two levels was dropped without
+  notice.
+- `grstbx-viewer`: a STAC search that returns L2A and L2B products, e.g. over the polygon of the map without
+  collection, asks for the *Level to open* of the time series, instead of failing. A failed opening keeps the
+  viewer already open, with its polygons and points, instead of going back to the home page.
+
+### Added
+
 - `grstbx.stac`: static STAC catalogue of GRS L2A and GRSl2bgen L2B products, to publish them in an S3
   bucket. `build_catalog` writes the collections `grs-l2a` and `grs-l2b`: the Items of GRSl2bgen are reused,
   those of the products without Item come from their attributes, the assets are URLs in the bucket, each L2B

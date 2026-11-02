@@ -4,9 +4,10 @@ import shutil
 
 import numpy as np
 import pandas as pd
+import panel as pn
 import pytest
 
-from grstbx.app import (_product_file, catalogue, find_products, is_product, is_stac_item, product_info,
+from grstbx.app import (_product_file, catalogue, find_products, is_product, is_stac_item, open_products, product_info,
                         select_products)
 
 
@@ -317,3 +318,70 @@ def test_dashboard_panel_inline(tmp_path):
     assert len(sidebar) == len(create_app(root=str(tmp_path)).sidebar)
     assert len(main) == 1
     layout.get_root()  # renders as in a notebook cell
+
+
+def test_select_products_keeps_the_levels_apart():
+    """The L2A and L2B products of an image are not two processings of the same product."""
+    stamp = 'S2A_{}_20250103T103339_N0511_R108_T31TGJ_20250103T150000_V3.1.0.zarr'
+    products = pd.concat([pd.DataFrame([product_info(f'/data/{stamp.format(level)}')])
+                          for level in ('MSIL2AGRS', 'MSIL2B')], ignore_index=True)
+    assert sorted(select_products(products).level) == ['L2A', 'L2B']
+
+
+def test_open_products_refuses_mixed_levels(tmp_path, l2b_files):
+    from conftest import l2b_product
+
+    l2a = tmp_path / 'S2A_MSIL2AGRS_20250103T103339_N0511_R108_T31TGJ_20250103T150000_V3.1.0.zarr'
+    ds = l2b_product('2025-01-03T10:33:39')[['mask']]
+    ds['Rrs'] = ds['mask'].astype(float).expand_dims(wl=[443, 490])
+    ds.to_zarr(l2a, consolidated=False)
+    with pytest.raises(ValueError, match='cannot be displayed together'):
+        open_products([str(l2a), l2b_files[0]])
+
+
+def dashboard(**kwargs):
+    from grstbx.app import create_app
+
+    app = create_app(**kwargs)
+    widgets = [w for part in app.sidebar for w in part.select(pn.widgets.Widget)]
+    return app, lambda name: next(w for w in widgets if w.name == name)
+
+
+def test_dashboard_failed_opening_keeps_the_viewer(l2b_files, monkeypatch):
+    errors = []
+
+    class Notifications:
+        def error(self, message, **kwargs):
+            errors.append(message)
+
+    monkeypatch.setattr(type(pn.state), 'notifications', property(lambda self: Notifications()))
+    app, widget = dashboard()
+    widget('Products').value = l2b_files[0]
+    widget('Open').clicks += 1
+    opened = app.main[0].objects
+    assert len(opened) == 2
+
+    widget('Products').value = '/no/such/product.zarr'
+    widget('Open').clicks += 1
+    assert errors and app.main[0].objects == opened
+
+
+def test_dashboard_chooses_the_level_of_the_stac_results(l2b_files, monkeypatch):
+    found = pd.DataFrame([{**product_info(path), 'level': level, 'item': path}
+                          for path, level in zip(l2b_files, ['L2A', 'L2B', 'L2B'])])
+    monkeypatch.setattr('grstbx.app.search_items', lambda *args, **kwargs: found)
+    app, widget = dashboard(stac='/catalog/catalog.json')
+    level = widget('Level to open')
+    widget('Search').clicks += 1
+    assert level.visible and level.options == ['L2A', 'L2B']
+    widget('Open the results as a time series').clicks += 1     # by default, the last level
+    assert widget('Products').value.splitlines() == l2b_files[1:]
+    level.value = 'L2A'
+    widget('Open the results as a time series').clicks += 1
+    assert widget('Products').value.splitlines() == l2b_files[:1]
+
+    monkeypatch.setattr('grstbx.app.search_items', lambda *args, **kwargs: found[found.level == 'L2B'])
+    widget('Search').clicks += 1
+    assert not level.visible
+    widget('Open the results as a time series').clicks += 1
+    assert widget('Products').value.splitlines() == l2b_files[1:]

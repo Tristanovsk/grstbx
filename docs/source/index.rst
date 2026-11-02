@@ -78,6 +78,7 @@ or, without notebook, the web dashboard (see :doc:`tutorials/dashboard`):
    tutorials/batch
    tutorials/l2a_image
    tutorials/dashboard
+   tutorials/s3_stac
    tutorials/l2b_datacube
    tutorials/subset_export
    tutorials/utilities

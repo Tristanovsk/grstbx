@@ -289,16 +289,77 @@ def select_products(products, tile=None, start=None, end=None, last_processing=T
     return selected.sort_values('time', kind='stable').reset_index(drop=True)
 
 
+def _read_json(url, timeout=60):
+    """JSON document of a URL (``http(s)://``, or ``s3://`` and the like through fsspec) or local file."""
+    if re.match(r'https?://', url):
+        req = urllib.request.Request(url, headers={'Accept': 'application/geo+json, application/json'})
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.load(response)
+    import fsspec
+
+    with fsspec.open(url, 'r') as f:
+        return json.load(f)
+
+
 def _fetch_item(url, timeout=60):
     """STAC Item at a URL (dict), with a ``self`` link to the URL so that its relative hrefs resolve."""
-    req = urllib.request.Request(url, headers={'Accept': 'application/geo+json, application/json'})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        item = json.load(response)
+    item = _read_json(url, timeout)
     if not isinstance(item, dict) or item.get('type') != 'Feature':
         raise ValueError(f'{url} is not a STAC Item')
     if not any(link.get('rel') == 'self' for link in item.get('links', [])):
         item.setdefault('links', []).append({'rel': 'self', 'href': url})
     return item
+
+
+def _is_static_catalog(source):
+    """True if ``source`` is the ``catalog.json`` or ``collection.json`` of a static STAC catalogue."""
+    if not (isinstance(source, str) and source.strip().endswith(('catalog.json', 'collection.json'))):
+        return False
+    return '://' in source or os.path.isfile(source.strip())
+
+
+def _join(base, href):
+    """Absolute location of ``href`` relative to the document ``base`` (URL of any scheme or local path)."""
+    if '://' in href or os.path.isabs(href):
+        return href
+    if '://' not in base:
+        return os.path.normpath(os.path.join(os.path.dirname(base), href))
+    scheme, rest = base.split('://', 1)
+    return f'{scheme}://' + os.path.normpath(os.path.join(os.path.dirname(rest), href))
+
+
+def _static_items(source, collections=None):
+    """
+    Items of a static STAC catalogue, following its ``child`` links: the ``items`` link of a collection,
+    read at once (see :mod:`grstbx.stac`), or else its ``item`` links, one request per Item.
+
+    :param source: ``catalog.json`` or ``collection.json`` (URL or local file)
+    :param collections: collection id or list of ids to keep (default: all)
+    :return: list of Items (dict), with a ``self`` link to their location
+    """
+    collections = [collections] if isinstance(collections, str) else collections
+    items = []
+    node = _read_json(source)
+    links = [(link, source) for link in node.get('links', [])]
+    wanted = node.get('type') != 'Collection' or not collections or node.get('id') in collections
+    while links:
+        link, base = links.pop(0)
+        href = _join(base, link['href'])
+        if link['rel'] == 'child':
+            child = _read_json(href)
+            if child.get('type') != 'Collection' or not collections or child.get('id') in collections:
+                links += [(sub, href) for sub in child.get('links', [])]
+        elif link['rel'] == 'items' and wanted:
+            features = _read_json(href).get('features', [])
+            links = [(sub, sub_base) for sub, sub_base in links
+                     if not (sub['rel'] == 'item' and sub_base == base)]
+            for item in features:
+                location = _join(href, f"{item['id']}/{item['id']}.json")
+                item['links'] = [*item.get('links', []), {'rel': 'self', 'href': location}]
+            items += features
+        elif link['rel'] == 'item' and wanted:
+            items.append(_fetch_item(href))
+    return items
 
 
 def _stac_api_items(url, body, limit, timeout=60):
@@ -333,18 +394,20 @@ def search_items(source, bbox=None, intersects=None, start=None, end=None, max_c
 
     The catalogue is either a STAC API (URL ``http(s)://...``: Item Search ``POST /search``, with the
     area, period, collections and cloud cover sent to the server, ``eo:cloud_cover`` through the query
-    extension), or local STAC Items: folders, Item files or glob patterns (see :func:`catalogue`), e.g. the
-    products of GRSl2bgen ``--product_dir --stac``. The criteria are applied again to the results, so a
-    server ignoring the query extension gives the same selection.
+    extension), a static catalogue (its ``catalog.json`` or ``collection.json``, in a bucket or on disk, see
+    :mod:`grstbx.stac`), or local STAC Items: folders, Item files or glob patterns (see :func:`catalogue`),
+    e.g. the products of GRSl2bgen ``--product_dir --stac``. The criteria are applied again to the results,
+    so a server ignoring the query extension gives the same selection.
 
-    :param source: STAC API URL, or folder(s), Item file(s) or glob pattern(s)
+    :param source: STAC API URL, ``catalog.json`` of a static catalogue (e.g.
+                   ``s3://bucket/stac/catalog.json``), or folder(s), Item file(s) or glob pattern(s)
     :param bbox: area (lon_min, lat_min, lon_max, lat_max), deg
     :param intersects: area as a shapely geometry or GeoJSON dict (lon/lat), instead of ``bbox``
     :param start: first acquisition date (included)
     :param end: last acquisition date (included)
     :param max_cloud_cover: maximum cloud cover (%); the Items without ``eo:cloud_cover`` are kept
     :param tile: tile (e.g. ``'31TFJ'``, Items with ``grid:code``)
-    :param collections: STAC API: collection id or list of ids
+    :param collections: STAC API or static catalogue: collection id or list of ids
     :param version: GRS version(s) to keep (``version`` of :func:`product_info`, from ``processing:software``
                     or the name, e.g. ``'3.1.0'``; a leading ``V`` is ignored), str or list
     :param limit: maximum number of Items read from a STAC API
@@ -359,7 +422,10 @@ def search_items(source, bbox=None, intersects=None, start=None, end=None, max_c
     start = pd.Timestamp(start) if start is not None else None
     end = pd.Timestamp(end) + pd.Timedelta('1D') - pd.Timedelta('1ms') if end is not None else None
 
-    if isinstance(source, str) and re.match(r'https?://', source.strip()):
+    if _is_static_catalog(source):
+        products = pd.DataFrame([item_info(item) for item in _static_items(source.strip(), collections)],
+                                columns=COLUMNS)
+    elif isinstance(source, str) and re.match(r'https?://', source.strip()):
         body = {'limit': min(limit, 100)}
         if intersects is not None:
             body['intersects'] = mapping(intersects)
@@ -491,6 +557,11 @@ def _open_level(path, level=0):
 
     if is_zarr(path):
         return open_zarr_image(path, level=level)
+    if '://' in path:
+        # remote NetCDF file: read through fsspec, the netCDF4 library has its own access to the buckets
+        import fsspec
+
+        return xr.open_dataset(fsspec.open(path).open(), engine='h5netcdf', decode_coords='all', chunks={})
     if is_hgrs(path):
         return open_hgrs_l2a(path)[0]
     if os.path.isdir(path):
@@ -1102,7 +1173,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                                f'{found.time.max():%Y-%m-%d}, tiles {tiles}\n\n' + '\n'.join(rows) + more)
         # the Items (local files, or URLs of the STAC API Items), described again at opening; the data
         # assets for the Items without location
-        stac_results['paths'] = [item if os.path.isfile(str(item)) or re.match(r'https?://', str(item))
+        stac_results['paths'] = [item if os.path.isfile(str(item)) or '://' in str(item)
                                  else path for item, path in zip(found.item, found.path)]
         stac_open.disabled = False
 

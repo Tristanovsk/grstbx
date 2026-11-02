@@ -8,6 +8,17 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Added
 
+- `grstbx.stac`: static STAC catalogue of GRS L2A and GRSl2bgen L2B products, to publish them in an S3
+  bucket. `build_catalog` writes the collections `grs-l2a` and `grs-l2b`: the Items of GRSl2bgen are reused,
+  those of the products without Item come from their attributes, the assets are URLs in the bucket, each L2B
+  Item is linked to the Item of its L2A product, and the incomplete products are left out.
+- `search_items`, `SelectFiles.search_stac` and `grstbx-viewer --stac` read static STAC catalogues, by
+  their `catalog.json` or `collection.json`, on disk or at a URL (`s3://`, `https://`). `catalogue` opens
+  STAC Items in a bucket and `open_products` remote NetCDF files, read with h5netcdf through fsspec (new
+  dependency of the `remote` extra).
+- Documentation: tutorial *Products in an S3 bucket*, from the local S3 service (`s3_bucket.sh`, `rclone
+  serve s3` of the product folders, nothing copied) to the search in the catalogue and the time series
+  read from the bucket.
 - `grstbx.batch`: batch processing, image by image, from Level-1 images to GRS L2A products (GRS 2.x
   NetCDF or 3.x Zarr) and GRSl2bgen L2B products, or from L2A to L2B products. `list_images` and
   `list_l2a_products` (with `select_versions`) list the inputs of the `<tile>/YYYY/MM/DD` trees,

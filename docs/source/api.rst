@@ -112,6 +112,19 @@ with a profile of the resources of each step (see the batch processing tutorials
    grstbx.batch.read_profiles
    grstbx.batch.plot_memory
 
+STAC catalogue
+--------------
+
+Static STAC catalogue of the products, to publish them in an S3 bucket (see the tutorial on buckets).
+Read by :func:`grstbx.app.search_items`.
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   grstbx.stac.build_catalog
+   grstbx.stac.product_item
+
 Matchups
 --------
 

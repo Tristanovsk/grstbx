@@ -106,6 +106,10 @@ instead of file names, and open the results directly as time series.
   assets over ``https`` (tested with GRS L2A and L2B tiles served over HTTP), and
   :meth:`~grstbx.datalake.SelectFiles.search_stac` (with the GRS version criterion, from
   ``processing:software``). To do: ``s3://`` assets on a real bucket (credentials).
+- **Static catalogue in a bucket**: *done* (:func:`~grstbx.stac.build_catalog`, see
+  :doc:`tutorials/s3_stac`): the collections ``grs-l2a`` and ``grs-l2b`` with ``s3://`` assets, searched by
+  :func:`~grstbx.app.search_items` and tested on a local S3 service (``rclone serve s3``), with credentials
+  and endpoint from an AWS profile. To do: ``storage_options``, a real bucket.
 
 Milestones
 ----------

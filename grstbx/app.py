@@ -284,7 +284,7 @@ def select_products(products, tile=None, start=None, end=None, last_processing=T
         release = ~selected.version.str.contains('dev', case=False)
         selected = (selected.assign(_release=release)
                     .sort_values(['time', 'processing_time', '_release'], kind='stable')
-                    .drop_duplicates(['satellite', 'tile', 'time'], keep='last')
+                    .drop_duplicates(['satellite', 'tile', 'time', 'level'], keep='last')
                     .drop(columns='_release'))
     return selected.sort_values('time', kind='stable').reset_index(drop=True)
 
@@ -703,7 +703,7 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
                    for level, group in products.groupby('level')}
         if len(set(content.values())) > 1:
             counts = products.level.value_counts().to_dict()
-            raise ValueError(f'L2A and L2B products cannot be displayed together ({counts}): open the folders '
+            raise ValueError(f'L2A and L2B products cannot be displayed together ({counts}): open the products '
                              'of one level')
     tiles = products.tile.dropna()
     if tiles.map(_utm_zone).nunique() > 1:
@@ -1010,8 +1010,8 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     stac_source = pn.widgets.TextInput(name='Catalogue: STAC API URL, or folder / glob pattern of Items',
                                        value=stac or '', sizing_mode='stretch_width',
                                        placeholder='/data/L2B or https://earth-search.aws.element84.com/v1')
-    stac_collections = pn.widgets.TextInput(name='Collections (STAC API, comma-separated)', value='',
-                                            sizing_mode='stretch_width', placeholder='e.g. sentinel-2-l2a')
+    stac_collections = pn.widgets.TextInput(name='Collections (comma-separated)', value='',
+                                            sizing_mode='stretch_width', placeholder='e.g. grs-l2b, sentinel-2-l2a')
     stac_area = pn.widgets.RadioButtonGroup(options=['Everywhere', 'Last polygon on the map', 'Bounding box'],
                                             value='Everywhere', button_type='light', sizing_mode='stretch_width')
     stac_bbox = pn.widgets.TextInput(name='Bounding box: lon_min, lat_min, lon_max, lat_max (deg)', value='',
@@ -1023,11 +1023,12 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     stac_button = pn.widgets.Button(name='Search', icon='search', button_type='light')
     stac_summary = pn.pane.Markdown('Search the STAC Items of a catalogue by area, period and cloud cover.',
                                     sizing_mode='stretch_width')
+    stac_level = pn.widgets.Select(name='Level to open', options=[], visible=False, sizing_mode='stretch_width')
     stac_open = pn.widgets.Button(name='Open the results as a time series', icon='timeline', button_type='primary',
                                   disabled=True)
     stac_results = {}
     stac_card = pn.Card(stac_source, stac_collections, stac_area, stac_bbox, pn.Row(stac_start, stac_end),
-                        stac_cloud, stac_button, stac_summary, stac_open,
+                        stac_cloud, stac_button, stac_summary, stac_level, stac_open,
                         title='STAC search', collapsed=not stac, sizing_mode='stretch_width')
     state = {'viewer': None}
     # controls of the opened viewer (filled when the products are opened)
@@ -1080,6 +1081,12 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
             picker.start, picker.end = products.time.min().date(), products.time.max().date()
         return products
 
+    def show_failed():
+        """After a failed opening: the viewer already open stays, with its polygons and points."""
+        if state['viewer'] is None:
+            main.objects = [intro]
+            contrast_card.visible = rgb_card.visible = False
+
     def on_load(event):
         if not products_input.value.strip():
             pn.state.notifications.warning('Enter or add products first.')
@@ -1118,12 +1125,10 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
             series_card.collapsed = False
             pn.state.notifications.warning(f'{exc}: choose it in the "Time series" card, then click Open.',
                                            duration=0)
-            main.objects = [intro]
-            contrast_card.visible = rgb_card.visible = False
+            show_failed()
         except Exception as exc:
             pn.state.notifications.error(f'Cannot open the products: {exc}', duration=0)
-            main.objects = [intro]
-            contrast_card.visible = rgb_card.visible = False
+            show_failed()
         finally:
             load_button.loading = False
             main.loading = False
@@ -1131,6 +1136,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     def stac_search(event=None):
         """Search the catalogue of the STAC card and list the matching products."""
         stac_open.disabled = True
+        stac_level.visible = False
         stac_results.clear()
         if not stac_source.value.strip():
             pn.state.notifications.warning('Enter a STAC API URL or a folder of STAC Items first.')
@@ -1146,7 +1152,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                 viewer = state['viewer']
                 try:
                     polygon = viewer.get_geom() if viewer is not None else None
-                except (IndexError, KeyError, TypeError):      # no polygon drawn
+                except (IndexError, KeyError, TypeError, ValueError):      # no polygon drawn
                     polygon = None
                 if polygon is None or polygon.empty:
                     raise ValueError('open products and draw a polygon on the map first (Polygon Draw tool)')
@@ -1169,16 +1175,27 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
             rows.append(f'| {row.time:%Y-%m-%d} | {row.tile or "?"} | {cloud} | {row["name"]} |')
         more = f'\n\n... and {len(found) - 15} more' if len(found) > 15 else ''
         tiles = ', '.join(f'{t} ({n})' for t, n in found.tile.fillna('?').value_counts().sort_index().items())
+        counts = found.level.value_counts().sort_index()
+        levels = ', '.join(f'{level} ({n})' for level, n in counts.items())
         stac_summary.object = (f'**{len(found)} products** from {found.time.min():%Y-%m-%d} to '
-                               f'{found.time.max():%Y-%m-%d}, tiles {tiles}\n\n' + '\n'.join(rows) + more)
+                               f'{found.time.max():%Y-%m-%d}, tiles {tiles}, levels {levels}\n\n'
+                               + '\n'.join(rows) + more)
+        # the products of a time series have the same level: choose it when the results mix them
+        stac_level.options = list(counts.index)
+        stac_level.value = counts.index[-1]
+        stac_level.visible = len(counts) > 1
         # the Items (local files, or URLs of the STAC API Items), described again at opening; the data
         # assets for the Items without location
         stac_results['paths'] = [item if os.path.isfile(str(item)) or '://' in str(item)
                                  else path for item, path in zip(found.item, found.path)]
+        stac_results['levels'] = list(found.level)
         stac_open.disabled = False
 
     def stac_to_series(event):
-        products_input.value = '\n'.join(stac_results.get('paths', []))
+        paths, levels = stac_results.get('paths', []), stac_results.get('levels', [])
+        if stac_level.visible:
+            paths = [path for path, level in zip(paths, levels) if level == stac_level.value]
+        products_input.value = '\n'.join(paths)
         on_load(None)
 
     load_button.on_click(on_load)

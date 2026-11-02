@@ -12,6 +12,7 @@ screen: from the pyramids of the GRS Zarr products, or from coarser levels compu
 other inputs (see Multiscale).
 """
 
+import asyncio
 import os
 from collections import OrderedDict
 from collections import OrderedDict as odict
@@ -33,6 +34,8 @@ import colorcet as cc
 import panel as pn
 import param as pm
 import shapely.wkt
+from rasterio.features import geometry_mask
+from rasterio.transform import Affine
 from shapely.geometry import Point, Polygon
 
 hv.extension('bokeh')
@@ -727,6 +730,45 @@ class Multiscale():
                                                   y=slice(key[3] * by, (key[3] + 1) * by)).load())
         return block.isel(x=ix % bx, y=iy % by)
 
+    def polygon_statistics(self, idate, name, polygon, max_size=1000):
+        """
+        Statistics of a layer of an image over a polygon, at the coarsest level with at most ``max_size``
+        pixels along the longest side of the polygon, so that a large polygon reads less data.
+
+        :param idate: index of the image
+        :param name: variable name or wavelength
+        :param polygon: shapely polygon in the CRS of the image
+        :param max_size: maximum number of pixels along the longest side of the polygon
+        :return: dict with median, q25, q75, valid (share of the pixels of the polygon with a value), pixels
+                 (in the polygon) and resolution (of the level read); None if the polygon is outside the image
+        """
+        xmin, ymin, xmax, ymax = polygon.bounds
+        exmin, eymin, exmax, eymax = self.bounds(idate)
+        if xmax <= exmin or xmin >= exmax or ymax <= eymin or ymin >= eymax:
+            return None
+        level = self.select_level(idate, max(xmax - xmin, ymax - ymin) / max_size)
+        key = ('polygon', idate, name, level, polygon.wkb)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        da = self.layer(idate, name, level)
+        da = da.sel(x=slice(xmin, xmax), y=slice(ymax, ymin) if da.y[0] > da.y[-1] else slice(ymin, ymax))
+        if da.sizes['x'] < 2 or da.sizes['y'] < 2:     # polygon smaller than the pixels of the level
+            return None
+        xs, ys = da.x.values, da.y.values
+        dx, dy = xs[1] - xs[0], ys[1] - ys[0]
+        transform = Affine(dx, 0, xs[0] - dx / 2, 0, dy, ys[0] - dy / 2)
+        inside = geometry_mask([polygon], out_shape=(len(ys), len(xs)), transform=transform, invert=True)
+        if not inside.any():
+            return None
+        values = da.transpose('y', 'x').values[inside]
+        values = values[np.isfinite(values)]
+        stats = {'valid': len(values) / inside.sum(), 'pixels': int(inside.sum()),
+                 'resolution': self.resolution(idate, level)}
+        q25, median, q75 = np.quantile(values, [0.25, 0.5, 0.75]) if len(values) else (np.nan, np.nan, np.nan)
+        stats.update(median=float(median), q25=float(q25), q75=float(q75))
+        return self._cache.put(key, stats)
+
     def timeseries(self, name, x, y, indexes=None):
         """
         Full-resolution time series of a layer at the pixel nearest to (x, y).
@@ -754,6 +796,13 @@ class _MultiscaleViewer(Utils):
     reprojected to web Mercator (EPSG:3857) to overlay basemaps. The last windows are kept in memory
     so that changing the colormap, the color range or the opacity does not read the data again.
     """
+
+    #: maximum number of pixels along the longest side of a polygon, see Multiscale.polygon_statistics
+    polygon_max_size = 1000
+    #: dates with a smaller share of valid pixels in a polygon are left out of its time series
+    polygon_min_valid = 0.1
+    #: dates read between two updates of the plot of the time series over the polygons
+    polygon_plot_every = 10
 
     def __init__(self, data, dates=None, reproject=False, minmaxvalues=(0, 0.02), minmax=(0, 0.06),
                  width=1200, height=800, min_size=512, basemap=DEFAULT_BASEMAP, cmap=DEFAULT_RRS_COLORMAP,
@@ -878,6 +927,115 @@ class _MultiscaleViewer(Utils):
     def get_geom(self, aoi_stream=None, crs=4326, index=-1):
         """Polygon drawn on the map (default: last one) as a GeoDataFrame in ``crs``."""
         return Utils.get_geom(aoi_stream or self.aoi_stream, crs=crs, index=index, src_crs=self.display_crs)
+
+    def _polygons(self):
+        """Polygons drawn on the map, in the CRS of the images (the unfinished ones are left out)."""
+        n_poly = len((self.aoi_stream.data or {}).get('xs', []))
+        polygons = {}
+        for index in range(n_poly):
+            if len(self.aoi_stream.data['xs'][index]) >= 3:
+                polygons[index] = self.get_geom(crs=self.data.crs, index=index).geometry.iloc[0]
+        return polygons
+
+    def _polygon_row(self, name, polygon, index, idate):
+        """Row of the table of :meth:`polygon_timeseries`, None outside the image."""
+        stats = self.data.polygon_statistics(idate, name, polygon, max_size=self.polygon_max_size)
+        return None if stats is None else {'polygon': index, 'time': self.data.times[idate], **stats}
+
+    def polygon_timeseries(self, layer):
+        """
+        Time series of a layer over the polygons drawn on the map, see :meth:`Multiscale.polygon_statistics`.
+
+        :param layer: parameter (L2B) or wavelength (L2A)
+        :return: pandas.DataFrame, one row per polygon and date: polygon, time, valid, pixels, resolution,
+                 median, q25, q75; the statistics are NaN below :attr:`polygon_min_valid` valid pixels
+        """
+        rows = [self._polygon_row(layer, polygon, index, idate) for index, polygon in self._polygons().items()
+                for idate in self.indexes]
+        return self._polygon_table(rows)
+
+    def _polygon_table(self, rows):
+        columns = ['polygon', 'time', 'valid', 'pixels', 'resolution', 'median', 'q25', 'q75']
+        table = pd.DataFrame([row for row in rows if row is not None], columns=columns)
+        table.loc[table.valid < self.polygon_min_valid, ['median', 'q25', 'q75']] = np.nan
+        return table.sort_values(['polygon', 'time'], ignore_index=True)
+
+    def _polygon_plot(self, table, label):
+        """Median and interquartile range of each polygon."""
+        overlay = []
+        for index, series in table.dropna(subset=['median']).groupby('polygon'):
+            color = self.point_color(index)
+            name = f'polygon {index + 1}'
+            overlay += [hv.Area((series.time, series.q25, series.q75), 'Time', [label, 'q75'], label=name).opts(
+                            color=color, alpha=0.2, line_alpha=0, muted_alpha=0),
+                        hv.Curve((series.time, series['median']), 'Time', label, label=name).opts(
+                            color=color, line_width=1.5),
+                        hv.Scatter((series.time, series['median']), 'Time', label, label=name).opts(
+                            color=color, size=5, tools=['hover'])]
+        resolution = table.resolution.max() if len(table) else 0
+        dates = bokeh.models.DatetimeTickFormatter(days='%Y-%m-%d', months='%Y-%m', years='%Y')
+        return hv.Overlay(overlay or [hv.Curve([], 'Time', label)]).opts(
+            opts.Overlay(width=self.width, height=350, show_grid=True, xformatter=dates, xrotation=30,
+                         legend_position='top_right', show_legend=table.polygon.nunique() > 1,
+                         title=f'Time series of the polygons: median and quartiles, {resolution:.0f} m'))
+
+    def _polygon_layer(self, value):
+        """(layer read, label of the axis) of the value of the widget choosing the layer of the map."""
+        return value, str(value)
+
+    async def _polygon_series(self, layer, widgets):
+        """Read the polygons date by date in a thread, so that the page stays usable, and update the plot."""
+        status, progress, stop, pane = widgets
+        polygons = self._polygons()
+        if not polygons:
+            status.object = 'Draw a polygon on the map first (Polygon Draw tool).'
+            return
+        name, label = self._polygon_layer(layer)
+        tasks = [(index, polygon, idate) for index, polygon in polygons.items() for idate in self.indexes]
+        self._polygon_stop = False
+        progress.max, progress.value = len(tasks), 0
+        progress.visible = stop.visible = pane.visible = True
+        rows, table = [], None
+        for done, (index, polygon, idate) in enumerate(tasks, 1):
+            if self._polygon_stop:
+                break
+            rows.append(await asyncio.to_thread(self._polygon_row, name, polygon, index, idate))
+            progress.value = done
+            status.object = f'{label}: {done} of {len(tasks)} dates read.'
+            if done % self.polygon_plot_every == 0 or done == len(tasks):
+                table = self._polygon_table(rows)
+                pane.object = self._polygon_plot(table, label)
+        if table is None or len(rows) % self.polygon_plot_every:
+            table = self._polygon_table(rows)
+            pane.object = self._polygon_plot(table, label)
+        progress.visible = stop.visible = False
+        self.polygon_table = table
+        missing = len(table) - table['median'].notna().sum()
+        status.object = (f'{label}: {table["median"].notna().sum()} dates plotted, {missing} with less than '
+                         f'{100 * self.polygon_min_valid:.0f} % of valid pixels left out.'
+                         + (' Stopped before the last dates.' if self._polygon_stop else ''))
+
+    def _polygon_panel(self, layer_widget):
+        """Button, progress and plot of the time series over the polygons."""
+        button = pn.widgets.Button(name='Time series of the polygons', icon='chart-line', button_type='primary')
+        stop = pn.widgets.Button(name='Stop', button_type='light', visible=False)
+        progress = pn.indicators.Progress(value=0, max=1, width=300, visible=False, bar_color='primary')
+        status = pn.pane.Markdown('Draw polygons on the map, then read the selected layer over all the dates.')
+        pane = pn.pane.HoloViews(None, visible=False, linked_axes=False)
+
+        async def run(event):
+            button.disabled = True
+            try:
+                await self._polygon_series(layer_widget.value, (status, progress, stop, pane))
+            finally:
+                button.disabled = False
+
+        def halt(event):
+            self._polygon_stop = True
+
+        button.on_click(run)
+        stop.on_click(halt)
+        return pn.Column(pn.Row(button, stop, progress), status, pane)
 
     def get_points(self, poi_stream=None, crs=4326):
         """Points drawn on the map as a GeoDataFrame in ``crs``."""
@@ -1286,8 +1444,14 @@ class ViewSpectral(_MultiscaleViewer):
             )),
             pn.pane.HoloViews((map_ * self.poi_points).opts(
                 opts.Points(active_tools=['point_draw'], color='color'))),
-            pn.pane.HoloViews(spectra)
+            pn.pane.HoloViews(spectra),
+            self._polygon_panel(pn_band)
         )
+
+    def _polygon_layer(self, value):
+        """The band of the map; for the RGB composite, the band closest to 560 nm (green)."""
+        wl = min(self.bands, key=lambda band: abs(band - 560)) if value == 'RGB' else value
+        return wl, f'Rrs({wl:.0f} nm) (sr-1)'
 
 
 class ViewParam(_MultiscaleViewer):
@@ -1447,5 +1611,6 @@ class ViewParam(_MultiscaleViewer):
             )),
             pn.pane.HoloViews((map_ * self.poi_points).opts(
                 opts.Points(active_tools=['point_draw'], color='color'))),
-            pn.pane.HoloViews(timeseries)
+            pn.pane.HoloViews(timeseries),
+            self._polygon_panel(pn_param)
         )

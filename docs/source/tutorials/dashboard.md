@@ -95,6 +95,15 @@ The products with a STAC Item (`<name>/<name>.json`, written by GRSl2bgen `--pro
 described from it rather than from their name ({func}`~grstbx.app.item_info`), and the Items can be
 given directly, e.g. `/data/L2B/31TFJ/*/*/*/*/*.json`.
 
+## Time series of the polygons
+
+*Time series of the polygons*, below the map, reads the selected parameter (L2B) or band (L2A, 560 nm for the RGB
+composite) over the polygons drawn on the map, for all the dates: median and quartiles of each polygon, the dates
+with less than 10 % of valid pixels being left out. It is started by its button, as it reads every date; the plot
+fills in while the page stays usable, and *Stop* ends it with the dates already read. A polygon of more than 1000
+pixels is read at a coarser level of the pyramid (the resolution is in the title). In Python,
+`viewer.polygon_timeseries('Chla_OC2nasa')` gives the same table.
+
 ## STAC search
 
 The **STAC search** card finds products by area, period and cloud cover in a STAC catalogue
@@ -132,6 +141,9 @@ The products are read only when they are displayed ({func}`~grstbx.app.open_prod
 hundreds of products opens in a second, and each date is read when it is selected (about 0.5 s for a Zarr
 pyramid, 2 s for a NetCDF tile). The time series under the mouse reads one block of each date: for more
 than 30 dates, *Live time series* (L2B) is off at opening, tick it to turn it on, or draw points.
+
+A time series has a single level: when the results hold L2A and L2B products, e.g. a catalogue searched without
+collection, *Level to open* chooses the one to open.
 
 ## Explore the images
 

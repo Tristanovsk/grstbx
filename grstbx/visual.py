@@ -864,6 +864,10 @@ class _MultiscaleViewer(Utils):
     so that changing the colormap, the color range or the opacity does not read the data again.
     """
 
+    #: width and height of the panel on the right of the map (spectra or time series of the points and under
+    #: the mouse), see :meth:`visu`
+    side_width = 440
+    side_height = 400
     #: maximum number of pixels along the longest side of a polygon, see Multiscale.polygon_statistics
     polygon_max_size = 1000
     #: dates with a smaller share of valid pixels in a polygon are left out of its time series
@@ -1049,9 +1053,29 @@ class _MultiscaleViewer(Utils):
         resolution = table.resolution.max() if len(table) else 0
         dates = bokeh.models.DatetimeTickFormatter(days='%Y-%m-%d', months='%Y-%m', years='%Y')
         return hv.Overlay(overlay or [hv.Curve([], 'Time', label)]).opts(
-            opts.Overlay(width=self.width, height=350, show_grid=True, xformatter=dates, xrotation=30,
+            opts.Overlay(width=self._polygon_width(), height=350, show_grid=True, xformatter=dates, xrotation=30,
                          legend_position='top_right', show_legend=table.polygon.nunique() > 1,
                          title=f'Time series of the polygons: median and quartiles, {resolution:.0f} m'))
+
+    def _layout(self, controls, map_, plot, help_text, layer_widget, side=True):
+        """
+        Controls above the map; plot of the points and under the mouse on the right of the map (``side``) or
+        below it; time series of the polygons below. The plots have fixed sizes, so that their updates (at
+        each move of the mouse) do not change the height of the page, which would make it scroll.
+        """
+        self._side = side
+        width, height = (self.side_width, self.side_height) if side else (self.width, 350)
+        plot = pn.pane.HoloViews(plot.opts(opts.Overlay(width=width, height=height)), width=width, height=height,
+                                 linked_axes=False)
+        hint = pn.pane.Markdown(help_text, width=width, styles={'font-size': '0.9em', 'color': '#555'})
+        panel = pn.Column(plot, hint, width=width + 20) if side else pn.Column(plot, hint)
+        map_pane = pn.pane.HoloViews(map_, width=self.width, height=self.height)
+        return pn.Column(controls, pn.Row(map_pane, panel) if side else pn.Column(map_pane, panel),
+                         self._polygon_panel(layer_widget))
+
+    def _polygon_width(self):
+        """Width of the plot of the polygons: below the map and the panel on its right."""
+        return self.width + (self.side_width + 20 if getattr(self, '_side', False) else 0)
 
     def _polygon_layer(self, value):
         """(layer read, label of the axis) of the value of the widget choosing the layer of the map."""
@@ -1120,7 +1144,7 @@ class _MultiscaleViewer(Utils):
         stop = pn.widgets.Button(name='Stop', button_type='light', visible=False)
         progress = pn.indicators.Progress(value=0, max=1, width=300, visible=False, bar_color='primary')
         status = pn.pane.Markdown('Draw polygons on the map, then read the selected layer over all the dates.')
-        pane = pn.pane.HoloViews(None, visible=False, linked_axes=False)
+        pane = pn.pane.HoloViews(None, visible=False, linked_axes=False, width=self._polygon_width(), height=350)
         min_valid = pn.widgets.FloatInput(name='Minimum valid pixels (%)', value=100 * self.polygon_min_valid,
                                           start=0, end=100, step=5, width=170)
         min_valid.param.watch(lambda event: self._polygon_threshold((event.new or 0) / 100,
@@ -1485,7 +1509,7 @@ class ViewSpectral(_MultiscaleViewer):
         if not curves:
             curves[0] = hv.Curve([], 'Wavelength (nm)', label)
         return hv.NdOverlay(curves, kdims='point').opts(
-            opts.Curve(width=self.width, height=350, tools=['hover'], line_width=2, show_grid=True),
+            opts.Curve(tools=['hover'], line_width=2, show_grid=True),
             opts.NdOverlay(show_legend=False, title='Spectra of the points (full resolution)'))
 
     def _live_spectrum(self, date, live, x=None, y=None):
@@ -1498,12 +1522,13 @@ class ViewSpectral(_MultiscaleViewer):
             return hv.Curve([], 'Wavelength (nm)', label)
         return hv.Curve((spectrum.wl.values, spectrum.values), 'Wavelength (nm)', label)
 
-    def visu(self, controls=True):
+    def visu(self, controls=True, side=True):
         """
         Return the panel layout of the viewer.
 
         :param controls: show the contrast, brightness and RGB composite widgets in the viewer (otherwise they
                          can be placed elsewhere with :meth:`display_controls` and :meth:`rgb_controls`)
+        :param side: spectra on the right of the map (otherwise below it)
         """
 
         layers = {'RGB': 'RGB'}
@@ -1529,9 +1554,10 @@ class ViewSpectral(_MultiscaleViewer):
         live = hv.DynamicMap(pn.bind(self._live_spectrum, date=pn_date, live=pn_live),
                              streams=[pointer]).opts(
             opts.Curve(color='black', line_dash='dashed', line_width=1.5, framewise=True))
-        spectra = (spectra * live).opts(title='Spectra of the points and under the mouse (full resolution)')
+        spectra = (spectra * live).opts(opts.Overlay(show_legend=False,
+                                                     title='Spectra of the points and under the mouse'))
 
-        return pn.Column(
+        return self._layout(
             _to_front(pn.WidgetBox(
                 self.title,
                 pn.Column(
@@ -1547,11 +1573,11 @@ class ViewSpectral(_MultiscaleViewer):
                        pn.Row('#### Display', self.pn_contrast, self.pn_brightness)] if controls else [])
                 ),
             )),
-            pn.pane.HoloViews((map_ * self.poi_points).opts(
-                opts.Points(active_tools=['point_draw'], color='color'))),
-            pn.pane.HoloViews(spectra),
-            self._polygon_panel(pn_band)
-        )
+            (map_ * self.poi_points).opts(opts.Points(active_tools=['point_draw'], color='color')),
+            spectra,
+            'Full-resolution spectra: dashed line under the mouse (*Live spectrum*), coloured lines at the '
+            'points added with the **Point Draw** tool.',
+            pn_band, side=side)
 
     def _polygon_layer(self, value):
         """The band of the map; for the RGB composite, the band closest to 560 nm (green)."""
@@ -1635,7 +1661,8 @@ class ViewParam(_MultiscaleViewer):
         Curve and markers of the full-resolution time series of the pixel at (x, y) (CRS of the map);
         empty (but with a time axis, so that the x axis of the plot is a datetime axis) without (x, y).
         """
-        series = pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+        # without pixel: no value over the period of the images, so that the time axis shows it
+        series = pd.Series(np.nan, index=pd.DatetimeIndex([self.datetimes[0], self.datetimes[-1]]))
         if x is not None and y is not None:
             series = self.data.timeseries(param, *self._to_native.transform(x, y),
                                           indexes=self.indexes).dropna()
@@ -1661,12 +1688,13 @@ class ViewParam(_MultiscaleViewer):
             x = y = None
         return self._timeseries_curve(param, x, y)
 
-    def visu(self, controls=True):
+    def visu(self, controls=True, side=True):
         """
         Return the panel layout of the viewer.
 
         :param controls: show the contrast and brightness widgets in the viewer (otherwise they can be placed
                          elsewhere with :meth:`display_controls`)
+        :param side: time series on the right of the map (otherwise below it)
         """
 
         pn_param = pn.widgets.Select(value=self.params[0], options=self.params)
@@ -1697,10 +1725,10 @@ class ViewParam(_MultiscaleViewer):
             opts.VLine(color='grey', line_dash='dotted', line_width=1.5))
         dates = bokeh.models.DatetimeTickFormatter(days='%Y-%m-%d', months='%Y-%m', years='%Y')
         timeseries = (points * live).opts(
-            opts.Overlay(width=self.width, height=350, show_grid=True, framewise=True, xformatter=dates,
-                         xrotation=30, title='Time series of the points and under the mouse (full resolution)'))
+            opts.Overlay(show_grid=True, framewise=True, xformatter=dates, xrotation=30, show_legend=False,
+                         title='Time series of the points and under the mouse'))
 
-        return pn.Column(
+        return self._layout(
             _to_front(pn.WidgetBox(
                 self.title,
                 pn.Column(
@@ -1714,8 +1742,8 @@ class ViewParam(_MultiscaleViewer):
                     *([pn.Row('#### Display', self.pn_contrast, self.pn_brightness)] if controls else [])
                 ),
             )),
-            pn.pane.HoloViews((map_ * self.poi_points).opts(
-                opts.Points(active_tools=['point_draw'], color='color'))),
-            pn.pane.HoloViews(timeseries),
-            self._polygon_panel(pn_param)
-        )
+            (map_ * self.poi_points).opts(opts.Points(active_tools=['point_draw'], color='color')),
+            timeseries,
+            'Full-resolution time series: dashed line under the mouse (*Live time series*), coloured lines at '
+            'the points added with the **Point Draw** tool; the dotted line is the date of the map.',
+            pn_param, side=side)

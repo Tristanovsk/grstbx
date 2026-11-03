@@ -433,7 +433,8 @@ def test_dashboard_searches_the_area_of_the_search_map(l2b_files, monkeypatch):
     app, widget = dashboard(stac='/catalog/catalog.json')
     area = next(w for part in app.sidebar for w in part.select(pn.widgets.RadioButtonGroup)
                 if 'Search map' in w.options)
-    assert app.main[0].objects[-1].title == 'Area of the STAC search'
+    assert [getattr(o, 'title', None) for o in app.main[0].objects][1:] == ['Area of the STAC search',
+                                                                       'How to use the viewer']
 
     area.value = 'Search map'
     widget('Search').clicks += 1        # nothing drawn: no search
@@ -524,3 +525,21 @@ def test_dashboard_opens_the_area_of_the_search(l2b_files, monkeypatch):
     clip.value = False
     widget('Open the results as a time series').clicks += 1
     assert opened[-1]['area'] is None
+
+
+def test_search_map_starts_on_the_area():
+    import pyproj
+
+    from grstbx.app import SEARCH_AREA, SearchMap
+
+    to_lonlat = pyproj.Transformer.from_crs(3857, 4326, always_xy=True)
+    search_map = SearchMap(width=800, height=400)
+    (x0, x1), (y0, y1) = search_map.extent()
+    assert abs((x1 - x0) / (y1 - y0) - 2) < 1e-9                   # square tiles
+    lon0, lat0 = to_lonlat.transform(x0, y0)
+    lon1, lat1 = to_lonlat.transform(x1, y1)
+    lon_min, lat_min, lon_max, lat_max = SEARCH_AREA
+    assert lon0 <= lon_min and lon1 >= lon_max and lat0 <= lat_min + 1e-9 and lat1 >= lat_max - 1e-9
+    assert lon1 - lon0 < 2                                          # around the Etang de Berre
+    (x0, x1), _ = SearchMap(width=800, height=400, area=None).extent()
+    assert x1 - x0 == 2 * SearchMap.WORLD

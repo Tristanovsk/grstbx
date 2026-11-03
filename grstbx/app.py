@@ -1119,6 +1119,11 @@ def _file_browser(root, products_input):
                      sizing_mode='stretch_width')
 
 
+#: area shown by the search map at start-up (lon_min, lat_min, lon_max, lat_max): the Etang de Berre and the
+#: Gulf of Fos
+SEARCH_AREA = (4.80, 43.30, 5.40, 43.62)
+
+
 class SearchMap:
     """
     Empty map of the area of a STAC search, over a basemap: pins (Point Draw tool), polygons (Polygon Draw
@@ -1128,16 +1133,18 @@ class SearchMap:
     :param basemap: basemap (see :data:`grstbx.visual.BASEMAPS`)
     :param width: width of the map (pixels)
     :param height: height of the map (pixels)
+    :param area: area shown at start-up (lon_min, lat_min, lon_max, lat_max), default :data:`SEARCH_AREA`;
+                 None: the whole world
     """
 
     # half width of the web Mercator world (m)
     WORLD = 20037508.34
 
-    def __init__(self, basemap=None, width=1000, height=450):
+    def __init__(self, basemap=None, width=1000, height=450, area=SEARCH_AREA):
         from . import visual
 
         self.basemap = basemap or visual.DEFAULT_BASEMAP
-        self.width, self.height = width, height
+        self.width, self.height, self.area = width, height, area
         self.pane = pn.pane.HoloViews()
         self._subscribers = []
         self.clear()
@@ -1157,12 +1164,28 @@ class SearchMap:
         for stream in self.streams:
             for subscriber in self._subscribers:
                 stream.add_subscriber(subscriber)
-        # whole world in longitude, centred on 30 deg N, with square tiles
-        half_height = self.WORLD * self.height / self.width
+        xlim, ylim = self.extent()
         tiles = visual.basemap_tiles(self.basemap).opts(
-            width=self.width, height=self.height, xlim=(-self.WORLD, self.WORLD),
-            ylim=(3.5e6 - half_height, 3.5e6 + half_height), xaxis=None, yaxis=None)
+            width=self.width, height=self.height, xlim=xlim, ylim=ylim, xaxis=None, yaxis=None)
         self.pane.object = tiles * polygons * lassos * pins
+
+    def extent(self):
+        """
+        (xlim, ylim) of the start-up view in web Mercator: the area, enlarged to the shape of the map so that
+        the tiles stay square; the whole world without area.
+        """
+        if self.area is None:     # whole world in longitude, centred on 30 deg N
+            half_width, centre = self.WORLD, (0., 3.5e6)
+        else:
+            import pyproj
+
+            to_map = pyproj.Transformer.from_crs(4326, 3857, always_xy=True)
+            (x0, y0), (x1, y1) = to_map.transform(*self.area[:2]), to_map.transform(*self.area[2:])
+            centre = ((x0 + x1) / 2, (y0 + y1) / 2)
+            half_width = max(x1 - x0, (y1 - y0) * self.width / self.height) / 2
+        half_height = half_width * self.height / self.width
+        return ((centre[0] - half_width, centre[0] + half_width),
+                (centre[1] - half_height, centre[1] + half_height))
 
     @property
     def streams(self):
@@ -1197,9 +1220,9 @@ class SearchMap:
         return shapely.union_all(shapes) if shapes else None
 
 
-def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, width=1000, height=700,
+def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, width=820, height=620,
                tile=None, start=None, end=None, last_processing=True, mask_l2a=True, mask_l2b=True,
-               cache_size=2e9, max_cloud_cover=None, stac=None):
+               cache_size=2e9, max_cloud_cover=None, stac=None, search_area=SEARCH_AREA):
     """
     Build the dashboard (one per browser session).
 
@@ -1221,6 +1244,8 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                        :class:`~grstbx.visual.Multiscale`)
     :param max_cloud_cover: maximum cloud cover (%) of the products with a STAC Item
     :param stac: catalogue of the *STAC search* card (STAC API URL, or folder / glob pattern of STAC Items)
+    :param search_area: area shown by the search map at start-up (lon_min, lat_min, lon_max, lat_max), default
+                        the Etang de Berre (:data:`SEARCH_AREA`); None: the whole world
     :return: panel template
     """
     from . import visual
@@ -1292,7 +1317,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                                   disabled=True)
     stac_results = {}
     # empty map of the area of the search, below the viewer (see SearchMap)
-    search_map = SearchMap(basemap=basemap_select.value, width=width, height=min(height, 450))
+    search_map = SearchMap(basemap=basemap_select.value, width=width, height=min(height, 520), area=search_area)
     search_map.on_draw(lambda: setattr(stac_area, 'value', 'Search map')
                        if search_map.geometry() is not None else None)
     clear_area = pn.widgets.Button(name='Clear the area', icon='eraser', button_type='light')
@@ -1314,6 +1339,10 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     main = pn.Column(sizing_mode='stretch_width')
     intro = pn.pane.Markdown(
         '## Open GRS products\n\n'
+        'Enter the products in the **Products** field of the sidebar, or add them with the **File browser**, '
+        'then click **Open**. Or find them in a STAC catalogue: draw the area on the map below, then search in '
+        'the **STAC search** card.', sizing_mode='stretch_width')
+    help_text = pn.pane.Markdown(
         f'Enter the paths of {ACCEPTED} on the server, one path or glob pattern per line, or add them with '
         'the file browser, then click **Open**. Several products make a time series: they can be on different '
         'grids, but must be in the same CRS (UTM zone).\n\n'
@@ -1329,9 +1358,12 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         'Pan and zoom the map: only the pixels displayed are read, from the Zarr pyramid levels. Draw '
         'polygons with the **Polygon Draw** tool (double-click to start and to close), and download the '
         'values of the points and the statistics of the polygons below the map.\n\n'
-        'To find products in a STAC catalogue, draw the area on the map below and search in the **STAC search** '
-        'card.')
-    main.extend([intro, area_card])
+        'With an area drawn on the search map, **Open the area only** of the STAC search card opens the area '
+        'alone, the tiles of each acquisition combined.', sizing_mode='stretch_width')
+    help_card = pn.Card(help_text, title='How to use the viewer', collapsed=True, sizing_mode='stretch_width')
+    # start page: the search map first, the full help folded
+    start_page = [intro, area_card, help_card]
+    main.extend(start_page)
 
     def scan(event=None):
         """List the products of the Products field: tiles, levels, number of products and period."""
@@ -1362,7 +1394,8 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     def show_failed():
         """After a failed opening: the viewer already open stays, with its polygons and points."""
         if state['viewer'] is None:
-            main.objects = [intro, area_card]
+            area_card.collapsed = False
+            main.objects = start_page
             contrast_card.visible = rgb_card.visible = False
 
     def on_load(event, area=None):
@@ -1598,6 +1631,9 @@ def main(argv=None):
     series.add_argument('--end', help='last acquisition date (included), e.g. 2024-12-31')
     series.add_argument('--all-processings', action='store_true',
                         help='keep all the processings of each acquisition (default: the last one only)')
+    parser.add_argument('--search-area', default=','.join(map(str, SEARCH_AREA)),
+                        help='area shown by the search map at start-up: lon_min,lat_min,lon_max,lat_max, or "world" '
+                             '(default: the Etang de Berre, %(default)s)')
     parser.add_argument('--stac', help='catalogue of the STAC search card: STAC API URL, or folder / glob pattern '
                                        'of STAC Items (e.g. the L2B products of GRSl2bgen --stac)')
     series.add_argument('--max-cloud-cover', type=float,
@@ -1613,7 +1649,8 @@ def main(argv=None):
           basemap=args.basemap, cmap=args.cmap, tile=args.tile, start=args.start, end=args.end,
           last_processing=not args.all_processings, mask_l2a=not args.show_invalid_l2a,
           mask_l2b=not args.show_invalid_l2b, cache_size=args.cache_size * 1e9,
-          max_cloud_cover=args.max_cloud_cover, stac=args.stac)
+          max_cloud_cover=args.max_cloud_cover, stac=args.stac,
+          search_area=None if args.search_area == 'world' else tuple(map(float, args.search_area.split(','))))
 
 
 if __name__ == '__main__':

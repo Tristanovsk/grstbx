@@ -8,6 +8,13 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Added
 
+- Viewers: the spectra (L2A) or time series (L2B) of the points and under the mouse in a panel on the right of the map,
+  with a fixed size so that their updates at each move of the mouse no longer make the page scroll; the time series of
+  the polygons below the map and the panel (`visu(side=False)`: plot below the map); the empty time series show the
+  period of the images.
+- Dashboard: the search map starts on the Etang de Berre (`--search-area`, `create_app(search_area=...)`, `world` for
+  the whole world); start page with the search map first and the full help folded (*How to use the viewer*); map of
+  820 x 620 pixels by default, so that the map and its panel fit next to the sidebar.
 - Viewers: *Minimum valid pixels (%)* next to *Time series of the polygons* sets the share of valid pixels below
   which a date is left out (10 % by default, `polygon_min_valid`); the plot of the last series is updated without
   reading the dates again.

@@ -23,6 +23,12 @@ It opens a single image, a **time series** of products, or a **datacube**:
 The products of a time series can be on different grids (e.g. subsets, Zarr and NetCDF mixed) but must
 be of the same level (L2A or L2B) and in the same CRS (UTM zone).
 
+Once the products are open, the controls of the map are above it, and the **panel on the right of the map**
+holds the full-resolution spectra (L2A) or time series (L2B) of the points and under the mouse. Its plot has a
+fixed size, so that its updates at each move of the mouse leave the page where it is. The time series of the
+polygons and the export buttons are below the map. In a notebook, `viewer.visu(side=False)` puts the plot
+below the map.
+
 ```{figure} ../../../illustration/grstbx_viewer_dashboard.png
 :alt: grstbx-viewer dashboard, L2A image
 
@@ -118,8 +124,10 @@ The **STAC search** card finds products by area, period and cloud cover in a STA
   of the viewer (Polygon Draw tool, once a product is open), or a **bounding box** in longitude/latitude;
 - **period** and **maximum cloud cover**.
 
-The **search map** (*Area of the STAC search*, below the introduction, and folded below the viewer once
-products are open) is an empty basemap to draw the area before any product is open: pins with the Point
+The **search map** (*Area of the STAC search*, on the start page, and folded below the viewer once
+products are open) is a basemap to draw the area before any product is open. It starts on the Étang de
+Berre and the Gulf of Fos; `--search-area lon_min,lat_min,lon_max,lat_max` starts it elsewhere, and
+`--search-area world` on the whole world. Draw pins with the Point
 Draw tool, polygons with the Polygon Draw tool (double-click to start and to close) and lasso shapes with
 the Freehand Draw tool. The search keeps the products that intersect one of the shapes, and drawing a
 shape selects *Search map* in the card; *Clear the area* removes them ({class}`~grstbx.app.SearchMap`).

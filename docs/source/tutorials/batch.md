@@ -8,7 +8,8 @@ merges the batch notebooks of the two processors:
 
 - configuration of the batch: folders, tiles, date range, CAMS and DEM files, options of the two
   processors, and check of the look-up tables of GRS;
-- list of the Level-1 images found on disk (`<idir>/<tile>/YYYY/MM/DD/<image>`) with their cloud cover,
+- list of the Level-1 images found on disk (`<idir>/<tile>/YYYY/MM/DD/<image>`, the tree filled by
+  {doc}`download`) with their cloud cover,
   and selection of a date range;
 - names of the L2A and L2B products, as with the `grs` and `GRSl2bgen` command lines, one folder per
   product (`<tile>/YYYY/MM/DD/<name>/`) with its log and its STAC Item (written by GRSl2bgen for the L2B,

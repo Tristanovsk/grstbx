@@ -61,6 +61,32 @@ Cropping and export
    grstbx.subset.subset_path
    grstbx.subset.crop_and_export
 
+Download of Sentinel-2 images
+-----------------------------
+
+Search of the Sentinel-2 images in the catalogue of the Copernicus Data Space Ecosystem, by tile or by
+area, and download from its S3 interface into the tree of the batches,
+``<odir>/<tile>/YYYY/MM/DD/<image>.SAFE`` (see the download tutorial). The download needs s3fs and the S3
+keys of a CDSE account.
+
+.. code-block:: python
+
+   from grstbx import download
+
+   images = download.search(['31TFJ'], '2024-07-01', '2024-08-31', max_cloud_cover=20)
+   summary = download.download(images, '/data/L1C')
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   grstbx.download.search
+   grstbx.download.download
+   grstbx.download.on_disk
+   grstbx.download.level1_dir
+   grstbx.download.s3cmd_commands
+   grstbx.download.cdse_storage_options
+
 Batch processing
 ----------------
 

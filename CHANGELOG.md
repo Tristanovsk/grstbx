@@ -8,6 +8,13 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Added
 
+- `grstbx.download`: search of the Sentinel-2 images (L1C or L2A) in the catalogue of the Copernicus Data Space
+  Ecosystem by tile or by area, period and cloud cover, the last processing of each acquisition kept (`search`), and
+  download from its S3 interface into the tree of the batches, several images at a time, each written to
+  `<image>.SAFE.part` and renamed at the end so that a download can be resumed (`download`, `on_disk`); keys from
+  `~/.s3cfg`, an AWS profile or the environment (`cdse_storage_options`); `s3cmd sync` commands (`s3cmd_commands`).
+- Documentation: tutorial *Download of Sentinel-2 images*, with the notebooks of the download by tile or area and
+  from a list of sites (rewritten on `grstbx.download`).
 - Dashboard and `open_products(area=...)`: *Open the area only* opens the area of a STAC search alone, one image
   per acquisition, the products of its tiles clipped to the bounding box of the area and combined on one grid
   (UTM zone of most products, the other zone reprojected), so that an area across several tiles or UTM zones opens

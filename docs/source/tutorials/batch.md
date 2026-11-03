@@ -61,7 +61,7 @@ batch/grs_l1c_l2a_l2b_batch
 
 The roots of the inputs (`idir`, `rootdir`) and of the outputs (`l2a_dir`, `l2b_dir`, `odir`) of the two
 batch notebooks of {mod}`grstbx.batch` can be bucket URLs instead of local folders, e.g.
-`s3://grstbx-sentinel2/L1C` and `s3://grstbx-sentinel2/L2B_zarr`. The two can be mixed, e.g. local Level-1
+`s3://grstbx-s3/sentinel-2/l1c` and `s3://grstbx-s3/sentinel-2/l2b`. The two can be mixed, e.g. local Level-1
 images and products written to a bucket. Paths are read and written through fsspec
 (`pip install "grstbx[remote]"`). The credentials and the endpoint come from the environment (e.g.
 `AWS_PROFILE`, see {doc}`s3_stac`) or from `storage_options`. GRS and GRSl2bgen work on local files, so
@@ -82,8 +82,8 @@ import os
 from grstbx import batch
 
 os.environ['AWS_PROFILE'] = 'grstbx-local'
-images = batch.list_images('s3://grstbx-sentinel2/L1C', ['31TEJ']).loc['2025-08-01':'2025-08-04']
-run = batch.Batch('s3://grstbx-sentinel2/L2A_zarr', 's3://grstbx-sentinel2/L2B_zarr',
+images = batch.list_images('s3://grstbx-s3/sentinel-2/l1c', ['31TEJ']).loc['2025-08-01':'2025-08-04']
+run = batch.Batch('s3://grstbx-s3/sentinel-2/l2a', 's3://grstbx-s3/sentinel-2/l2b',
                   cams_file_template='/data/cams/cams_forecast_{date:%Y-%m}.nc',
                   work_dir='/scratch/grstbx', l2a_stac=True)
 summary = run.run(run.plan_level1(images))
@@ -109,14 +109,14 @@ downloading any product, and written to the bucket:
 from grstbx import stac
 from grstbx.app import search_items
 
-stac.build_catalog(['s3://grstbx-sentinel2/L2A_zarr', 's3://grstbx-sentinel2/L2B_zarr'],
-                   's3://grstbx-sentinel2/stac')
-found = search_items('s3://grstbx-sentinel2/stac/catalog.json', collections='grs-l2b', tile='31TEJ')
+stac.build_catalog(['s3://grstbx-s3/sentinel-2/l2a', 's3://grstbx-s3/sentinel-2/l2b'],
+                   's3://grstbx-s3/stac')
+found = search_items('s3://grstbx-s3/stac/catalog.json', collections='grs-l2b', tile='31TEJ')
 ```
 
 Products without an Item are not seen by a catalogue built from a bucket. These are, for example, L2A
 products computed without `l2a_stac=True`, or with the command line of GRS. Build the catalogue from the
-local folders instead (`{'/data/L2A_zarr': 's3://grstbx-sentinel2/L2A_zarr'}`), which describes them from
+local folders instead (`{'/data/L2A_zarr': 's3://grstbx-s3/sentinel-2/l2a'}`), which describes them from
 their attributes.
 
 ## L2A to L2B: notebook of GRSl2bgen

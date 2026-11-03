@@ -78,6 +78,9 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Changed
 
+- Documentation: the local bucket of the tutorials is `s3://grstbx-s3`, with one prefix per sensor and level
+  (`sentinel-2/l2a`, `sentinel-2/l2b`) and the catalogue in `stac/`; `s3_bucket.sh` links the folders as
+  `<prefix>=<folder>`.
 - Documentation: the four batch notebooks (L1C to L2A and L2B, GRS 2.x and 3.x, GRSl2bgen) use
   `grstbx.batch` instead of their own functions; the GRS and GRSl2bgen batches also write a profile per
   image, and the generated shell commands follow the plan; GRSl2bgen now runs when the L2A product exists,

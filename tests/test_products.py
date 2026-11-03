@@ -543,3 +543,74 @@ def test_search_map_starts_on_the_area():
     assert lon1 - lon0 < 2                                          # around the Etang de Berre
     (x0, x1), _ = SearchMap(width=800, height=400, area=None).extent()
     assert x1 - x0 == 2 * SearchMap.WORLD
+
+
+def _pyramid_product(folder, tile, stamp, chla, crs='EPSG:32631', x0=700010, y0=4899990, size=64, nlevels=3):
+    """L2B Zarr pyramid of a tile (levels '0', '1', ... of 20, 40, ... m), the left quarter without data."""
+    import zarr
+    from conftest import l2b_product
+
+    ds = l2b_product(pd.Timestamp(stamp), chla, size=size).drop_vars(['time', 'forecast_period'])
+    ds = ds.assign_coords(x=x0 + 20 * np.arange(size), y=y0 - 20 * np.arange(size)).rio.write_crs(crs)
+    path = folder / f'S2A_MSIL2B_{stamp}_N0511_R108_T{tile}_{stamp[:8]}T150000_V3.1.0.zarr'
+    level = ds
+    for index in range(nlevels):
+        level.to_zarr(path, group=str(index), consolidated=False)
+        level = level.coarsen(x=2, y=2).mean().rio.write_crs(crs)
+    layout = [{'asset': '0'}] + [{'asset': str(i), 'derived_from': str(i - 1), 'transform': {'scale': [2.0, 2.0]}}
+                                 for i in range(1, nlevels)]
+    zarr.open_group(path, mode='a').attrs.update(
+        {'multiscales': {'layout': layout}, 'acquisition_date': pd.Timestamp(stamp).isoformat()})
+    return str(path)
+
+
+def test_open_area_from_the_pyramids(tmp_path, monkeypatch):
+    import pyproj
+    from shapely.geometry import box
+
+    from grstbx import app as app_module
+
+    to32 = pyproj.Transformer.from_crs(32631, 32632, always_xy=True)
+    x32, y32 = (round(v / 20) * 20 + 10 for v in to32.transform(701290, 4899990))
+    paths = [_pyramid_product(tmp_path, '31TGJ', '20250103T103339', 1.),
+             _pyramid_product(tmp_path, '32TLP', '20250103T103339', 3., crs='EPSG:32632', x0=x32, y0=y32)]
+    to_lonlat = pyproj.Transformer.from_crs(32631, 4326, always_xy=True)
+    area = box(*to_lonlat.transform(700000, 4898700), *to_lonlat.transform(702500, 4900000))
+    # beyond the limit of the products without pyramid: the pyramids are used
+    monkeypatch.setattr(app_module, 'AREA_MAX_PIXELS', 50)
+    data, kind, params, title = open_products(paths, area=area)
+    image = data.images[0]
+    assert len(image) == 3 and [data.resolution(0, level) for level in range(3)] == [20., 40., 80.]
+    assert data.nlevels(0) == 3
+    for level in range(3):
+        layer = image[level]['Chla_OC2nasa']
+        res = 20 * 2 ** level
+        assert float(layer.x[1] - layer.x[0]) == res and layer.chunks is not None     # lazy
+        at = lambda x: float(layer.sel(x=x, y=4899990 - 20 * 30, method='nearest'))   # noqa: E731
+        assert at(700010 + 20 * 40) == 1                 # 31TGJ
+        assert at(701290 + 20 * 50) == 3                 # 32TLP only, reprojected block by block
+        assert np.isnan(at(700010 + 20 * 4))             # no data in 31TGJ
+
+    with pytest.raises(ValueError, match='without pyramid'):
+        open_products([_tile_product(tmp_path, '31TGJ', '20250108T103421', 4.)], area=area)
+
+
+def test_warp_reads_only_the_blocks_displayed(tmp_path, monkeypatch):
+    import pyproj
+    import xarray as xr
+
+    from grstbx import app as app_module
+
+    to32 = pyproj.Transformer.from_crs(32631, 32632, always_xy=True)
+    x32, y32 = (round(v / 20) * 20 + 10 for v in to32.transform(700010, 4899990))
+    path = _pyramid_product(tmp_path, '32TLP', '20250103T103339', 3., crs='EPSG:32632', x0=x32, y0=y32, size=128,
+                            nlevels=1)
+    grid = app_module._area_grid((700000, 4897400, 702560, 4900000), pyproj.CRS(32631), 20.)
+    layer = app_module._LazyLevels(path, 'L2B', ['Chla_OC2nasa'])[0]['Chla_OC2nasa']
+    reads = []
+    original = xr.DataArray.compute
+    monkeypatch.setattr(xr.DataArray, 'compute', lambda self, **kw: reads.append(self.shape) or original(self, **kw))
+    warped = app_module._warp(layer, grid, block=32)
+    assert warped.shape == (len(grid['y']), len(grid['x'])) and not reads
+    block = warped.isel(x=slice(32, 64), y=slice(32, 64)).values     # one block of the grid
+    assert len(reads) == 1 and max(reads[0]) < 50 and np.nanmax(block) == 3

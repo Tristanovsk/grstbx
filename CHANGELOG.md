@@ -8,6 +8,11 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Added
 
+- *Open the area only* and `open_products(area=...)` use the pyramids of the Zarr products: one level of the area per
+  level of the pyramids, made of the same level of the tiles, all lazy, so that only the window displayed is read and
+  large areas over several tiles open (9050 x 4711 pixels at 20 m over 31TFJ and 31TGJ, displayed at 160 m in about
+  5 s); the tiles of the other UTM zone reprojected block by block when displayed. At most 65536 pixels per side
+  (4096 for products without pyramid).
 - Viewers: the spectra (L2A) or time series (L2B) of the points and under the mouse in a panel on the right of the map,
   with a fixed size so that their updates at each move of the mouse no longer make the page scroll; the time series of
   the polygons below the map and the panel (`visu(side=False)`: plot below the map); the empty time series show the

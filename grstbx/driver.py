@@ -36,14 +36,18 @@ def zarr_levels(path):
     """
     import zarr
 
-    root = zarr.open_group(path, mode='r')
+    return _levels(zarr.open_group(path, mode='r'))
+
+
+def _levels(root):
+    """Resolution levels of an open root group, see :func:`zarr_levels`."""
     multiscales = root.attrs.get('multiscales')
     if isinstance(multiscales, dict) and multiscales.get('layout'):
         return [str(level['asset']) for level in multiscales['layout']]
     return sorted((name for name, _ in root.groups() if name.isdigit()), key=int)
 
 
-def open_zarr_image(path, level=0, chunks={}):
+def open_zarr_image(path, level=0, chunks={}, root=None):
     """
     Open a Zarr image, either single-resolution or multiscale (pyramid).
 
@@ -62,9 +66,16 @@ def open_zarr_image(path, level=0, chunks={}):
     :param level: pyramid level, as index of the available levels (0: full resolution,
                   negative values count from the coarsest); ignored for a single-resolution store
     :param chunks: dask chunks passed to ``xarray.open_zarr`` (default: chunks of the store)
+    :param root: root group of the store, already open (``zarr.open_group(path, mode='r')``), to open
+                 several levels without reading and parsing the metadata of the store again
     :return: xarray.Dataset
     """
-    levels = zarr_levels(path)
+    import zarr
+    from xarray.backends import ZarrStore
+
+    # the root group (with the consolidated metadata of all the levels) is read and parsed once
+    root = zarr.open_group(path, mode='r') if root is None else root
+    levels = _levels(root)
     if not levels:
         return xr.open_zarr(path, decode_coords='all', chunks=chunks)
 
@@ -73,10 +84,8 @@ def open_zarr_image(path, level=0, chunks={}):
     except IndexError:
         raise ValueError(f'level {level} not available in {path}, levels: {levels}') from None
 
-    import zarr
-
-    ds = xr.open_zarr(path, group=group, decode_coords='all', chunks=chunks)
-    root_attrs = {k: v for k, v in zarr.open_group(path, mode='r').attrs.items() if k != 'multiscales'}
+    ds = xr.open_dataset(path, engine='zarr', store=ZarrStore(root[group]), decode_coords='all', chunks=chunks)
+    root_attrs = {k: v for k, v in root.attrs.items() if k != 'multiscales'}
     ds.attrs = {**root_attrs, **ds.attrs, 'pyramid_level': int(group)}
     return ds
 

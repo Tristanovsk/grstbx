@@ -8,7 +8,7 @@ import panel as pn
 import pytest
 
 from grstbx.app import (_product_file, catalogue, find_products, is_product, is_stac_item, open_products, product_info,
-                        select_products)
+                        select_products, SeveralZones)
 
 
 def test_product_info():
@@ -359,7 +359,7 @@ def test_dashboard_failed_opening_keeps_the_viewer(l2b_files, monkeypatch):
     widget('Products').value = l2b_files[0]
     widget('Open').clicks += 1
     opened = app.main[0].objects
-    assert len(opened) == 2
+    assert len(opened) == 3     # viewer, exports, search map
 
     widget('Products').value = '/no/such/product.zarr'
     widget('Open').clicks += 1
@@ -385,3 +385,161 @@ def test_dashboard_chooses_the_level_of_the_stac_results(l2b_files, monkeypatch)
     assert not level.visible
     widget('Open the results as a time series').clicks += 1
     assert widget('Products').value.splitlines() == l2b_files[1:]
+
+
+def _mercator(*lonlat):
+    import pyproj
+
+    to_map = pyproj.Transformer.from_crs(4326, 3857, always_xy=True)
+    xs, ys = zip(*(to_map.transform(lon, lat) for lon, lat in lonlat))
+    return list(xs), list(ys)
+
+
+def test_search_map_area():
+    from shapely.geometry import Point
+
+    from grstbx.app import SearchMap
+
+    search_map = SearchMap()
+    assert search_map.geometry() is None
+    xs, ys = _mercator((5.1, 43.5))
+    search_map.pin_stream.event(data={'x': xs, 'y': ys})
+    square = _mercator((4, 43), (4.5, 43), (4.5, 43.5), (4, 43.5))
+    search_map.polygon_stream.event(data={'xs': [square[0], [0, 1]], 'ys': [square[1], [0, 1]]})  # 2nd unfinished
+    bow_tie = _mercator((6, 44), (7, 45), (7, 44), (6, 45))      # lasso crossing itself
+    search_map.lasso_stream.event(data={'xs': [bow_tie[0]], 'ys': [bow_tie[1]]})
+    area = search_map.geometry()
+    assert area.is_valid
+    for lon, lat in [(5.1, 43.5), (4.2, 43.2), (6.2, 44.5), (6.8, 44.5)]:   # both lobes of the bow tie
+        assert area.buffer(1e-9).contains(Point(lon, lat))
+    assert not area.intersects(Point(5.5, 43.2)) and not area.intersects(Point(6.5, 44.2))
+    search_map.clear()
+    assert search_map.geometry() is None
+
+
+def test_dashboard_searches_the_area_of_the_search_map(l2b_files, monkeypatch):
+    from grstbx import app as app_module
+
+    maps, calls = [], []
+
+    class SearchMap(app_module.SearchMap):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            maps.append(self)
+
+    monkeypatch.setattr(app_module, 'SearchMap', SearchMap)
+    found = pd.DataFrame([{**product_info(path), 'item': path} for path in l2b_files])
+    monkeypatch.setattr(app_module, 'search_items', lambda *args, **kwargs: calls.append(kwargs) or found)
+    app, widget = dashboard(stac='/catalog/catalog.json')
+    area = next(w for part in app.sidebar for w in part.select(pn.widgets.RadioButtonGroup)
+                if 'Search map' in w.options)
+    assert [getattr(o, 'title', None) for o in app.main[0].objects][1:] == ['Area of the STAC search',
+                                                                       'How to use the viewer']
+
+    area.value = 'Search map'
+    widget('Search').clicks += 1        # nothing drawn: no search
+    assert not calls
+    area.value = 'Everywhere'
+    xs, ys = _mercator((5.1, 43.5))
+    maps[0].pin_stream.event(data={'x': xs, 'y': ys})
+    assert area.value == 'Search map'   # selected by the drawing
+    widget('Search').clicks += 1
+    assert calls[-1]['intersects'].equals(maps[0].geometry())
+    assert not widget('Open the results as a time series').disabled
+
+
+def _tile_product(folder, tile, stamp, chla, crs='EPSG:32631', x0=700010, y0=4899990):
+    """L2B NetCDF product of a tile: 40 x 40 pixels of 20 m from (x0, y0), the left quarter without data."""
+    from conftest import l2b_product
+
+    ds = l2b_product(pd.Timestamp(stamp), chla, size=40)
+    ds = ds.assign_coords(x=x0 + 20 * np.arange(40), y=y0 - 20 * np.arange(40)).rio.write_crs(crs)
+    path = folder / f'S2A_MSIL2B_{stamp}_N0511_R108_T{tile}_{stamp[:8]}T150000_V3.1.0.nc'
+    ds.to_netcdf(path)
+    return str(path)
+
+
+def test_open_area_combines_the_tiles_of_an_acquisition(tmp_path):
+    import pyproj
+    from shapely.geometry import box
+
+    # 31TGJ and 31TGK (same UTM zone, the second 400 m to the east), and 32TLP (zone 32) further east, all
+    # of the same acquisition; 31TGJ alone the next day
+    to32 = pyproj.Transformer.from_crs(32631, 32632, always_xy=True)
+    x32, y32 = (round(v / 20) * 20 + 10 for v in to32.transform(701610, 4899990))
+    paths = [_tile_product(tmp_path, '31TGJ', '20250103T103339', 1.),
+             _tile_product(tmp_path, '31TGK', '20250103T103339', 2., x0=700410),
+             _tile_product(tmp_path, '32TLP', '20250103T103339', 3., crs='EPSG:32632', x0=x32, y0=y32),
+             _tile_product(tmp_path, '31TGJ', '20250108T103421', 4.)]
+    with pytest.raises(SeveralZones):
+        open_products(paths)
+    to_lonlat = pyproj.Transformer.from_crs(32631, 4326, always_xy=True)
+    area = box(*to_lonlat.transform(700000, 4899200), *to_lonlat.transform(702400, 4900000))
+    data, kind, params, title = open_products(paths, area=area)
+    assert kind == 'L2B' and len(data.images) == 2 and '2 L2B images of the area' in title
+    assert data.crs == 'EPSG:32631' and [len(image.paths) for image in data.images] == [3, 1]
+
+    image = data.images[0][0]['Chla_OC2nasa']
+    assert image.x[1] - image.x[0] == 20 and float(image.x[0]) % 20 == 10     # on the grid of the zone
+    at = lambda x, y: float(image.sel(x=x, y=y, method='nearest'))            # noqa: E731
+    y = 4899990 - 20 * 20
+    assert at(700010 + 20 * 15, y) == 1          # 31TGJ
+    assert at(700410 + 20 * 39, y) == 2          # 31TGK only
+    assert at(701610 + 20 * 30, y) == 3          # 32TLP only, reprojected
+    assert np.isnan(at(700010 + 20 * 2, y))      # no data in 31TGJ, outside 31TGK
+    assert np.nanmax(data.images[1][0]['Chla_OC2nasa'].values) == 4
+    # a pin opens the area around it
+    pin = box(*to_lonlat.transform(700500, 4899500), *to_lonlat.transform(700500, 4899500))
+    data, *_ = open_products(paths[:2], area=pin)
+    grid = data.images[0].grid
+    assert abs(len(grid['x']) * 20 - 5000) <= 40 and abs(len(grid['y']) * 20 - 5000) <= 40
+
+
+def test_open_area_refuses_large_areas(l2b_files):
+    with pytest.raises(ValueError, match='too large'):
+        open_products(l2b_files, area=(0., 40., 5., 45.))
+
+
+def test_dashboard_opens_the_area_of_the_search(l2b_files, monkeypatch):
+    from grstbx import app as app_module
+
+    found = pd.DataFrame([{**product_info(path), 'item': path} for path in l2b_files])
+    opened = []
+    monkeypatch.setattr(app_module, 'search_items', lambda *args, **kwargs: found)
+    monkeypatch.setattr(app_module, 'open_products', lambda *args, **kwargs: opened.append(kwargs) or 1 / 0)
+    app, widget = dashboard(stac='/catalog/catalog.json')
+    area = next(w for part in app.sidebar for w in part.select(pn.widgets.RadioButtonGroup)
+                if 'Bounding box' in w.options)
+    clip = widget('Open the area only (tiles clipped and combined)')
+    widget('Search').clicks += 1                     # everywhere: nothing to clip
+    assert not clip.visible
+    widget('Open the results as a time series').clicks += 1
+    assert opened[-1]['area'] is None
+
+    area.value = 'Bounding box'
+    widget('Bounding box: lon_min, lat_min, lon_max, lat_max (deg)').value = '5.0, 43.4, 5.2, 43.5'
+    widget('Search').clicks += 1
+    assert clip.visible and clip.value
+    widget('Open the results as a time series').clicks += 1
+    assert opened[-1]['area'] == [5.0, 43.4, 5.2, 43.5]
+    clip.value = False
+    widget('Open the results as a time series').clicks += 1
+    assert opened[-1]['area'] is None
+
+
+def test_search_map_starts_on_the_area():
+    import pyproj
+
+    from grstbx.app import SEARCH_AREA, SearchMap
+
+    to_lonlat = pyproj.Transformer.from_crs(3857, 4326, always_xy=True)
+    search_map = SearchMap(width=800, height=400)
+    (x0, x1), (y0, y1) = search_map.extent()
+    assert abs((x1 - x0) / (y1 - y0) - 2) < 1e-9                   # square tiles
+    lon0, lat0 = to_lonlat.transform(x0, y0)
+    lon1, lat1 = to_lonlat.transform(x1, y1)
+    lon_min, lat_min, lon_max, lat_max = SEARCH_AREA
+    assert lon0 <= lon_min and lon1 >= lon_max and lat0 <= lat_min + 1e-9 and lat1 >= lat_max - 1e-9
+    assert lon1 - lon0 < 2                                          # around the Etang de Berre
+    (x0, x1), _ = SearchMap(width=800, height=400, area=None).extent()
+    assert x1 - x0 == 2 * SearchMap.WORLD

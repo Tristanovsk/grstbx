@@ -8,6 +8,8 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Added
 
+- STAC: the PNG quicklooks written by GRS next to an L2A product (`<name>_ql_l1c_rgb.png`, `_ql_l2a_rgb.png`,
+  `_ql_sunglint.png`) are assets of its Item, the L2A RGB with the `thumbnail` role.
 - Viewers: *Time series of the polygons* plots the median and quartiles of the selected parameter or band over the
   polygons drawn on the map, date by date with a progress bar, without freezing the page, and can be stopped; a
   large polygon is read at a coarser level of the pyramid. `polygon_timeseries` gives the table, from

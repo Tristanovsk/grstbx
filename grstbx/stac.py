@@ -57,6 +57,10 @@ COLLECTIONS = {
 MEDIA_JSON = 'application/json'
 MEDIA_GEOJSON = 'application/geo+json'
 MEDIA_TYPES = {'.nc': 'application/x-netcdf', '.zarr': 'application/vnd+zarr', '.log': 'text/plain'}
+# quicklooks of the GRS products (<name>_ql_<kind>.png): asset title and roles; the L2A RGB is the thumbnail
+QUICKLOOKS = {'l2a_rgb': ('Quicklook L2A RGB (Rrs, water pixels)', ('thumbnail', 'overview')),
+              'l1c_rgb': ('Quicklook L1C RGB (TOA reflectance)', ('overview',)),
+              'sunglint': ('Quicklook sunglint (BRDFg, water pixels)', ('overview',))}
 
 
 def _footprint(ds):
@@ -114,6 +118,12 @@ def product_item(path, level):
     if os.path.isfile(log):
         assets['log'] = {'href': log, 'type': 'text/plain', 'title': 'Processing log',
                          'file:size': os.path.getsize(log), 'roles': ['metadata']}
+    # PNG quicklooks written by GRS next to the product (<dir>/<name>_ql_<kind>.png)
+    for kind, (title, roles) in QUICKLOOKS.items():
+        png = os.path.join(os.path.dirname(path), f'{name}_ql_{kind}.png')
+        if os.path.isfile(png):
+            assets[f'ql_{kind}'] = {'href': png, 'type': 'image/png', 'title': title,
+                                    'file:size': os.path.getsize(png), 'roles': list(roles)}
     return {'type': 'Feature', 'stac_version': STAC_VERSION, 'id': name,
             'properties': {k: v for k, v in properties.items() if v is not None},
             'geometry': geometry, 'bbox': bbox, 'links': [], 'assets': assets,

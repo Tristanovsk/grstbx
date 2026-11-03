@@ -29,6 +29,8 @@ def l2a_store(root, stamp, cloud='12.5', complete=True):
     folder = root / '31TGJ' / f'{time_:%Y}' / f'{time_:%m}' / f'{time_:%d}' / name
     folder.mkdir(parents=True)
     (folder / 'log_file.log').write_text('log')
+    for kind in ('l1c_rgb', 'l2a_rgb', 'sunglint'):
+        (folder / f'{name}_ql_{kind}.png').write_bytes(b'\x89PNG')
     ds = l2b_product(time_)[['mask']]
     ds['Rrs'] = ds['mask'].astype(float).expand_dims(wl=[443, 490])
     store = folder / f'{name}.zarr'
@@ -105,6 +107,10 @@ def test_l2a_item_from_attributes(catalog):
     assert props['platform'] == 'sentinel-2a'
     assert item['assets']['data']['href'] == f"{BUCKET}/L2A/31TGJ/2025/01/03/{name}/{name}.zarr"
     assert item['assets']['log']['href'].endswith(f'{name}/log_file.log')
+    thumbnail = item['assets']['ql_l2a_rgb']
+    assert thumbnail['href'] == f"{BUCKET}/L2A/31TGJ/2025/01/03/{name}/{name}_ql_l2a_rgb.png"
+    assert thumbnail['type'] == 'image/png' and 'thumbnail' in thumbnail['roles']
+    assert item['assets']['ql_l1c_rgb']['roles'] == ['overview'] and 'ql_sunglint' in item['assets']
     ring = item['geometry']['coordinates'][0]
     assert ring[0] == ring[-1] and len(ring) == 5
 

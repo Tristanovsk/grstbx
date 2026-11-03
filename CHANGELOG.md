@@ -8,6 +8,9 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Added
 
+- Viewers: *Minimum valid pixels (%)* next to *Time series of the polygons* sets the share of valid pixels below
+  which a date is left out (10 % by default, `polygon_min_valid`); the plot of the last series is updated without
+  reading the dates again.
 - `grstbx.download`: search of the Sentinel-2 images (L1C or L2A) in the catalogue of the Copernicus Data Space
   Ecosystem by tile or by area, period and cloud cover, the last processing of each acquisition kept (`search`), and
   download from its S3 interface into the tree of the batches, several images at a time, each written to

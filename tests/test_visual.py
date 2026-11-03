@@ -129,3 +129,33 @@ def test_polygon_series_reads_the_dates_in_parallel():
     asyncio.run(viewer._polygon_series('Chla_OC2nasa', widgets))
     assert time.time() - t0 < 0.5 and len(threads) == 3     # 3 dates of 0.2 s at the same time
     assert viewer.polygon_table['median'].iloc[:2].tolist() == [1, 2]
+
+
+def test_minimum_share_of_valid_pixels_of_the_polygon_series():
+    import asyncio
+
+    import panel as pn
+    from shapely.geometry import box
+
+    viewer, polygon = polygon_viewer()
+    cube_x0, _, _, _ = viewer.data.bounds(0)
+    x0, y0, x1, y1 = polygon.bounds
+    # half of the polygon on the left quarter without data: 50 % of valid pixels
+    half = box(cube_x0 + 20 * 5, y0, cube_x0 + 20 * 15, y1)
+    set_polygon(viewer, half)
+    panel = viewer._polygon_panel(pn.widgets.Select(value='Chla_OC2nasa', options=['Chla_OC2nasa']))
+    status = panel.select(pn.pane.Markdown)[0]
+    widgets = (status, panel.select(pn.indicators.Progress)[0], panel.select(pn.widgets.Button)[1],
+               panel.select(pn.pane.HoloViews)[0])
+    min_valid = panel.select(pn.widgets.FloatInput)[0]
+    assert min_valid.value == 10
+    asyncio.run(viewer._polygon_series('Chla_OC2nasa', widgets))
+    assert viewer.polygon_table.valid.round(2).tolist()[:2] == [0.5, 0.5]
+    assert '2 dates plotted, 1 with less than 10 %' in status.object
+
+    min_valid.value = 60          # the plot is updated without reading the dates again
+    assert '0 dates plotted, 3 with less than 60 %' in status.object
+    assert viewer.polygon_min_valid == 0.6 and viewer.polygon_table['median'].isna().all()
+    min_valid.value = 2.5
+    assert '2 dates plotted, 1 with less than 2.5 %' in status.object
+    assert viewer.polygon_table['median'].iloc[:2].tolist() == [1, 2]

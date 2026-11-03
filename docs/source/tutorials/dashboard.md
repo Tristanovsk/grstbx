@@ -99,7 +99,8 @@ given directly, e.g. `/data/L2B/31TFJ/*/*/*/*/*.json`.
 
 *Time series of the polygons*, below the map, reads the selected parameter (L2B) or band (L2A, 560 nm for the RGB
 composite) over the polygons drawn on the map, for all the dates: median and quartiles of each polygon, the dates
-with less than 10 % of valid pixels being left out. It is started by its button, as it reads every date; the plot
+with less than 10 % of valid pixels being left out. *Minimum valid pixels (%)*, next to the button, sets this share:
+the plot of the last series is updated at once, without reading the dates again. It is started by its button, as it reads every date; the plot
 fills in while the page stays usable, and *Stop* ends it with the dates already read. A polygon of more than 1000
 pixels is read at a coarser level of the pyramid (the resolution is in the title). Several dates are read at the
 same time (`polygon_workers`, 4 threads), and the polygons close to each other are read in one window per date. In

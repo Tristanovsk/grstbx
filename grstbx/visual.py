@@ -1092,10 +1092,27 @@ class _MultiscaleViewer(Utils):
             pane.object = self._polygon_plot(table, label)
         progress.visible = stop.visible = False
         self.polygon_table = table
+        # rows read, to apply another minimum share of valid pixels without reading them again
+        self._polygon_last = rows, label, self._polygon_stop
+        status.object = self._polygon_status(table, label, self._polygon_stop)
+
+    def _polygon_status(self, table, label, stopped=False):
         missing = len(table) - table['median'].notna().sum()
-        status.object = (f'{label}: {table["median"].notna().sum()} dates plotted, {missing} with less than '
-                         f'{100 * self.polygon_min_valid:.0f} % of valid pixels left out.'
-                         + (' Stopped before the last dates.' if self._polygon_stop else ''))
+        return (f'{label}: {table["median"].notna().sum()} dates plotted, {missing} with less than '
+                f'{100 * self.polygon_min_valid:g} % of valid pixels left out.'
+                + (' Stopped before the last dates.' if stopped else ''))
+
+    def _polygon_threshold(self, min_valid, widgets):
+        """New minimum share of valid pixels (0-1): table and plot of the last time series updated."""
+        status, _, _, pane = widgets
+        self.polygon_min_valid = min_valid
+        last = getattr(self, '_polygon_last', None)
+        if last is None:
+            return
+        rows, label, stopped = last
+        self.polygon_table = self._polygon_table(rows)
+        pane.object = self._polygon_plot(self.polygon_table, label)
+        status.object = self._polygon_status(self.polygon_table, label, stopped)
 
     def _polygon_panel(self, layer_widget):
         """Button, progress and plot of the time series over the polygons."""
@@ -1104,6 +1121,10 @@ class _MultiscaleViewer(Utils):
         progress = pn.indicators.Progress(value=0, max=1, width=300, visible=False, bar_color='primary')
         status = pn.pane.Markdown('Draw polygons on the map, then read the selected layer over all the dates.')
         pane = pn.pane.HoloViews(None, visible=False, linked_axes=False)
+        min_valid = pn.widgets.FloatInput(name='Minimum valid pixels (%)', value=100 * self.polygon_min_valid,
+                                          start=0, end=100, step=5, width=170)
+        min_valid.param.watch(lambda event: self._polygon_threshold((event.new or 0) / 100,
+                                                                    (status, progress, stop, pane)), 'value')
 
         async def run(event):
             button.disabled = True
@@ -1117,7 +1138,9 @@ class _MultiscaleViewer(Utils):
 
         button.on_click(run)
         stop.on_click(halt)
-        return pn.Column(pn.Row(button, stop, progress), status, pane)
+        for widget in (button, stop, progress):
+            widget.align = 'end'
+        return pn.Column(pn.Row(button, min_valid, stop, progress), status, pane)
 
     def get_points(self, poi_stream=None, crs=4326):
         """Points drawn on the map as a GeoDataFrame in ``crs``."""

@@ -28,6 +28,7 @@ import io
 import json
 import os
 import re
+import threading
 import urllib.parse
 import urllib.request
 import warnings
@@ -550,13 +551,14 @@ def _image_time(ds, path):
     raise ValueError(f'no acquisition time found in {path}')
 
 
-def _open_level(path, level=0):
-    """One resolution level of a product, as a lazy xarray.Dataset."""
+def _open_level(path, level=0, root=None):
+    """One resolution level of a product, as a lazy xarray.Dataset (``root``: root group of a Zarr store,
+    already open)."""
     from .driver import open_zarr_image, open_hgrs_l2a
     from .subset import open_l2a
 
     if is_zarr(path):
-        return open_zarr_image(path, level=level)
+        return open_zarr_image(path, level=level, root=root)
     if '://' in path:
         # remote NetCDF file: read through fsspec, the netCDF4 library has its own access to the buckets
         import fsspec
@@ -567,12 +569,6 @@ def _open_level(path, level=0):
     if os.path.isdir(path):
         return open_l2a(path)[0]
     return xr.open_dataset(path, decode_coords='all', chunks={})
-
-
-def _nlevels(path):
-    from .driver import zarr_levels
-
-    return max(len(zarr_levels(path)), 1) if is_zarr(path) else 1
 
 
 def _is_l2a(ds):
@@ -624,11 +620,39 @@ class _LazyLevels:
         self.path, self.kind, self.params, self.mask_invalid = path, kind, params, mask_invalid
         self._levels = {}
         self._n = None
+        self._root = None
+
+    @property
+    def root(self):
+        """Root group of a Zarr store, read once for all its levels (None for the other products)."""
+        if self._root is None and is_zarr(self.path):
+            import zarr
+
+            self._root = zarr.open_group(self.path, mode='r')
+        return self._root
 
     def __len__(self):
         if self._n is None:
-            self._n = _nlevels(self.path)
+            from .driver import _levels
+
+            self._n = max(len(_levels(self.root)), 1) if is_zarr(self.path) else 1
         return self._n
+
+    def resolution(self, level):
+        """
+        Pixel size of a level from the ``multiscales`` attribute of the store (scale of each level from the
+        previous one), without opening the level; None when the attribute does not give it.
+        """
+        layout = ((self.root.attrs.get('multiscales') or {}).get('layout') or []) if self.root is not None else []
+        if level == 0 or len(layout) <= level:
+            return None
+        res = abs(float(self[0].x[1] - self[0].x[0]))
+        for item in layout[1:level + 1]:
+            scale = (item.get('transform') or {}).get('scale')
+            if not scale or len(set(scale)) != 1:
+                return None
+            res *= float(scale[0])
+        return res
 
     def __getitem__(self, level):
         if level < 0:
@@ -636,13 +660,156 @@ class _LazyLevels:
         if not 0 <= level < len(self):
             raise IndexError(level)
         if level not in self._levels:
-            self._levels[level] = _layers(_open_level(self.path, level), self.kind, self.params,
+            self._levels[level] = _layers(_open_level(self.path, level, self.root), self.kind, self.params,
                                           self.mask_invalid)
         return self._levels[level]
 
 
+# -- opening of an area over several tiles -------------------------------------------------------------
+
+#: area of interest of a pin (smaller areas are enlarged to this size, m)
+AREA_MIN_EXTENT = 5000.
+#: largest side of the grid of an area (pixels): beyond, open the tiles instead
+AREA_MAX_PIXELS = 4096
+
+
+def _crs_of(row):
+    """CRS of a product from its table row: STAC ``proj:code``, or UTM zone of its tile."""
+    import pyproj
+
+    if isinstance(row.crs, str) and row.crs:
+        return pyproj.CRS(row.crs)
+    if isinstance(row.tile, str) and re.fullmatch(r'\d{2}[A-Z]{3}', row.tile):
+        zone = _utm_zone(row.tile)
+        return pyproj.CRS.from_epsg((32600 if zone[-1] == 'N' else 32700) + int(zone[:2]))
+    return None
+
+
+def _area_grid(area, crs, template, min_extent=AREA_MIN_EXTENT, max_pixels=AREA_MAX_PIXELS):
+    """
+    Grid of an area: pixel centres (x ascending, y descending) in ``crs``, with the pixel size of
+    ``template`` and aligned on its pixels when it is in ``crs`` (tiles of the same UTM zone share the grid).
+
+    :param area: shapely geometry (lon/lat)
+    :param template: full-resolution layer of a product
+    :return: dict with crs, x, y, transform
+    """
+    import pyproj
+    from rasterio.transform import Affine
+    from rasterio.warp import transform_bounds
+
+    res = abs(float(template.x[1] - template.x[0]))
+    aligned = pyproj.CRS(template.rio.crs) == crs
+    xoff = float(template.x[0]) % res if aligned else res / 2
+    yoff = float(template.y[0]) % res if aligned else res / 2
+    xmin, ymin, xmax, ymax = transform_bounds('EPSG:4326', crs, *area.bounds, densify_pts=21)
+    for low, high, axis in ((xmin, xmax, 'x'), (ymin, ymax, 'y')):
+        if high - low < min_extent:
+            centre = (low + high) / 2
+            low, high = centre - min_extent / 2, centre + min_extent / 2
+        if axis == 'x':
+            xmin, xmax = low, high
+        else:
+            ymin, ymax = low, high
+    xs = np.arange(np.floor((xmin - xoff) / res) * res + xoff, xmax + res / 2, res)
+    ys = np.arange(np.ceil((ymax - yoff) / res) * res + yoff, ymin - res / 2, -res)
+    if max(len(xs), len(ys)) > max_pixels:
+        raise ValueError(f'the area is too large to be opened alone ({len(xs)} x {len(ys)} pixels, at most '
+                         f'{max_pixels}): draw a smaller area, or open the whole products')
+    transform = Affine(res, 0, xs[0] - res / 2, 0, -res, ys[0] + res / 2)
+    return {'crs': crs, 'x': xs, 'y': ys, 'transform': transform}
+
+
+class _AreaLevels:
+    """
+    Image of one acquisition over an area (sequence used by :class:`~grstbx.visual.Multiscale`): the
+    products of its tiles, clipped to the area and combined on one grid, at full resolution (the coarser
+    levels are computed by Multiscale). The tiles of the UTM zone of the grid stay lazy; the others are
+    reprojected (nearest neighbour), which reads their part of the area. Built when first displayed.
+    """
+
+    def __init__(self, paths, grid, kind, params=None, mask_invalid=True):
+        self.paths, self.grid, self.kind, self.params, self.mask_invalid = paths, grid, kind, params, mask_invalid
+        self._image = None
+        self._lock = threading.Lock()
+
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, level):
+        if level not in (0, -1):
+            raise IndexError(level)
+        with self._lock:         # several threads read the dates of a time series
+            if self._image is None:
+                self._image = self._mosaic()
+        return self._image
+
+    def _piece(self, layers):
+        """Part of a product on the grid of the area, None if it does not cover it."""
+        import pyproj
+        from rasterio.enums import Resampling
+        from rasterio.warp import transform_bounds
+        from rioxarray.exceptions import NoDataInBounds, OneDimensionalRaster
+
+        crs, xs, ys = self.grid['crs'], self.grid['x'], self.grid['y']
+        res = xs[1] - xs[0]
+        if pyproj.CRS(layers.rio.crs) == crs:
+            ydesc = bool(layers.y[0] > layers.y[-1])
+            piece = layers.sel(x=slice(xs[0] - res, xs[-1] + res),
+                               y=slice(ys[0] + res, ys[-1] - res) if ydesc else slice(ys[-1] - res, ys[0] + res))
+            if piece.sizes['x'] == 0 or piece.sizes['y'] == 0:
+                return None
+            return piece.reindex(x=xs, y=ys, method='nearest', tolerance=res / 4)
+        bounds = transform_bounds(crs, layers.rio.crs, xs[0] - res, ys[-1] - res, xs[-1] + res, ys[0] + res,
+                                  densify_pts=21)
+        try:
+            piece = layers.rio.clip_box(*bounds)
+        except (NoDataInBounds, OneDimensionalRaster):
+            return None
+        piece = piece.rio.reproject(crs, transform=self.grid['transform'], shape=(len(ys), len(xs)),
+                                    resampling=Resampling.nearest, nodata=np.nan)
+        return piece.assign_coords(x=xs, y=ys)
+
+    def _mosaic(self):
+        image = None
+        for path in self.paths:
+            layers = _layers(_open_level(path), self.kind, self.params, self.mask_invalid)
+            piece = self._piece(layers)
+            if piece is None:
+                continue
+            # first valid pixel: the tiles of an acquisition overlap with the same values
+            image = piece if image is None else image.combine_first(piece)
+        if image is None:      # no product covers the area: empty image on the grid
+            image = layers.isel(x=slice(0, 1), y=slice(0, 1)).reindex(x=self.grid['x'], y=self.grid['y'])
+        return image.drop_vars('spatial_ref', errors='ignore').rio.write_crs(self.grid['crs'])
+
+
+def _open_area(products, area, kind, params, mask, first):
+    """
+    Images of the acquisitions of ``products`` over ``area`` (see :class:`_AreaLevels`): the products of
+    the same satellite and sensing time are combined, on the grid of the UTM zone of most products.
+
+    :param first: first product (opened), to read the grid when no product of the zone is described
+    :return: (images, times, grid)
+    """
+    import pyproj
+
+    crss = [_crs_of(row) for row in products.itertuples()]
+    known = [crs for crs in crss if crs is not None]
+    crs = max(known, key=known.count) if known else pyproj.CRS(first.rio.crs)
+    # pixel size and alignment from a product of that zone
+    path = next((path for path, product_crs in zip(products.path, crss) if product_crs == crs), products.path[0])
+    grid = _area_grid(area, crs, first if path == products.path[0] else _open_level(path))
+    images, times = [], []
+    for (_, time), group in products.groupby([products.satellite.fillna(''), products.time], sort=True):
+        images.append(_AreaLevels(list(group.path), grid, kind, params, mask))
+        times.append(time)
+    order = np.argsort(times, kind='stable')
+    return [images[i] for i in order], [times[i] for i in order], grid
+
+
 def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None, end=None,
-                  last_processing=True, mask_l2a=True, cache_size=2e9, max_cloud_cover=None):
+                  last_processing=True, mask_l2a=True, cache_size=2e9, max_cloud_cover=None, area=None):
     """
     Open products for the viewers, lazily: each product (and each resolution level) is read when it is
     displayed, so that long time series open instantly.
@@ -665,9 +832,13 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
                        :class:`~grstbx.visual.Multiscale`)
     :param max_cloud_cover: maximum cloud cover (%) of the products with a STAC Item (see
                             :func:`select_products`)
+    :param area: open only this area (shapely geometry or (lon_min, lat_min, lon_max, lat_max), lon/lat):
+                 one image per acquisition, the products of its tiles clipped to the bounding box of the
+                 area and combined on one grid, even across UTM zones (at most :data:`AREA_MAX_PIXELS`
+                 pixels per side; a pin opens :data:`AREA_MIN_EXTENT` m around it)
     :return: (data, kind, params, title): :class:`~grstbx.visual.Multiscale`, ``'L2A'`` or ``'L2B'``,
              displayed parameters (L2B, None for L2A), Markdown title of the viewer
-    :raises SeveralZones: the products are in several UTM zones and no tile is given
+    :raises SeveralZones: the products are in several UTM zones, and no tile nor area is given
     """
     from .visual import Multiscale
 
@@ -706,7 +877,7 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
             raise ValueError(f'L2A and L2B products cannot be displayed together ({counts}): open the products '
                              'of one level')
     tiles = products.tile.dropna()
-    if tiles.map(_utm_zone).nunique() > 1:
+    if area is None and tiles.map(_utm_zone).nunique() > 1:
         raise SeveralZones(tiles.value_counts().sort_index().to_dict())
 
     # level and parameters from the first product, the others are opened when displayed
@@ -716,6 +887,18 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
     if kind == 'L2B' and not params:
         raise ValueError(f'no parameter to display in {products.path[0]}')
     mask = mask_l2a if kind == 'L2A' else mask_invalid
+    if area is not None:
+        from shapely.geometry import box
+
+        area = box(*area) if isinstance(area, (list, tuple)) else area
+        images, times, grid = _open_area(products, area, kind, params, mask, first)
+        data = Multiscale(images, np.array(times, dtype='datetime64[ns]'), min_size=min_size, cache_size=cache_size)
+        data.scheduler = 'synchronous'    # reprojected tiles are in memory, the others are dask arrays
+        dates = pd.DatetimeIndex(data.times)
+        where = f', tiles {", ".join(sorted(tiles.unique()))}' if len(tiles) else ''
+        title = (f'## {len(images)} {kind} images of the area\n{len(products)} products{where}, '
+                 f'{len(grid["x"])} x {len(grid["y"])} pixels, from {dates[0].date()} to {dates[-1].date()}')
+        return data, kind, params, title
     images = [_LazyLevels(path, kind, params, mask) for path in products.path]
     images[0]._levels[0] = _layers(first, kind, params, mask)
     times = [time if not pd.isna(time) else pd.Timestamp(_image_time(images[i][0], products.path[i]))
@@ -936,6 +1119,84 @@ def _file_browser(root, products_input):
                      sizing_mode='stretch_width')
 
 
+class SearchMap:
+    """
+    Empty map of the area of a STAC search, over a basemap: pins (Point Draw tool), polygons (Polygon Draw
+    tool, double-click to start and to close) and lasso shapes (Freehand Draw tool, closed between their
+    first and last points). The area of the search is the union of the shapes drawn (see :meth:`geometry`).
+
+    :param basemap: basemap (see :data:`grstbx.visual.BASEMAPS`)
+    :param width: width of the map (pixels)
+    :param height: height of the map (pixels)
+    """
+
+    # half width of the web Mercator world (m)
+    WORLD = 20037508.34
+
+    def __init__(self, basemap=None, width=1000, height=450):
+        from . import visual
+
+        self.basemap = basemap or visual.DEFAULT_BASEMAP
+        self.width, self.height = width, height
+        self.pane = pn.pane.HoloViews()
+        self._subscribers = []
+        self.clear()
+
+    def clear(self, event=None):
+        """Remove the shapes drawn: new elements and drawing streams."""
+        import holoviews as hv
+
+        from . import visual
+
+        pins = hv.Points([]).opts(color='#c0392b', size=10, line_color='white')
+        polygons = hv.Polygons([]).opts(fill_color='#1f4e79', fill_alpha=0.2, line_color='#1f4e79', line_width=2)
+        lassos = hv.Path([]).opts(line_color='#1f4e79', line_width=2)
+        self.pin_stream = hv.streams.PointDraw(source=pins)
+        self.polygon_stream = hv.streams.PolyDraw(source=polygons, drag=True, show_vertices=True)
+        self.lasso_stream = hv.streams.FreehandDraw(source=lassos)
+        for stream in self.streams:
+            for subscriber in self._subscribers:
+                stream.add_subscriber(subscriber)
+        # whole world in longitude, centred on 30 deg N, with square tiles
+        half_height = self.WORLD * self.height / self.width
+        tiles = visual.basemap_tiles(self.basemap).opts(
+            width=self.width, height=self.height, xlim=(-self.WORLD, self.WORLD),
+            ylim=(3.5e6 - half_height, 3.5e6 + half_height), xaxis=None, yaxis=None)
+        self.pane.object = tiles * polygons * lassos * pins
+
+    @property
+    def streams(self):
+        return self.pin_stream, self.polygon_stream, self.lasso_stream
+
+    def on_draw(self, callback):
+        """Call ``callback()`` each time a shape is drawn or edited."""
+        def subscriber(**kwargs):
+            callback()
+
+        self._subscribers.append(subscriber)
+        for stream in self.streams:
+            stream.add_subscriber(subscriber)
+
+    def geometry(self):
+        """Union of the shapes drawn (shapely geometry, lon/lat), None if nothing is drawn."""
+        import pyproj
+        import shapely
+        from shapely.geometry import Point, Polygon
+
+        to_lonlat = pyproj.Transformer.from_crs(3857, 4326, always_xy=True)
+        shapes = []
+        pins = self.pin_stream.data or {}
+        shapes += [Point(to_lonlat.transform(x, y)) for x, y in zip(pins.get('x', []), pins.get('y', []))]
+        for stream in (self.polygon_stream, self.lasso_stream):
+            data = stream.data or {}
+            for xs, ys in zip(data.get('xs', []), data.get('ys', [])):
+                if len(xs) >= 3:      # unfinished polygons are left out
+                    lon, lat = to_lonlat.transform(np.asarray(xs, float), np.asarray(ys, float))
+                    # a lasso can cross itself
+                    shapes.append(shapely.make_valid(Polygon(zip(lon, lat))))
+        return shapely.union_all(shapes) if shapes else None
+
+
 def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, width=1000, height=700,
                tile=None, start=None, end=None, last_processing=True, mask_l2a=True, mask_l2b=True,
                cache_size=2e9, max_cloud_cover=None, stac=None):
@@ -1012,8 +1273,9 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                                        placeholder='/data/L2B or https://earth-search.aws.element84.com/v1')
     stac_collections = pn.widgets.TextInput(name='Collections (comma-separated)', value='',
                                             sizing_mode='stretch_width', placeholder='e.g. grs-l2b, sentinel-2-l2a')
-    stac_area = pn.widgets.RadioButtonGroup(options=['Everywhere', 'Last polygon on the map', 'Bounding box'],
-                                            value='Everywhere', button_type='light', sizing_mode='stretch_width')
+    stac_area = pn.widgets.RadioButtonGroup(
+        options=['Everywhere', 'Search map', 'Last polygon on the map', 'Bounding box'], value='Everywhere',
+        button_type='light', orientation='vertical', sizing_mode='stretch_width')
     stac_bbox = pn.widgets.TextInput(name='Bounding box: lon_min, lat_min, lon_max, lat_max (deg)', value='',
                                      placeholder='4.4, 43.4, 4.7, 43.6', sizing_mode='stretch_width')
     stac_start = pn.widgets.DatePicker(name='From', width=160)
@@ -1023,12 +1285,26 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     stac_button = pn.widgets.Button(name='Search', icon='search', button_type='light')
     stac_summary = pn.pane.Markdown('Search the STAC Items of a catalogue by area, period and cloud cover.',
                                     sizing_mode='stretch_width')
+    stac_clip = pn.widgets.Checkbox(name='Open the area only (tiles clipped and combined)', value=True,
+                                    visible=False)
     stac_level = pn.widgets.Select(name='Level to open', options=[], visible=False, sizing_mode='stretch_width')
     stac_open = pn.widgets.Button(name='Open the results as a time series', icon='timeline', button_type='primary',
                                   disabled=True)
     stac_results = {}
+    # empty map of the area of the search, below the viewer (see SearchMap)
+    search_map = SearchMap(basemap=basemap_select.value, width=width, height=min(height, 450))
+    search_map.on_draw(lambda: setattr(stac_area, 'value', 'Search map')
+                       if search_map.geometry() is not None else None)
+    clear_area = pn.widgets.Button(name='Clear the area', icon='eraser', button_type='light')
+    clear_area.on_click(search_map.clear)
+    area_card = pn.Card(
+        pn.pane.Markdown('Draw the area of the **STAC search** (*Search map* in the sidebar): pins with the '
+                         '**Point Draw** tool, polygons with the **Polygon Draw** tool (double-click to start and to '
+                         'close) or lasso shapes with the **Freehand Draw** tool. The search keeps the products '
+                         'that intersect one of the shapes.', sizing_mode='stretch_width'),
+        search_map.pane, clear_area, title='Area of the STAC search', sizing_mode='stretch_width')
     stac_card = pn.Card(stac_source, stac_collections, stac_area, stac_bbox, pn.Row(stac_start, stac_end),
-                        stac_cloud, stac_button, stac_summary, stac_level, stac_open,
+                        stac_cloud, stac_button, stac_summary, stac_level, stac_clip, stac_open,
                         title='STAC search', collapsed=not stac, sizing_mode='stretch_width')
     state = {'viewer': None}
     # controls of the opened viewer (filled when the products are opened)
@@ -1052,8 +1328,10 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         'the map to plot the time series under the mouse, add points to plot their time series.\n\n'
         'Pan and zoom the map: only the pixels displayed are read, from the Zarr pyramid levels. Draw '
         'polygons with the **Polygon Draw** tool (double-click to start and to close), and download the '
-        'values of the points and the statistics of the polygons below the map.')
-    main.append(intro)
+        'values of the points and the statistics of the polygons below the map.\n\n'
+        'To find products in a STAC catalogue, draw the area on the map below and search in the **STAC search** '
+        'card.')
+    main.extend([intro, area_card])
 
     def scan(event=None):
         """List the products of the Products field: tiles, levels, number of products and period."""
@@ -1084,10 +1362,11 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     def show_failed():
         """After a failed opening: the viewer already open stays, with its polygons and points."""
         if state['viewer'] is None:
-            main.objects = [intro]
+            main.objects = [intro, area_card]
             contrast_card.visible = rgb_card.visible = False
 
-    def on_load(event):
+    def on_load(event, area=None):
+        """Open the products of the Products field (``area``: only this area, see open_products)."""
         if not products_input.value.strip():
             pn.state.notifications.warning('Enter or add products first.')
             return
@@ -1098,7 +1377,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                 products_input.value, mask_invalid=mask_box.value, mask_l2a=mask_l2a_box.value,
                 tile=tile_select.value or None, cache_size=cache_size,
                 start=start_picker.value, end=end_picker.value, last_processing=last_box.value,
-                max_cloud_cover=cloud_input.value)
+                max_cloud_cover=cloud_input.value, area=area)
             ndates = len(data.images)
             # the live time series of L2B reads one block per date: off at opening for long series
             live = kind == 'L2A' or ndates <= LIVE_MAX_DATES
@@ -1115,7 +1394,9 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                     f'{ndates} dates: the live time series under the mouse is off (it reads every date); tick '
                     '"Live time series" to turn it on, or draw points.', duration=10000)
             state['viewer'] = viewer
-            main.objects = [viewer.visu(controls=False), _exports(viewer)]
+            # the search map stays below the viewer, folded
+            area_card.collapsed = True
+            main.objects = [viewer.visu(controls=False), _exports(viewer), area_card]
             contrast_card.objects = [viewer.display_controls()]
             contrast_card.visible = True
             rgb_card.objects = [viewer.rgb_controls()] if kind == 'L2A' else []
@@ -1148,6 +1429,11 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                 if len(bbox) != 4:
                     raise ValueError('the bounding box needs 4 values: lon_min, lat_min, lon_max, lat_max')
                 area['bbox'] = bbox
+            elif stac_area.value == 'Search map':
+                area['intersects'] = search_map.geometry()
+                if area['intersects'] is None:
+                    area_card.collapsed = False
+                    raise ValueError('draw a pin, a polygon or a lasso on the search map first')
             elif stac_area.value == 'Last polygon on the map':
                 viewer = state['viewer']
                 try:
@@ -1189,6 +1475,9 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         stac_results['paths'] = [item if os.path.isfile(str(item)) or '://' in str(item)
                                  else path for item, path in zip(found.item, found.path)]
         stac_results['levels'] = list(found.level)
+        # area opened with "Open the area only" (lon/lat)
+        stac_results['area'] = area.get('intersects', area.get('bbox'))
+        stac_clip.visible = stac_results['area'] is not None
         stac_open.disabled = False
 
     def stac_to_series(event):
@@ -1196,7 +1485,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         if stac_level.visible:
             paths = [path for path, level in zip(paths, levels) if level == stac_level.value]
         products_input.value = '\n'.join(paths)
-        on_load(None)
+        on_load(None, area=stac_results.get('area') if stac_clip.value else None)
 
     load_button.on_click(on_load)
     scan_button.on_click(scan)

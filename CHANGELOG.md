@@ -8,6 +8,13 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Added
 
+- Dashboard and `open_products(area=...)`: *Open the area only* opens the area of a STAC search alone, one image
+  per acquisition, the products of its tiles clipped to the bounding box of the area and combined on one grid
+  (UTM zone of most products, the other zone reprojected), so that an area across several tiles or UTM zones opens
+  as one time series. A pin opens 5 km around it; at most 4096 pixels per side.
+- Dashboard: empty search map (*Area of the STAC search*) to draw the area of the STAC search before opening
+  products, with pins (Point Draw), polygons (Polygon Draw) and lasso shapes (Freehand Draw); *Search map* in
+  the *STAC search* card searches the products intersecting the shapes. `grstbx.app.SearchMap`.
 - STAC: the PNG quicklooks written by GRS next to an L2A product (`<name>_ql_l1c_rgb.png`, `_ql_l2a_rgb.png`,
   `_ql_sunglint.png`) are assets of its Item, the L2A RGB with the `thumbnail` role.
 - Viewers: *Time series of the polygons* plots the median and quartiles of the selected parameter or band over the
@@ -80,6 +87,12 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Changed
 
+- Time series of the polygons about 4 times faster on the products of a bucket (87 s to 21 s for 40 dates and 3
+  polygons on the local bucket): the polygons close to each other are read in one window per date, the masks of the
+  polygons are kept for the dates on the same grid, and several dates are read at the same time
+  (`polygon_workers`). The Zarr pyramids open their levels from one read of the metadata of the store
+  (`open_zarr_image(root=...)`), and the pixel size of a level comes from the `multiscales` attribute without
+  opening it. `Multiscale.polygons_statistics`.
 - Documentation: the local bucket of the tutorials is `s3://grstbx-s3`, with one prefix per sensor and level
   (`sentinel-2/l2a`, `sentinel-2/l2b`) and the catalogue in `stac/`; `s3_bucket.sh` links the folders as
   `<prefix>=<folder>`.

@@ -101,8 +101,9 @@ given directly, e.g. `/data/L2B/31TFJ/*/*/*/*/*.json`.
 composite) over the polygons drawn on the map, for all the dates: median and quartiles of each polygon, the dates
 with less than 10 % of valid pixels being left out. It is started by its button, as it reads every date; the plot
 fills in while the page stays usable, and *Stop* ends it with the dates already read. A polygon of more than 1000
-pixels is read at a coarser level of the pyramid (the resolution is in the title). In Python,
-`viewer.polygon_timeseries('Chla_OC2nasa')` gives the same table.
+pixels is read at a coarser level of the pyramid (the resolution is in the title). Several dates are read at the
+same time (`polygon_workers`, 4 threads), and the polygons close to each other are read in one window per date. In
+Python, `viewer.polygon_timeseries('Chla_OC2nasa')` gives the same table.
 
 ## STAC search
 
@@ -112,14 +113,29 @@ The **STAC search** card finds products by area, period and cloud cover in a STA
 - **catalogue**: a folder or glob pattern of local STAC Items (e.g. `/data/L2B`, the L2B products of
   GRSl2bgen), or the URL of a STAC API (Item Search, e.g. `https://earth-search.aws.element84.com/v1`),
   with its **collections**; `--stac <catalogue>` fills it at start-up;
-- **area**: everywhere, the **last polygon drawn on the map** (Polygon Draw tool, once a product is
-  open), or a **bounding box** in longitude/latitude;
+- **area**: everywhere, the shapes drawn on the **search map**, the **last polygon drawn on the map**
+  of the viewer (Polygon Draw tool, once a product is open), or a **bounding box** in longitude/latitude;
 - **period** and **maximum cloud cover**.
 
+The **search map** (*Area of the STAC search*, below the introduction, and folded below the viewer once
+products are open) is an empty basemap to draw the area before any product is open: pins with the Point
+Draw tool, polygons with the Polygon Draw tool (double-click to start and to close) and lasso shapes with
+the Freehand Draw tool. The search keeps the products that intersect one of the shapes, and drawing a
+shape selects *Search map* in the card; *Clear the area* removes them ({class}`~grstbx.app.SearchMap`).
+
 *Search* lists the matching products (date, tile, cloud cover), and *Open the results as a time series*
-puts them in the *Products* field and opens them. The products of a time series must be in one UTM
-zone: when the results span several zones, the dashboard asks to choose a tile in the *Time series*
-card.
+puts them in the *Products* field and opens them.
+
+With an area (search map, polygon or bounding box), **Open the area only** (ticked by default) opens only
+the bounding box of the area, as one image per acquisition: the products of the tiles of an overpass are
+clipped and combined on one 20 m grid, so that an area across two tiles is one image per date, even
+across two UTM zones. The grid is in the UTM zone of most products and aligned on their pixels; the
+products of the other zone are reprojected (nearest neighbour). A pin opens 5 km around it, and an area
+is at most 4096 pixels per side (about 80 km). The map, the points, the polygons and the exports then work
+on the area only. In Python: `open_products(found.item, area=polygon)`.
+
+Without it, the whole products are opened. They must be in one UTM zone: when the results span several
+zones, the dashboard asks to choose a tile in the *Time series* card.
 
 The products of a STAC API are remote: their Items (`https://.../items/<id>`) go to the *Products* field
 and are described from the Item, and their Zarr data assets are read over `https` or `s3` (install

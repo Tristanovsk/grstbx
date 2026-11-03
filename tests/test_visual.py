@@ -74,3 +74,58 @@ def test_polygon_series_of_the_viewer():
     import holoviews as hv
 
     assert hv.render(widgets[3].object).yaxis[0].axis_label == 'Chla_OC2nasa'
+
+
+def test_polygons_read_together_give_the_same_statistics(monkeypatch):
+    from shapely.affinity import translate
+    from shapely.geometry import box
+
+    viewer, polygon = polygon_viewer()
+    data = viewer.data
+    x0, y0, x1, y1 = polygon.bounds
+    near = translate(polygon.buffer(-(x1 - x0) / 4), xoff=(x1 - x0) / 8)       # inside the box of the first
+    ex0, ey0, _, _ = data.bounds(1)
+    res = data.resolution(1)
+    far = box(ex0 + res, ey0 + res, ex0 + 5 * res, ey0 + 5 * res)    # small, in the opposite corner
+    polygons = {0: polygon, 1: near, 2: far}
+    windows = [[members for _, members in data._window_groups([(i, p, None) for i, p in polygons.items()])]]
+    assert [[m[0] for m in members] for members in windows[0]] == [[0, 1], [2]]   # the distant one apart
+
+    alone = {index: data.polygon_statistics(1, 'Chla_OC2nasa', p) for index, p in polygons.items()}
+    data._cache.clear()
+    data._cache.nbytes = 0
+    loads = []
+    original = xr.DataArray.load
+    monkeypatch.setattr(xr.DataArray, 'load', lambda self, **kw: loads.append(self.shape) or original(self, **kw))
+    together = data.polygons_statistics(1, 'Chla_OC2nasa', polygons)
+    assert together == alone and len(loads) == 2
+    # masks kept for the other dates on the same grid, statistics kept for this date
+    assert sum(key[0] == 'mask' for key in data._cache) == 3
+    data.polygons_statistics(1, 'Chla_OC2nasa', polygons)
+    assert len(loads) == 2
+
+
+def test_polygon_series_reads_the_dates_in_parallel():
+    import asyncio
+    import threading
+    import time
+
+    import panel as pn
+
+    viewer, polygon = polygon_viewer()
+    set_polygon(viewer, polygon)
+    threads, original = set(), viewer.data.polygons_statistics
+
+    def slow(*args, **kwargs):
+        threads.add(threading.get_ident())
+        time.sleep(0.2)
+        return original(*args, **kwargs)
+
+    viewer.data.polygons_statistics = slow
+    panel = viewer._polygon_panel(pn.widgets.Select(value='Chla_OC2nasa', options=['Chla_OC2nasa']))
+    widgets = (panel.select(pn.pane.Markdown)[0], panel.select(pn.indicators.Progress)[0],
+               panel.select(pn.widgets.Button)[1], panel.select(pn.pane.HoloViews)[0])
+    t0 = time.time()
+    asyncio.run(viewer._polygon_series('Chla_OC2nasa', widgets))
+    assert time.time() - t0 < 0.5 and len(threads) == 3     # 3 dates of 0.2 s at the same time
+    assert viewer.polygon_table['median'].iloc[:2].tolist() == [1, 2]

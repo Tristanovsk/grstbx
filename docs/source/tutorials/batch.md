@@ -11,7 +11,9 @@ merges the batch notebooks of the two processors:
 - list of the Level-1 images found on disk (`<idir>/<tile>/YYYY/MM/DD/<image>`) with their cloud cover,
   and selection of a date range;
 - names of the L2A and L2B products, as with the `grs` and `GRSl2bgen` command lines, one folder per
-  product (`<tile>/YYYY/MM/DD/<name>/`) with its log and, for the L2B, its STAC Item;
+  product (`<tile>/YYYY/MM/DD/<name>/`) with its log and its STAC Item (written by GRSl2bgen for the L2B,
+  by grstbx for the L2A with `l2a_stac=True`);
+- inputs and outputs on local disks or in an S3 bucket (see below);
 - the state of the products of each image (`l2a_done`, `l2b_done`), which decides the steps to run: GRS
   for the images without complete L2A product, GRSl2bgen for those without complete L2B product, an
   existing L2A product being reused (`overwrite_l2b` recomputes the L2B products alone, e.g. with a new
@@ -54,6 +56,68 @@ to run it on your own data.
 
 batch/grs_l1c_l2a_l2b_batch
 ```
+
+## Inputs and outputs in an S3 bucket
+
+The roots of the inputs (`idir`, `rootdir`) and of the outputs (`l2a_dir`, `l2b_dir`, `odir`) of the two
+batch notebooks of {mod}`grstbx.batch` can be bucket URLs instead of local folders, e.g.
+`s3://grstbx-s3/sentinel-2/l1c` and `s3://grstbx-s3/sentinel-2/l2b`. The two can be mixed, e.g. local Level-1
+images and products written to a bucket. Paths are read and written through fsspec
+(`pip install "grstbx[remote]"`). The credentials and the endpoint come from the environment (e.g.
+`AWS_PROFILE`, see {doc}`s3_stac`) or from `storage_options`. GRS and GRSl2bgen work on local files, so
+{class}`~grstbx.batch.Batch` stages the images one at a time:
+
+1. the Level-1 image, or the L2A product when only its L2B product is computed, is downloaded to
+   `work_dir`, a local folder (a temporary folder by default: choose a disk with a few GB free per image);
+2. GRS and GRSl2bgen process it there, as for local folders;
+3. each product folder is uploaded to the bucket: the chunks first, then the Zarr metadata, then the
+   STAC Item last. A product interrupted during the upload is therefore not complete
+   ({func}`~grstbx.batch.l2a_complete`, {func}`~grstbx.batch.l2b_complete`), and it is processed again
+   at the next run;
+4. the local copies are removed, and the profile of the image and the summary of the batch are written
+   to the bucket.
+
+```python
+import os
+from grstbx import batch
+
+os.environ['AWS_PROFILE'] = 'grstbx-local'
+images = batch.list_images('s3://grstbx-s3/sentinel-2/l1c', ['31TEJ']).loc['2025-08-01':'2025-08-04']
+run = batch.Batch('s3://grstbx-s3/sentinel-2/l2a', 's3://grstbx-s3/sentinel-2/l2b',
+                  cams_file_template='/data/cams/cams_forecast_{date:%Y-%m}.nc',
+                  work_dir='/scratch/grstbx', l2a_stac=True)
+summary = run.run(run.plan_level1(images))
+```
+
+The local bucket of {doc}`s3_stac` serves the folders of products in place. Start it with `WRITE=1 bash
+s3_bucket.sh` to let the batches write to it: the products are then written to the local folders linked
+into the bucket. Two limits: the check of the products in a bucket costs about 20 requests per L2A product
+(about 0.15 s per product with the local bucket), and the shell commands
+({meth}`~grstbx.batch.Batch.commands`) need local folders. To run them on a bucket, mount it as a folder
+(`rclone mount`).
+
+### STAC catalogue of the products
+
+GRSl2bgen writes the STAC Item of each L2B product (`stac=True`). With `l2a_stac=True`, the batch also
+writes the Item of each L2A product that it computes ({func}`~grstbx.batch.write_l2a_item`, same content
+as the Items of {func}`~grstbx.stac.product_item`), next to the product: `<name>/<name>.json`. Each L2B
+Item has a `derived_from` link to the URL of its L2A product in the bucket. Once a batch is done, the
+static catalogue of {doc}`s3_stac` is rebuilt from the Items alone, read from the bucket, without
+downloading any product, and written to the bucket:
+
+```python
+from grstbx import stac
+from grstbx.app import search_items
+
+stac.build_catalog(['s3://grstbx-s3/sentinel-2/l2a', 's3://grstbx-s3/sentinel-2/l2b'],
+                   's3://grstbx-s3/stac')
+found = search_items('s3://grstbx-s3/stac/catalog.json', collections='grs-l2b', tile='31TEJ')
+```
+
+Products without an Item are not seen by a catalogue built from a bucket. These are, for example, L2A
+products computed without `l2a_stac=True`, or with the command line of GRS. Build the catalogue from the
+local folders instead (`{'/data/L2A_zarr': 's3://grstbx-s3/sentinel-2/l2a'}`), which describes them from
+their attributes.
 
 ## L2A to L2B: notebook of GRSl2bgen
 

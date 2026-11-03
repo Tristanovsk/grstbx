@@ -269,3 +269,91 @@ def test_commands(tmp_path, level1):
     only = batch.Batch(str(tmp_path / 'L2A_nc'), version='2.2.0', profile_dir=False)
     line = only.commands(only.plan_level1(images))[0]
     assert line.startswith('{ grs ') and 'GRSl2bgen' not in line and '/usr/bin/time' not in line
+
+
+# ---------------------------------------------------------------------------------------------------
+# inputs and outputs in a bucket: fsspec memory file system
+# ---------------------------------------------------------------------------------------------------
+
+@pytest.fixture
+def bucket(tmp_path, level1):
+    """memory:// bucket holding the Level-1 images of `level1`; emptied at the end."""
+    import fsspec
+
+    fs = fsspec.filesystem('memory')
+    url = f'memory:///bucket-{tmp_path.name}'
+    fs.put(str(level1) + '/', f'{url}/L1C', recursive=True)
+    yield fs, url
+    fs.rm(url, recursive=True)
+
+
+def test_list_from_bucket(bucket):
+    fs, url = bucket
+    images = batch.list_images(f'{url}/L1C', ['31TEJ'])
+    assert len(images) == 3 and images['path'].iloc[0].startswith('memory:///')
+    assert images['cloud_cover'].round(3).tolist() == [0.352, 0.162, 0.825]
+
+    store = f'{url}/L2A/31TEJ/2025/08/01/{L2A}/{L2A}.zarr'
+    for path in ['zarr.json', '0/zarr.json', '0/Rrs/zarr.json', '0/mask/zarr.json']:
+        fs.pipe(f'{store}/{path}', b'{}')
+    assert batch.l2a_format(store) == 'zarr' and batch.zarr_complete(store)
+    fs.rm(f'{store}/0/mask/zarr.json')
+    assert not batch.l2a_complete(f'{url}/L2A/31TEJ/2025/08/01/{L2A}')
+    products = batch.list_l2a_products(f'{url}/L2A')
+    assert products['path'].tolist() == [f'{url}/L2A/31TEJ/2025/08/01/{L2A}'] and not products['complete'].any()
+
+
+def test_upload_order(tmp_path, bucket):
+    fs, url = bucket
+    store = make_zarr(tmp_path / 'p' / 'p.zarr')
+    (tmp_path / 'p' / 'p.json').write_text('{}')
+    (store / '0' / 'Rrs' / 'c').mkdir()
+    (store / '0' / 'Rrs' / 'c' / '0').write_text('chunk')
+    order = []
+    put_file = fs.put_file
+    fs.put_file = lambda local, remote, **kw: (order.append(remote), put_file(local, remote, **kw))
+    try:
+        batch.upload(str(tmp_path / 'p'), f'{url}/p', last=str(tmp_path / 'p' / 'p.json'))
+    finally:
+        del fs.put_file
+    names = [p.split('/p/', 1)[1] for p in order]
+    assert names[0] == 'p.zarr/0/Rrs/c/0' and names[-1] == 'p.json' and names[-2] == 'p.zarr/zarr.json'
+    assert batch.zarr_complete(f'{url}/p/p.zarr')
+    batch.download(f'{url}/p', str(tmp_path / 'copy'))
+    assert batch.zarr_complete(tmp_path / 'copy' / 'p.zarr') and (tmp_path / 'copy' / 'p.json').exists()
+
+
+def test_run_with_bucket(tmp_path, bucket, stub_processors, monkeypatch):
+    fs, url = bucket
+    calls, _ = stub_processors
+    items = []
+    monkeypatch.setattr(batch, 'write_l2a_item', lambda l2a: items.append(l2a) or
+                        open(batch.item_path(l2a), 'w').write('{}'))
+    work = tmp_path / 'work'
+    run = batch.Batch(f'{url}/L2A', f'{url}/L2B', cams_file_template=str(tmp_path / 'cams' / 'cams_{date:%Y-%m}.nc'),
+                      max_cloud_cover=0.6, version='3.1.0', l2a_stac=True, work_dir=str(work), memory_interval=0.05)
+    images = batch.list_images(f'{url}/L1C', ['31TEJ'])
+    plan = run.plan_level1(images)
+    assert plan['l2a'].iloc[0] == f'{url}/L2A/31TEJ/2025/08/01/{L2A}/{L2A}.zarr'
+    summary = run.run(plan, verbose=False)
+    assert summary['status'].tolist() == ['done', 'done', 'cloudy'] and calls == ['L2A', 'L2B'] * 2
+    # products and Items in the bucket, nothing left in the work folder
+    assert batch.l2a_complete(plan['l2a'].iloc[0]) and fs.exists(batch.item_path(plan['l2a'].iloc[0]))
+    assert batch.l2b_complete(plan['l2b'].iloc[0]) and len(items) == 2
+    assert not [p for p in work.rglob('*') if p.is_file()]
+    assert batch.read_profiles(plan['profile'])['step'].tolist() == ['L2A', 'L2B'] * 2
+    assert run.plan_level1(images)[['l2a_done', 'l2b_done']].values.tolist() == [[True, True]] * 2 + [[False, False]]
+
+    # L2B again from the L2A products of the bucket: downloaded to the work folder
+    seen = []
+    monkeypatch.setattr(batch, 'run_grsl2bgen', lambda l2a, l2b, **kw: seen.append((l2a, kw['l2a_href'])) or
+                        (os.makedirs(os.path.dirname(l2b), exist_ok=True), open(l2b, 'w').close(),
+                         open(batch.item_path(l2b), 'w').close()))
+    rerun = batch.Batch(f'{url}/L2A', f'{url}/L2B', version='3.1.0', overwrite_l2b=True, work_dir=str(work),
+                        max_cloud_cover=0.6, cams_file_template=run.cams_file_template)
+    summary = rerun.run(rerun.plan_level1(images), verbose=False)
+    assert summary['l2a'].tolist() == ['reused', 'reused', ''] and len(seen) == 2
+    assert seen[0][0].startswith(str(work)) and seen[0][1] == plan['l2a'].iloc[0]
+    assert run.save_summary(summary).startswith(f'{url}/L2B/batch_')
+    with pytest.raises(ValueError, match='local folders'):
+        run.commands(plan)

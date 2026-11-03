@@ -20,6 +20,19 @@ Example
 >>> summary = run.run(plan)               # GRS then GRSl2bgen, a profile per image
 
 The ``grs`` and ``GRSl2bgen`` packages are imported only to process the images.
+
+Buckets
+-------
+The roots of the inputs and of the outputs can be URLs of a bucket (``s3://bucket/L1C``,
+``s3://bucket/L2A_zarr``..., or any fsspec file system), read and written through fsspec with the
+credentials and endpoint of the environment (e.g. ``AWS_PROFILE``) or the ``storage_options`` given. GRS
+and GRSl2bgen work on local files: :meth:`Batch.process` downloads the inputs of each image to a local
+work folder, processes them there, uploads the product folders (the STAC Item of an L2B product last, so
+that it marks a complete product in the bucket too) and removes the local copies.
+
+>>> images = batch.list_images('s3://bucket/L1C', ['31TEJ'])
+>>> run = batch.Batch('s3://bucket/L2A_zarr', 's3://bucket/L2B_zarr', work_dir='/scratch/grstbx',
+...                   cams_file_template='/data/cams/cams_{date:%Y-%m}.nc', l2a_stac=True)
 """
 
 import os
@@ -32,15 +45,121 @@ import shutil
 import socket
 import logging
 import platform
+import tempfile
 import threading
 import contextlib
 import datetime as dt
+from functools import partial
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 opj = os.path.join
+
+
+# ---------------------------------------------------------------------------------------------------
+# local folders and buckets
+# ---------------------------------------------------------------------------------------------------
+
+def is_url(path):
+    """True if `path` is a URL (``s3://``, ``gs://``, ``memory://``...), read and written through fsspec."""
+    return '://' in str(path)
+
+
+def _fs(path, storage_options=None):
+    """fsspec file system of a URL and the path in it."""
+    import fsspec
+
+    return fsspec.core.url_to_fs(str(path), **(storage_options or {}))
+
+
+def _glob(pattern, storage_options=None):
+    """Paths (URLs for a bucket) matching a glob pattern, sorted."""
+    if not is_url(pattern):
+        return sorted(glob.glob(str(pattern)))
+    fs, path = _fs(pattern, storage_options)
+    return sorted(fs.unstrip_protocol(p) for p in fs.glob(path))
+
+
+def exists(path, storage_options=None):
+    """True if a local path or URL exists."""
+    if not is_url(path):
+        return os.path.exists(path)
+    fs, path = _fs(path, storage_options)
+    return fs.exists(path)
+
+
+def _isdir(path, storage_options=None):
+    if not is_url(path):
+        return os.path.isdir(path)
+    fs, path = _fs(path, storage_options)
+    return fs.isdir(path)
+
+
+def _listdir(path, storage_options=None):
+    """Names of the entries of a folder."""
+    if not is_url(path):
+        return os.listdir(path)
+    fs, path = _fs(path, storage_options)
+    return [os.path.basename(p.rstrip('/')) for p in fs.ls(path, detail=False)]
+
+
+def _read_text(path, storage_options=None):
+    if not is_url(path):
+        with open(path) as f:
+            return f.read()
+    fs, path = _fs(path, storage_options)
+    return fs.cat_file(path).decode()
+
+
+def _write_text(path, text, storage_options=None):
+    if not is_url(path):
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        with open(path, 'w') as f:
+            f.write(text)
+        return
+    fs, path = _fs(path, storage_options)
+    fs.pipe_file(path, text.encode())
+
+
+def download(url, local, storage_options=None):
+    """
+    Copy a file or folder of a bucket to the local path `local` (replaced if it exists).
+
+    :return: `local`
+    """
+    remove_output(local)
+    os.makedirs(os.path.dirname(os.path.abspath(local)), exist_ok=True)
+    fs, path = _fs(url, storage_options)
+    if fs.isdir(path):
+        fs.get(path.rstrip('/') + '/', local, recursive=True)
+    else:
+        fs.get(path, local)
+    return local
+
+
+def upload(local, url, storage_options=None, last=None):
+    """
+    Copy a local file or folder to the bucket at `url` (replaced if it exists). The Zarr metadata files
+    are uploaded after the chunks, the deepest first, so that a store interrupted during the upload is
+    not complete (:func:`zarr_complete`).
+
+    :param last: file of the folder uploaded last, once all the others are (e.g. the STAC Item marking a
+                 complete product)
+    """
+    remove_output(url, storage_options)
+    fs, path = _fs(url, storage_options)
+    if not os.path.isdir(local):
+        fs.put_file(local, path)
+        return
+    metadata = {'zarr.json', '.zmetadata', '.zgroup', '.zarray', '.zattrs'}
+    last = os.path.abspath(last) if last is not None else None
+    files = sorted((p for p in Path(local).rglob('*') if p.is_file()),
+                   key=lambda p: (str(p.absolute()) == last, p.name in metadata, -len(p.parts), str(p)))
+    files = [str(p) for p in files]
+    for file in files:
+        fs.put_file(file, path.rstrip('/') + '/' + Path(file).relative_to(local).as_posix())
 
 #: fields of the names of the GRS L2A products (the version is optional)
 FIELDS = ['satellite', 'level', 'time', 'baseline', 'orbit', 'tile', 'processing_time', 'version']
@@ -52,43 +171,44 @@ REQUIRED = ['Rrs', 'mask']
 # Level-1 images
 # ---------------------------------------------------------------------------------------------------
 
-def cloud_cover(path):
+def cloud_cover(path, storage_options=None):
     """
     Cloud cover of a Level-1 image, from its metadata (``MTD_MSIL1C.xml`` of Sentinel-2, ``*_MTL.txt``
     of Landsat).
 
-    :param path: Level-1 image folder
+    :param path: Level-1 image folder (local or URL)
+    :param storage_options: options of the fsspec file system of a URL
     :return: cloud cover (0-1), NaN if not found
     """
     patterns = [('MTD_MSIL1C.xml', r'<Cloud_Coverage_Assessment>\s*([\d.]+)'),
                 ('*_MTL.txt', r'\bCLOUD_COVER\s*=\s*"?([\d.]+)')]
     for metadata, regex in patterns:
-        for file in glob.glob(opj(path, metadata)):
-            with open(file) as f:
-                match = re.search(regex, f.read())
+        for file in _glob(opj(path, metadata), storage_options):
+            match = re.search(regex, _read_text(file, storage_options))
             if match:
                 return float(match.group(1)) / 100
     return np.nan
 
 
-def list_images(idir, tiles, pattern='S2*.SAFE'):
+def list_images(idir, tiles, pattern='S2*.SAFE', storage_options=None):
     """
     Table of the Level-1 images found in ``<idir>/<tile>/YYYY/MM/DD/``.
 
-    :param idir: root folder of the Level-1 images
+    :param idir: root folder of the Level-1 images, local or URL of a bucket (``s3://bucket/L1C``)
     :param tiles: tile sub-folders (e.g. ``['31TEJ']``, or Landsat path/rows ``['199027']``)
     :param pattern: glob pattern of the image names (``'L*_L1*'`` for Landsat)
+    :param storage_options: options of the fsspec file system of a URL (default: from the environment)
     :return: pandas.DataFrame indexed by acquisition date (from the folders), with the columns
              ``tile``, ``name``, ``path`` and ``cloud_cover`` (0-1)
     """
     rows = []
     for tile in tiles:
-        for path in sorted(glob.glob(opj(idir, tile, '*', '*', '*', pattern))):
+        for path in _glob(opj(idir, tile, '*', '*', '*', pattern), storage_options):
             year, month, day = Path(path).parts[-4:-1]
             rows.append(dict(date=pd.Timestamp(f'{year}-{month}-{day}'), tile=tile,
                              name=os.path.basename(path.rstrip('/')), path=path))
     df = pd.DataFrame(rows, columns=['date', 'tile', 'name', 'path'])
-    df['cloud_cover'] = df['path'].map(cloud_cover).astype(float)
+    df['cloud_cover'] = df['path'].map(partial(cloud_cover, storage_options=storage_options)).astype(float)
     return df.set_index('date').sort_index()
 
 
@@ -138,16 +258,16 @@ def image_name(path):
     return re.sub(r'\.(SAFE|nc|zarr)$', '', os.path.basename(str(path).rstrip('/')))
 
 
-def l2a_format(path):
+def l2a_format(path, storage_options=None):
     """
     Format of an L2A product: ``'zarr'`` or ``'nc'``, None if unknown.
 
     :param path: product file or store, or GRS product folder ``<name>/`` holding ``<name>.zarr`` or
-                 ``<name>.nc``
+                 ``<name>.nc`` (local or URL)
     """
     path = str(path).rstrip('/')
     for ext in ('zarr', 'nc'):
-        if path.endswith('.' + ext) or os.path.exists(opj(path, f'{product_name(path)}.{ext}')):
+        if path.endswith('.' + ext) or exists(opj(path, f'{product_name(path)}.{ext}'), storage_options):
             return ext
     return None
 
@@ -159,7 +279,8 @@ def zarr_store(path):
 
 
 def item_path(product):
-    """STAC Item of a product, written by GRSl2bgen next to it: ``<name>.json``."""
+    """STAC Item of a product, next to it: ``<name>.json`` (written by GRSl2bgen for an L2B product, by
+    :func:`write_l2a_item` for an L2A product)."""
     return os.path.splitext(str(product).rstrip('/\\'))[0] + '.json'
 
 
@@ -180,78 +301,91 @@ def dem_path(template, tile):
 # complete products
 # ---------------------------------------------------------------------------------------------------
 
-def zarr_complete(path, required=REQUIRED):
+def zarr_complete(path, required=REQUIRED, storage_options=None):
     """
     True if a Zarr L2A product is complete: root metadata and, for each level of its pyramid (read from
     the ``multiscales`` layout of the root, or the numbered groups), the `required` arrays. A GRS run that
     failed while writing the store leaves the level groups without them.
 
-    :param path: Zarr store, or GRS product folder holding it
+    :param path: Zarr store, or GRS product folder holding it (local or URL)
     """
     store = zarr_store(path)
     try:
-        with open(opj(store, 'zarr.json')) as f:
-            attrs = json.load(f).get('attributes', {})
+        attrs = json.loads(_read_text(opj(store, 'zarr.json'), storage_options)).get('attributes', {})
     except (OSError, ValueError):
         return False
     layout = (attrs.get('multiscales') or [{}])[0].get('layout') or []
-    groups = [level['group'] for level in layout] or sorted(d for d in os.listdir(store) if d.isdigit())
-    return bool(groups) and all(os.path.isfile(opj(store, group, var, 'zarr.json'))
-                                for group in groups for var in ['.'] + list(required))
+    groups = [level['group'] for level in layout] or sorted(d for d in _listdir(store, storage_options)
+                                                            if d.isdigit())
+    return bool(groups) and all(exists(opj(store, group, *var, 'zarr.json'), storage_options)
+                                for group in groups for var in [()] + [(v,) for v in required])
 
 
-def netcdf_complete(path, required=REQUIRED):
+def _open_netcdf(path, storage_options=None):
+    import xarray as xr
+
+    if not is_url(path):
+        return xr.open_dataset(path)
+    fs, path = _fs(path, storage_options)
+    return xr.open_dataset(fs.open(path), engine='h5netcdf')
+
+
+def netcdf_complete(path, required=REQUIRED, storage_options=None):
     """
     True if a NetCDF L2A product is complete: ``<name>.nc`` opens and holds the `required` variables
     and, for a GRS product folder, its ancillary file ``<name>_anc.nc`` opens (a truncated file does not).
 
     :param path: ``<name>.nc`` file (its ancillary file is checked when it exists next to it), or GRS
-                 product folder ``<name>/``
+                 product folder ``<name>/`` (local or URL; in a bucket, read with h5netcdf)
     """
-    import xarray as xr
-
     path = str(path).rstrip('/')
     if path.endswith('.nc'):
         main, ancillary = path, path[:-len('.nc')] + '_anc.nc'
-        if not os.path.exists(ancillary):
+        if not exists(ancillary, storage_options):
             ancillary = None
     else:
         name = product_name(path)
         main, ancillary = opj(path, name + '.nc'), opj(path, name + '_anc.nc')
     try:
-        with xr.open_dataset(main) as ds:
+        with _open_netcdf(main, storage_options) as ds:
             if not set(required) <= set(ds.variables):
                 return False
         if ancillary is not None:
-            with xr.open_dataset(ancillary):
+            with _open_netcdf(ancillary, storage_options):
                 pass
     except Exception:
         return False
     return True
 
 
-def l2a_complete(path, required=REQUIRED):
-    """True if the L2A product of `path` (Zarr or NetCDF, file, store or GRS folder) is complete."""
-    fmt = l2a_format(path)
+def l2a_complete(path, required=REQUIRED, storage_options=None):
+    """True if the L2A product of `path` (Zarr or NetCDF, file, store or GRS folder, local or URL) is
+    complete."""
+    fmt = l2a_format(path, storage_options)
     if fmt == 'zarr':
-        return zarr_complete(path, required)
+        return zarr_complete(path, required, storage_options)
     if fmt == 'nc':
-        return netcdf_complete(path, required)
+        return netcdf_complete(path, required, storage_options)
     return False
 
 
-def l2b_complete(path, stac=True):
+def l2b_complete(path, stac=True, storage_options=None):
     """
     True if an L2B product is complete: its STAC Item exists (GRSl2bgen writes it last, after the product
     and its log), or the product itself if `stac` is False (GRSl2bgen writes it under a temporary name
     and renames it when complete).
     """
-    return os.path.exists(item_path(path) if stac else path)
+    return exists(item_path(path) if stac else path, storage_options)
 
 
-def remove_output(path):
-    """Remove a product: file, or folder (Zarr store, product folder); nothing if it does not exist."""
-    if os.path.isdir(path):
+def remove_output(path, storage_options=None):
+    """Remove a product: file, or folder (Zarr store, product folder), local or in a bucket; nothing if
+    it does not exist."""
+    if is_url(path):
+        fs, path = _fs(path, storage_options)
+        if fs.exists(path):
+            fs.rm(path, recursive=True)
+    elif os.path.isdir(path):
         shutil.rmtree(path)
     elif os.path.isfile(path):
         os.remove(path)
@@ -261,7 +395,7 @@ def remove_output(path):
 # L2A products
 # ---------------------------------------------------------------------------------------------------
 
-def list_l2a_products(rootdir, tiles=None, pattern='*L2A*', check=True):
+def list_l2a_products(rootdir, tiles=None, pattern='*L2A*', check=True, storage_options=None):
     """
     Table of the GRS L2A products found in ``<rootdir>/<tile>/YYYY/MM/DD/``: product folders
     ``<name>/`` (holding ``<name>.zarr`` or ``<name>.nc``), or stores and files directly in the ``DD``
@@ -270,31 +404,34 @@ def list_l2a_products(rootdir, tiles=None, pattern='*L2A*', check=True):
     The names follow the Sentinel-2 convention followed by the GRS version,
     ``<satellite>_<level>_<sensing time>_<baseline>_<orbit>_<tile>_<processing time>_<version>``.
 
-    :param rootdir: root folder of the L2A products
+    :param rootdir: root folder of the L2A products, local or URL of a bucket
     :param tiles: tile sub-folders, None for all those of `rootdir`
     :param pattern: glob pattern of the product names
     :param check: add the column ``complete`` (:func:`l2a_complete`)
+    :param storage_options: options of the fsspec file system of a URL (default: from the environment)
     :return: pandas.DataFrame indexed by sensing time, with the fields of the names, ``format``
              (``'zarr'`` or ``'nc'``), ``path`` (and ``complete``)
     """
     if tiles is None:
-        tiles = sorted(d for d in os.listdir(rootdir) if os.path.isdir(opj(rootdir, d)))
-    paths = sorted(p for tile in tiles for p in glob.glob(opj(rootdir, tile, '*', '*', '*', pattern)))
+        tiles = sorted(d for d in _listdir(rootdir, storage_options)
+                       if re.fullmatch(r'\d{2}[A-Z]{3}|\d{6}', d) and _isdir(opj(rootdir, d), storage_options))
+    paths = sorted(p for tile in tiles
+                   for p in _glob(opj(rootdir, tile, '*', '*', '*', pattern), storage_options))
     rows = []
     for path in paths:
-        if product_name(path).endswith('_anc'):        # ancillary NetCDF file of a GRS product
+        if product_name(path).endswith('_anc') or path.endswith('.json'):   # ancillary file, STAC Item
             continue
         fields = product_name(path).split('_')
         if len(fields) < 7:
             logging.warning(f'unexpected product name, skipped: {path}')
             continue
         fields = (fields + [None])[:len(FIELDS)]         # the version field is optional
-        rows.append(dict(zip(FIELDS, fields), format=l2a_format(path), path=path))
+        rows.append(dict(zip(FIELDS, fields), format=l2a_format(path, storage_options), path=path))
     df = pd.DataFrame(rows, columns=FIELDS + ['format', 'path'])
     df['tile'] = df['tile'].str.lstrip('T')
     df['time'] = pd.to_datetime(df['time'], format='%Y%m%dT%H%M%S')
     if check:
-        df['complete'] = df['path'].map(l2a_complete).astype(bool)
+        df['complete'] = df['path'].map(partial(l2a_complete, storage_options=storage_options)).astype(bool)
     return df.set_index('time').sort_index()
 
 
@@ -408,11 +545,14 @@ class Profiler:
         self._stop.set()
         self._thread.join()
 
-    def write(self, path, **info):
+    def write(self, path, storage_options=None, **info):
         """
         Stop the sampling and write the profile as JSON: image, start, total time, machine (host, CPUs,
         RAM), Python and processor versions, `info`, steps and memory curve (``memory``: time in s since
         the start, RSS in MB).
+
+        :param path: local path or URL of the profile
+        :param storage_options: options of the fsspec file system of a URL
         """
         import psutil
 
@@ -423,9 +563,7 @@ class Profiler:
                        ram_gb=round(psutil.virtual_memory().total / 2**30, 1),
                        python=platform.python_version(), versions=_versions(),
                        **info, steps=self.steps, memory=self.memory)
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        with open(path, 'w') as f:
-            json.dump(profile, f, indent=1, default=str)
+        _write_text(path, json.dumps(profile, indent=1, default=str), storage_options)
         return path
 
 
@@ -437,44 +575,45 @@ def _versions():
             if name in sys.modules}
 
 
-def read_profile(path):
-    """Profile written by :meth:`Profiler.write` (dict)."""
-    with open(path) as f:
-        return json.load(f)
+def read_profile(path, storage_options=None):
+    """Profile written by :meth:`Profiler.write` (dict), local or URL."""
+    return json.loads(_read_text(path, storage_options))
 
 
-def read_profiles(paths):
+def read_profiles(paths, storage_options=None):
     """
     Table of the steps of profiles: one row per image and step.
 
-    :param paths: profile files (the missing ones are left out)
+    :param paths: profile files, local or URLs (the missing ones are left out)
+    :param storage_options: options of the fsspec file system of the URLs
     :return: pandas.DataFrame with ``image``, ``start`` and the records of the steps (``step``,
              ``status``, ``wall_s``, ``cpu_s``, ``cpu_load``, ``rss_start_mb``, ``rss_peak_mb``,
              ``rss_end_mb``...)
     """
     rows = []
     for path in paths:
-        if path is None or not os.path.exists(path):
+        if not path or not exists(path, storage_options):
             continue
-        profile = read_profile(path)
+        profile = read_profile(path, storage_options)
         for step in profile['steps']:
             rows.append(dict(image=image_name(profile['image']), start=profile['start']) | step)
     return pd.DataFrame(rows)
 
 
-def plot_memory(profile, ax=None, colors=None):
+def plot_memory(profile, ax=None, colors=None, storage_options=None):
     """
     Memory curve of a profile, with its steps shaded and their peak memory marked.
 
-    :param profile: profile file or dict (:func:`read_profile`)
+    :param profile: profile file (local or URL) or dict (:func:`read_profile`)
     :param ax: matplotlib axes (default: new figure)
     :param colors: colours of the steps (default: L2A blue, L2B orange)
+    :param storage_options: options of the fsspec file system of a URL
     :return: the axes
     """
     import matplotlib.pyplot as plt
 
     if not isinstance(profile, dict):
-        profile = read_profile(profile)
+        profile = read_profile(profile, storage_options)
     colors = colors or {'L2A': 'tab:blue', 'L2B': 'tab:orange'}
     if ax is None:
         _, ax = plt.subplots(figsize=(11, 4))
@@ -559,7 +698,31 @@ def run_grs(level1, l2a, cams_file=None, dem_file=None, resolution=20, aot_resol
         gc.collect()
 
 
-def run_grsl2bgen(l2a, l2b, stac=True, pyramid=False, persist_input=False, level=0):
+def write_l2a_item(l2a):
+    """
+    STAC Item of an L2A product, ``<name>.json`` next to it (:func:`grstbx.stac.product_item`: content of
+    the Items of GRSl2bgen), written last. GRS does not write Items: this one lets the catalogue of the
+    products be built from the Items alone, in a bucket (:func:`grstbx.stac.build_catalog`). As with
+    GRSl2bgen, the assets are relative to the Item, so that the product folder can be moved or uploaded.
+
+    :param l2a: local L2A product (Zarr store or NetCDF file)
+    :return: path of the Item
+    """
+    from .stac import product_item
+
+    item = product_item(l2a, 'L2A')
+    folder = os.path.dirname(os.path.abspath(l2a))
+    for asset in item['assets'].values():
+        asset['href'] = './' + os.path.relpath(asset['href'], folder)
+    path = item_path(l2a)
+    tmp = opj(os.path.dirname(path), f'.{os.path.basename(path)}.part{os.getpid()}')
+    with open(tmp, 'w') as f:
+        json.dump(item, f, indent=2)
+    os.replace(tmp, path)
+    return path
+
+
+def run_grsl2bgen(l2a, l2b, stac=True, pyramid=False, persist_input=False, level=0, l2a_href=None):
     """
     GRSl2bgen: L2A product -> L2B product, in its own folder with the log ``<name>.log`` (written by
     ``GRSl2bgen.logger.RunLogger``, with the resources of the run at its end) and, last, the STAC Item
@@ -573,6 +736,8 @@ def run_grsl2bgen(l2a, l2b, stac=True, pyramid=False, persist_input=False, level
     :param pyramid: for a ``.zarr`` output, write a multiscale (pyramid) store
     :param persist_input: keep the masked L2A raster in memory (faster, needs more RAM)
     :param level: pyramid level read from a Zarr L2A (0: full resolution)
+    :param l2a_href: href of the ``derived_from`` link of the Item to the L2A product (default: `l2a`),
+                     e.g. its URL in a bucket when `l2a` is a local copy
     """
     import GRSl2bgen
     from GRSl2bgen.logger import RunLogger
@@ -589,12 +754,25 @@ def run_grsl2bgen(l2a, l2b, stac=True, pyramid=False, persist_input=False, level
             process.run()
             del process
         if stac:
-            write_stac_item(l2b, l2a=l2a, log_file=log_file)
+            item_file = write_stac_item(l2b, l2a=l2a, log_file=log_file)
+            if l2a_href is not None:
+                _relink(item_file, 'derived_from', l2a_href)
     except Exception:
         remove_output(l2b)
         raise
     finally:
         gc.collect()
+
+
+def _relink(item_file, rel, href):
+    """Set the href of the links `rel` of a STAC Item file."""
+    with open(item_file) as f:
+        item = json.load(f)
+    for link in item.get('links', []):
+        if link.get('rel') == rel:
+            link['href'] = href
+    with open(item_file, 'w') as f:
+        json.dump(item, f, indent=2)
 
 
 def _l2a_marker(l2a):
@@ -618,8 +796,12 @@ class Batch:
     (``run_l2a``, ``run_l2b``): GRS for the images without complete L2A product, GRSl2bgen for those
     without complete L2B product, an existing L2A product being reused. :meth:`run` processes them.
 
-    :param l2a_dir: root folder of the L2A products
-    :param l2b_dir: root folder of the L2B products (None: L2A products only)
+    The inputs and the roots of the outputs can be URLs of a bucket (``s3://bucket/L2A_zarr``): the
+    inputs of each image are downloaded to `work_dir`, processed there, and the product folders uploaded
+    to the bucket (see :mod:`grstbx.batch`).
+
+    :param l2a_dir: root folder of the L2A products, local or URL of a bucket
+    :param l2b_dir: root folder of the L2B products, local or URL (None: L2A products only)
     :param cams_file_template: CAMS file, formatted with the acquisition ``date`` (e.g.
                                ``'/data/cams/cams_forecast_{date:%Y-%m}.nc'``); None: CAMS archive of
                                the configuration of GRS (GRS 3.x)
@@ -638,28 +820,35 @@ class Batch:
     :param pyramid: for a ``.zarr`` L2B, write a multiscale (pyramid) store
     :param stac: write the STAC Item of each L2B product (an L2B product is then complete when its Item
                  exists)
+    :param l2a_stac: write the STAC Item of each L2A product computed (:func:`write_l2a_item`), needed to
+                     build the catalogue of the products from a bucket
     :param persist_input: keep the masked L2A raster in memory in GRSl2bgen
     :param level: pyramid level of the Zarr L2A products read by GRSl2bgen
     :param keep_l2a: keep the L2A product once its L2B product is written
     :param overwrite_l2a: recompute the existing L2A products (and their L2B products)
     :param overwrite_l2b: recompute the existing L2B products, from the existing L2A products
-    :param profile_dir: folder of the profiles (default: ``<l2b_dir or l2a_dir>/profiles``; False: no
-                        profile)
+    :param profile_dir: folder of the profiles, local or URL (default: ``<l2b_dir or l2a_dir>/profiles``;
+                        False: no profile)
     :param memory_interval: sampling interval (s) of the memory curve of the profiles
     :param version: GRS version (default: version of the installed ``grs``, imported when needed)
+    :param work_dir: local folder of the copies of the inputs and outputs in a bucket, one image at a
+                     time (default: a temporary folder; a full Sentinel-2 tile needs a few GB)
+    :param storage_options: options of the fsspec file system of the URLs (default: credentials and
+                            endpoint from the environment, e.g. ``AWS_PROFILE``)
     """
 
     def __init__(self, l2a_dir=None, l2b_dir=None, cams_file_template=None, dem_file_template=None,
                  resolution=20, aot_resolution=None, l2a_ext=None, max_cloud_cover=1., opac_model=None,
                  scale_aot=1, levname='L2AGRS', suffix=None, l2b_ext='.nc', pyramid=False, stac=True,
-                 persist_input=False, level=0, keep_l2a=True, overwrite_l2a=False, overwrite_l2b=False,
-                 profile_dir=None, memory_interval=0.5, version=None):
+                 l2a_stac=False, persist_input=False, level=0, keep_l2a=True, overwrite_l2a=False,
+                 overwrite_l2b=False, profile_dir=None, memory_interval=0.5, version=None, work_dir=None,
+                 storage_options=None):
         self.l2a_dir, self.l2b_dir = l2a_dir, l2b_dir
         self.cams_file_template, self.dem_file_template = cams_file_template, dem_file_template
         self.resolution, self.aot_resolution = resolution, aot_resolution
         self.max_cloud_cover, self.opac_model, self.scale_aot = max_cloud_cover, opac_model, scale_aot
         self.levname = levname
-        self.l2b_ext, self.pyramid, self.stac = l2b_ext, pyramid, stac
+        self.l2b_ext, self.pyramid, self.stac, self.l2a_stac = l2b_ext, pyramid, stac, l2a_stac
         self.persist_input, self.level = persist_input, level
         self.keep_l2a, self.overwrite_l2a, self.overwrite_l2b = keep_l2a, overwrite_l2a, overwrite_l2b
         if profile_dir is None:
@@ -667,6 +856,22 @@ class Batch:
             profile_dir = opj(root, 'profiles') if root else False
         self.profile_dir, self.memory_interval = profile_dir, memory_interval
         self._version, self._suffix, self._l2a_ext = version, suffix, l2a_ext
+        self._work_dir, self.storage_options = work_dir, storage_options
+
+    @property
+    def work_dir(self):
+        """Local folder of the copies of the inputs and outputs in a bucket."""
+        if self._work_dir is None:
+            self._work_dir = tempfile.mkdtemp(prefix='grstbx_batch_')
+        return self._work_dir
+
+    def _local(self, path, kind):
+        """Local copy of a product (or input) of a bucket: ``<work_dir>/<kind>/<folder>/<name>``; local
+        paths are unchanged."""
+        if not is_url(path):
+            return path
+        path = str(path).rstrip('/')
+        return opj(self.work_dir, kind, os.path.basename(os.path.dirname(path)), os.path.basename(path))
 
     # -- naming ---------------------------------------------------------------------------------------
 
@@ -742,10 +947,15 @@ class Batch:
         plan['profile'] = [self.profile_path(name, tile) for name, tile in zip(plan['name'], plan['tile'])]
         plan['cams_ok'] = [file is None or os.path.exists(file) for file in plan['cams_file']]
         plan['cloudy'] = plan['cloud_cover'] >= self.max_cloud_cover
-        plan['l2a_done'] = plan['l2a'].map(l2a_complete).astype(bool)
-        plan['l2b_done'] = (plan['l2b'].map(lambda p: l2b_complete(p, self.stac)).astype(bool)
-                            if self.l2b_dir is not None else False)
+        plan['l2a_done'] = plan['l2a'].map(self._l2a_complete).astype(bool)
+        plan['l2b_done'] = plan['l2b'].map(self._l2b_complete).astype(bool) if self.l2b_dir is not None else False
         return self._steps(plan)
+
+    def _l2a_complete(self, path):
+        return l2a_complete(path, storage_options=self.storage_options)
+
+    def _l2b_complete(self, path):
+        return l2b_complete(path, self.stac, self.storage_options)
 
     def plan_l2a(self, products):
         """
@@ -765,8 +975,9 @@ class Batch:
                        for l2a, tile, date in zip(plan['l2a'], plan['tile'], plan.index)]
         plan['profile'] = [self.profile_path(name, tile) for name, tile in zip(plan['name'], plan['tile'])]
         plan['cams_ok'], plan['cloudy'] = True, False
-        plan['l2a_done'] = (plan['complete'] if 'complete' in plan else plan['l2a'].map(l2a_complete)).astype(bool)
-        plan['l2b_done'] = plan['l2b'].map(lambda p: l2b_complete(p, self.stac)).astype(bool)
+        plan['l2a_done'] = (plan['complete'] if 'complete' in plan
+                            else plan['l2a'].map(self._l2a_complete)).astype(bool)
+        plan['l2b_done'] = plan['l2b'].map(self._l2b_complete).astype(bool)
         plan = self._steps(plan)
         # an incomplete L2A product cannot be processed
         plan['run_l2b'] &= plan['l2a_done']
@@ -810,35 +1021,60 @@ class Batch:
         if row['run_l2a'] and row['cloudy']:
             return record | dict(status='cloudy')
 
+        so = self.storage_options
         profiler = Profiler(row['name'], interval=self.memory_interval)
+        # local paths of the products: copies in work_dir of the products of a bucket, removed at the end
+        l2a = self._local(row['l2a'], 'L2A')
+        staged = []
         try:
             if row['run_l2a']:
                 with profiler.step('L2A'):
-                    run_grs(row['path'], row['l2a'], cams_file=row['cams_file'], dem_file=row['dem_file'],
+                    level1 = row['path']
+                    if is_url(level1):
+                        level1 = download(level1, self._local(level1, 'L1'), so)
+                        staged.append(level1)
+                    if is_url(row['l2a']):
+                        staged.append(os.path.dirname(l2a))
+                    run_grs(level1, l2a, cams_file=row['cams_file'], dem_file=row['dem_file'],
                             resolution=self.resolution, aot_resolution=self.aot_resolution,
                             opac_model=self.opac_model, scale_aot=self.scale_aot)
+                    if self.l2a_stac:
+                        write_l2a_item(l2a)
+                    if is_url(row['l2a']):
+                        upload(os.path.dirname(l2a), os.path.dirname(row['l2a']), so, last=item_path(l2a))
                 record['l2a'] = 'done'
             else:
                 profiler.skip('L2A', 'reused')
                 record['l2a'] = 'reused'
             if row['run_l2b']:
                 with profiler.step('L2B'):
-                    run_grsl2bgen(row['l2a'], row['l2b'], stac=self.stac, pyramid=self.pyramid,
-                                  persist_input=self.persist_input, level=self.level)
+                    if is_url(row['l2a']) and record['l2a'] == 'reused':
+                        download(row['l2a'], l2a, so)
+                        staged.append(os.path.dirname(l2a))
+                    l2b = self._local(row['l2b'], 'L2B')
+                    if is_url(row['l2b']):
+                        staged.append(os.path.dirname(l2b))
+                    run_grsl2bgen(l2a, l2b, stac=self.stac, pyramid=self.pyramid,
+                                  persist_input=self.persist_input, level=self.level,
+                                  l2a_href=row['l2a'] if is_url(row['l2a']) else None)
+                    if is_url(row['l2b']):
+                        upload(os.path.dirname(l2b), os.path.dirname(row['l2b']), so, last=item_path(l2b))
                 record['l2b'] = 'done'
                 if not self.keep_l2a:
-                    remove_output(os.path.dirname(row['l2a']))
+                    remove_output(os.path.dirname(row['l2a']), so)
         except Exception as e:
             step = 'L2B' if record['l2a'] else 'L2A'
             if step == 'L2A' and row['run_l2b']:
                 profiler.skip('L2B', 'not run')
             record |= dict(status=f'{step} failed', error=f'{type(e).__name__}: {e}')
         finally:
+            for path in staged:
+                remove_output(path)
             profiler.stop()
             if row['profile']:
                 level1 = row['path'] if 'cloud_cover' in row.index else None
-                profiler.write(row['profile'], l1=level1, l2a=row['l2a'], l2b=row.get('l2b'),
-                               resolution=self.resolution, status=record['status'])
+                profiler.write(row['profile'], storage_options=so, l1=level1, l2a=row['l2a'],
+                               l2b=row.get('l2b'), resolution=self.resolution, status=record['status'])
             record['duration_s'] = round(time.perf_counter() - profiler.t0, 1)
         return record
 
@@ -860,11 +1096,10 @@ class Batch:
         return pd.DataFrame(records, columns=columns).set_index('date')
 
     def save_summary(self, summary, prefix='batch'):
-        """Write a summary to ``<l2b_dir or l2a_dir>/<prefix>_<time>.csv``; return the path."""
+        """Write a summary to ``<l2b_dir or l2a_dir>/<prefix>_<time>.csv`` (local or URL); return the path."""
         root = self.l2b_dir or self.l2a_dir
         path = opj(root, f'{prefix}_{dt.datetime.now():%Y%m%dT%H%M%S}.csv')
-        os.makedirs(root, exist_ok=True)
-        summary.to_csv(path)
+        _write_text(path, summary.to_csv(), self.storage_options)
         return path
 
     # -- command line ---------------------------------------------------------------------------------
@@ -878,10 +1113,17 @@ class Batch:
         ``grs`` command line writes Zarr products with GRS 3.x and NetCDF products with GRS 2.x, whatever
         `l2a_ext`.
 
+        The command lines work on local folders: for products in a bucket, use :meth:`run`, or mount the
+        bucket as a folder (``rclone mount``).
+
         :param plan: table of :meth:`plan_level1` or :meth:`plan_l2a`
         :param profile: profile each step with GNU ``time -v``
         :return: list of shell command lines
         """
+        urls = [p for p in (self.l2a_dir, self.l2b_dir, self.profile_dir or None) if p and is_url(p)]
+        if urls or plan['path'].map(is_url).any():
+            raise ValueError('the command lines need local folders, not URLs: use Batch.run, or mount the bucket '
+                             f'(rclone mount) {urls}')
         commands = []
         for date, row in plan.iterrows():
             stem = os.path.splitext(row['profile'])[0] if profile and row['profile'] else None

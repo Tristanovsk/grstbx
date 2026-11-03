@@ -66,7 +66,8 @@ Batch processing
 
 Batch processing, image by image, from Level-1 images to GRS L2A products and GRSl2bgen L2B products,
 with a profile of the resources of each step (see the batch processing tutorials). ``grs`` and
-``GRSl2bgen`` are imported only to process the images.
+``GRSl2bgen`` are imported only to process the images. The inputs and outputs can be in local folders or
+in buckets (``s3://`` URLs, through fsspec), each image being processed in a local work folder.
 
 .. code-block:: python
 
@@ -76,6 +77,10 @@ with a profile of the resources of each step (see the batch processing tutorials
    run = batch.Batch('/data/L2A', '/data/L2B', cams_file_template='/data/cams/cams_{date:%Y-%m}.nc')
    plan = run.plan_level1(images)
    summary = run.run(plan)
+
+   # in a bucket: the same, with URLs and a local work folder
+   run = batch.Batch('s3://bucket/L2A', 's3://bucket/L2B', work_dir='/scratch/grstbx', l2a_stac=True,
+                     cams_file_template='/data/cams/cams_{date:%Y-%m}.nc')
 
 .. autosummary::
    :toctree: generated
@@ -105,6 +110,11 @@ with a profile of the resources of each step (see the batch processing tutorials
    grstbx.batch.netcdf_complete
    grstbx.batch.l2b_complete
    grstbx.batch.remove_output
+   grstbx.batch.write_l2a_item
+   grstbx.batch.is_url
+   grstbx.batch.exists
+   grstbx.batch.download
+   grstbx.batch.upload
    grstbx.batch.run_grs
    grstbx.batch.run_grsl2bgen
    grstbx.batch.grs_version
@@ -115,8 +125,9 @@ with a profile of the resources of each step (see the batch processing tutorials
 STAC catalogue
 --------------
 
-Static STAC catalogue of the products, to publish them in an S3 bucket (see the tutorial on buckets).
-Read by :func:`grstbx.app.search_items`.
+Static STAC catalogue of the products, to publish them in an S3 bucket (see the tutorial on buckets), built
+from local folders of products or from the STAC Items of the products in a bucket. Read by
+:func:`grstbx.app.search_items`.
 
 .. autosummary::
    :toctree: generated
@@ -124,6 +135,7 @@ Read by :func:`grstbx.app.search_items`.
 
    grstbx.stac.build_catalog
    grstbx.stac.product_item
+   grstbx.stac.bucket_items
 
 Matchups
 --------

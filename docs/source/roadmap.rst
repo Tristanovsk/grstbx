@@ -43,9 +43,13 @@ side (version 2.4):
    * - Exports (:func:`~grstbx.subset.export_l2a`, :func:`~grstbx.subset.crop_and_export`)
      - local only
      - output paths checked on the local file system
+   * - Batch processing (:mod:`grstbx.batch`)
+     - available
+     - inputs and outputs in local folders or buckets (fsspec), staged in a local work folder
    * - STAC catalogues
-     - not available
-     -
+     - partial
+     - static catalogue (:func:`~grstbx.stac.build_catalog`) and search (:func:`~grstbx.app.search_items`),
+       see below
 
 Object storage (S3)
 -------------------
@@ -69,6 +73,11 @@ needed.
 - **Performance**: the consolidated metadata and the shards of the GRS products limit the number of
   requests; add the caching of fsspec (block cache) for the live spectra and time series, which read the
   same chunks again, and the parallel opening of long time series.
+- **Batches on buckets**: *done* (:mod:`grstbx.batch`, see :doc:`tutorials/batch`): Level-1 images, L2A
+  and L2B products listed, checked and written in buckets (``s3://`` roots of :class:`~grstbx.batch.Batch`,
+  ``storage_options``), each image staged in a local work folder for GRS and GRSl2bgen, the product folders
+  uploaded with their STAC Item last. To do: GRS and GRSl2bgen reading and writing the buckets directly,
+  without the local copies.
 - **Exports to buckets**: subsets and datacubes written as Zarr stores to ``s3://`` paths
   (:func:`~grstbx.subset.export_l2a` uses the writers of GRS, which already write to object storage).
 - **NetCDF products**: readable from buckets through h5netcdf and fsspec, but slowly (many small
@@ -109,7 +118,10 @@ instead of file names, and open the results directly as time series.
 - **Static catalogue in a bucket**: *done* (:func:`~grstbx.stac.build_catalog`, see
   :doc:`tutorials/s3_stac`): the collections ``grs-l2a`` and ``grs-l2b`` with ``s3://`` assets, searched by
   :func:`~grstbx.app.search_items` and tested on a local S3 service (``rclone serve s3``), with credentials
-  and endpoint from an AWS profile. To do: ``storage_options``, a real bucket.
+  and endpoint from an AWS profile. The catalogue can also be built from the STAC Items read in the bucket
+  (:func:`~grstbx.stac.bucket_items`) and written to it, after batches writing to the bucket: L2B Items of
+  GRSl2bgen, L2A Items of :func:`~grstbx.batch.write_l2a_item` (``l2a_stac=True``). To do:
+  ``storage_options`` for the search and the viewers, a real bucket.
 
 Milestones
 ----------

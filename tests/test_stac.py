@@ -1,4 +1,5 @@
 """Static STAC catalogue of products, read from disk and from a local S3 service (rclone serve s3)."""
+import contextlib
 import json
 import os
 import shutil
@@ -11,7 +12,7 @@ import pytest
 import xarray as xr
 
 from conftest import l2b_product
-from grstbx import stac
+from grstbx import batch, stac
 from grstbx.app import _static_items, open_products, search_items
 from grstbx.datalake import SelectFiles
 
@@ -161,16 +162,13 @@ def test_collection_file_as_source(catalog):
     assert len(search_items(str(catalog[0] / 'grs-l2b' / 'collection.json'))) == 2
 
 
-@pytest.fixture
-def s3_server(tmp_path, products, catalog, monkeypatch):
-    """Bucket served by `rclone serve s3` on a free port, credentials and endpoint in a profile."""
+@contextlib.contextmanager
+def serve_s3(root, tmp_path, monkeypatch, read_only=True):
+    """Folder served as buckets by `rclone serve s3` on a free port, credentials and endpoint in a profile."""
     rclone = shutil.which('rclone')
     if rclone is None:
         pytest.skip('rclone is not installed')
     s3fs = pytest.importorskip('s3fs')
-    bucket = tmp_path / 'bucket'
-    for folder in products:
-        shutil.copytree(folder, bucket / folder.name)
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -180,18 +178,30 @@ def s3_server(tmp_path, products, catalog, monkeypatch):
     monkeypatch.setenv('AWS_CONFIG_FILE', str(tmp_path / 'config'))
     monkeypatch.setenv('AWS_PROFILE', 'test')
     s3fs.S3FileSystem.clear_instance_cache()
-    process = subprocess.Popen([rclone, 'serve', 's3', str(tmp_path), '--addr', f'127.0.0.1:{port}', '--auth-key',
-                                'testkey,testsecret', '--read-only', '--etag-hash', ''],
+    process = subprocess.Popen([rclone, 'serve', 's3', str(root), '--addr', f'127.0.0.1:{port}', '--auth-key',
+                                'testkey,testsecret', '--etag-hash', ''] + (['--read-only'] if read_only else []),
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(100):
         with socket.socket() as sock:
             if sock.connect_ex(('127.0.0.1', port)) == 0:
                 break
         time.sleep(0.05)
-    yield
-    process.terminate()
-    process.wait()
-    s3fs.S3FileSystem.clear_instance_cache()
+    try:
+        yield
+    finally:
+        process.terminate()
+        process.wait()
+        s3fs.S3FileSystem.clear_instance_cache()
+
+
+@pytest.fixture
+def s3_server(tmp_path, products, catalog, monkeypatch):
+    """Bucket of the products and of their catalogue, read-only."""
+    bucket = tmp_path / 'bucket'
+    for folder in products:
+        shutil.copytree(folder, bucket / folder.name)
+    with serve_s3(tmp_path, tmp_path, monkeypatch):
+        yield
 
 
 def test_search_and_open_from_bucket(s3_server):
@@ -227,3 +237,38 @@ def test_wrong_credentials_are_rejected(s3_server):
     fs = s3fs.S3FileSystem(key='testkey', secret='wrong', skip_instance_cache=True)
     with pytest.raises((PermissionError, OSError)):
         fs.ls('bucket')
+
+
+def test_batch_and_catalogue_in_bucket(tmp_path, monkeypatch):
+    """L2A products in a bucket -> L2B products written to the bucket by a batch, catalogue built from their Items."""
+    local = tmp_path / 'local'
+    store = l2a_store(local, '20250103T103339')
+    assert batch.write_l2a_item(str(store)) == str(store)[:-len('.zarr')] + '.json'
+    root = tmp_path / 'root'
+    shutil.copytree(local, root / 'bucket' / 'L2A')
+
+    def run_grsl2bgen(l2a, l2b, l2a_href=None, **kwargs):
+        """GRSl2bgen stand-in: L2B product of the local copy of the L2A product, with its Item."""
+        assert os.path.isdir(l2a) and l2a_href.startswith(f'{BUCKET}/L2A/')
+        name = os.path.basename(l2b)[:-len('.zarr')]
+        out = tmp_path / 'l2b'
+        l2b_folder(out, os.path.basename(l2a) + '.zarr', '20250103T103339')
+        shutil.copytree(next(out.rglob(name)), os.path.dirname(l2b), dirs_exist_ok=True)
+
+    monkeypatch.setattr(batch, 'run_grsl2bgen', run_grsl2bgen)
+    with serve_s3(root, tmp_path, monkeypatch, read_only=False):
+        products = batch.list_l2a_products(f'{BUCKET}/L2A')
+        assert products['complete'].all() and products['path'].iloc[0].startswith(BUCKET)
+        run = batch.Batch(l2b_dir=f'{BUCKET}/L2B', l2b_ext='.zarr', work_dir=str(tmp_path / 'work'))
+        plan = run.plan_l2a(products)
+        assert run.run(plan, verbose=False)['status'].tolist() == ['done']
+        assert run.plan_l2a(products)['l2b_done'].all() and batch.read_profiles(plan['profile'])['status'].tolist() == ['reused', 'done']
+
+        counts, skipped = stac.build_catalog([f'{BUCKET}/L2A', f'{BUCKET}/L2B'], f'{BUCKET}/stac')
+        assert counts == {'grs-l2a': 1, 'grs-l2b': 1} and skipped == []
+        found = search_items(f'{BUCKET}/stac/catalog.json')
+        assert sorted(found.level) == ['L2A', 'L2B'] and all(p.startswith(f'{BUCKET}/L') for p in found.path)
+        l2b_item = json.loads(batch._read_text(f'{BUCKET}/stac/grs-l2b/items.json'))['features'][0]
+        assert any(link['rel'] == 'derived_from' for link in l2b_item['links'])
+        data, kind, *_ = open_products([p for p in found.path if 'L2B' in p])
+        assert kind == 'L2B'

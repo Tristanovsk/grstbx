@@ -5,6 +5,8 @@
 #
 #   bash s3_bucket.sh                                       # default folders below
 #   BUCKET=my-bucket bash s3_bucket.sh /data/L2A /data/L2B  # other folders of products
+#   WRITE=1 bash s3_bucket.sh                               # writable: batches write their products
+#                                                           # to the bucket, i.e. into the linked folders
 #
 # It creates (and never overwrites an existing key):
 #   $S3_ROOT/$BUCKET/          the bucket: links to the folders of products, and stac/ for the catalogue
@@ -16,6 +18,7 @@ BUCKET=${BUCKET:-grstbx-sentinel2}
 S3_ROOT=${S3_ROOT:-/data/satellite/s3}
 ADDRESS=${ADDRESS:-127.0.0.1:9000}
 PROFILE=${PROFILE:-grstbx-local}
+WRITE=${WRITE:-0}
 FOLDERS=("$@")
 [ ${#FOLDERS[@]} -gt 0 ] || FOLDERS=(/data/satellite/Sentinel-2/L2A_zarr /data/satellite/Sentinel-2/L2B_zarr)
 
@@ -43,8 +46,9 @@ if ! grep -q "^\[profile $PROFILE\]" "$HOME/.aws/config"; then
     printf '[profile %s]\nregion = us-east-1\nendpoint_url = http://%s\n' "$PROFILE" "$ADDRESS" >> "$HOME/.aws/config"
 fi
 
-echo "s3://$BUCKET served on http://$ADDRESS, profile $PROFILE"
+if [ "$WRITE" = 1 ]; then mode=() access=writable; else mode=(--read-only) access=read-only; fi
+echo "s3://$BUCKET served on http://$ADDRESS ($access), profile $PROFILE"
 # rclone reads this variable as CSV: the quotes keep the comma of the pair
 export RCLONE_AUTH_KEY="\"$key,$secret\""
 # --etag-hash '': no MD5 of the files at each request; --dir-cache-time: a new catalogue is seen within a minute
-exec rclone serve s3 "$S3_ROOT" --addr "$ADDRESS" --copy-links --read-only --etag-hash '' --dir-cache-time 1m
+exec rclone serve s3 "$S3_ROOT" --addr "$ADDRESS" --copy-links "${mode[@]}" --etag-hash '' --dir-cache-time 1m

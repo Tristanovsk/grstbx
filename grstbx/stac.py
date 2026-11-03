@@ -14,16 +14,22 @@ URLs in the bucket. The L2B Items are those written by GRSl2bgen ``--stac``; the
 without Item (L2A products, L2B NetCDF files written without ``--stac``) come from the attributes of the
 products, with the same content. An L2B Item has a ``derived_from`` link to the Item of its L2A product.
 
+The products can also be described from the bucket itself, when they were written there by a batch
+(:class:`grstbx.batch.Batch` with ``stac=True`` and ``l2a_stac=True``): only their Items are read, and the
+catalogue can be written to the bucket too.
+
 Example
 -------
 >>> from grstbx import stac
 >>> stac.build_catalog({'/data/L2A_zarr': 's3://bucket/L2A_zarr', '/data/L2B_zarr': 's3://bucket/L2B_zarr'},
 ...                    '/data/stac')
+>>> stac.build_catalog(['s3://bucket/L2A_zarr', 's3://bucket/L2B_zarr'], 's3://bucket/stac')
 """
 
 import datetime
 import json
 import os
+import posixpath
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -31,7 +37,7 @@ import pandas as pd
 import xarray as xr
 
 from .app import _read_item, find_products
-from .batch import l2a_complete
+from .batch import _fs, _write_text, is_url, l2a_complete
 from .driver import is_zarr, open_zarr_image
 
 STAC_VERSION = '1.0.0'
@@ -149,6 +155,45 @@ def _catalog_item(product, roots):
     return level, item
 
 
+def _resolve(folder, href):
+    """Absolute URL of a relative href of a file of the folder `folder` (URL)."""
+    protocol, path = folder.split('://', 1)
+    return f"{protocol}://{posixpath.normpath(posixpath.join(path, href))}"
+
+
+def bucket_items(root, storage_options=None):
+    """
+    STAC Items of the products of a bucket folder: ``<root>/<tile>/YYYY/MM/DD/<name>/<name>.json`` (product
+    folders of the batches) or ``<root>/<tile>/YYYY/MM/DD/<name>.json``, with their asset hrefs made absolute
+    URLs. The products without Item are not seen.
+
+    :param root: URL of the folder, e.g. ``s3://bucket/L2B_zarr``
+    :param storage_options: options of the fsspec file system (default: from the environment)
+    :return: list of (level, Item), level ``'L2A'`` or ``'L2B'``
+    """
+    fs, path = _fs(root, storage_options)
+    entries = fs.glob(path.rstrip('/') + '/*/*/*/*/*')
+    candidates = [p for p in entries if p.endswith('.json')] + \
+                 [f'{p}/{posixpath.basename(p)}.json' for p in entries
+                  if not p.endswith(('.json', '.zarr', '.nc', '.log', '.csv'))]
+    contents = fs.cat(candidates, on_error='omit') if candidates else {}
+    items = []
+    for file in sorted(contents):
+        try:
+            item = json.loads(contents[file])
+        except ValueError:
+            continue
+        if not (isinstance(item, dict) and item.get('type') == 'Feature' and 'stac_version' in item):
+            continue
+        level = item.get('properties', {}).get('processing:level') or ('L2B' if '_MSIL2B_' in item['id'] else 'L2A')
+        folder = posixpath.dirname(fs.unstrip_protocol(file))
+        for asset in item.get('assets', {}).values():
+            if '://' not in asset['href']:
+                asset['href'] = _resolve(folder, asset['href'])
+        items.append((level, item))
+    return items
+
+
 def _derived_from(item, l2a_ids):
     """Id of the Item of the L2A product of an L2B Item, None if it is not in the catalogue."""
     l2a_id = item['id'].replace('_MSIL2B_', '_MSIL2AGRS_')
@@ -163,7 +208,10 @@ def _extent(items):
             'temporal': {'interval': [[times[0], times[-1]]]}}
 
 
-def _write_json(path, content):
+def _write_json(path, content, storage_options=None):
+    if is_url(path):
+        _write_text(path, json.dumps(content, indent=1), storage_options)
+        return
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f'{path}.part{os.getpid()}'
     with open(tmp, 'w') as f:
@@ -172,27 +220,35 @@ def _write_json(path, content):
 
 
 def build_catalog(roots, out_dir, title='GRS products', description='GRS L2A and GRSl2bgen L2B products',
-                  license='proprietary', workers=8):
+                  license='proprietary', workers=8, storage_options=None):
     """
-    Write the static STAC catalogue of the products below local folders (see :mod:`grstbx.stac`), described
-    with their URLs in the bucket. Run it again when products are added: the catalogue is rewritten from
-    the products; the Item files of the products removed stay but are no more linked.
+    Write the static STAC catalogue of the products (see :mod:`grstbx.stac`), described with their URLs in
+    the bucket. Run it again when products are added: the catalogue is rewritten from the products; the Item
+    files of the products removed stay but are no more linked.
 
-    :param roots: dict {folder of products: URL of this folder in the bucket}, e.g.
-                  ``{'/data/L2A_zarr': 's3://bucket/L2A_zarr'}``
-    :param out_dir: local folder of the catalogue, to publish in the bucket
+    :param roots: dict {local folder of products: URL of this folder in the bucket}, e.g.
+                  ``{'/data/L2A_zarr': 's3://bucket/L2A_zarr'}``; or URLs of folders of the bucket (list, or
+                  dict keys), whose products are described from their Items alone (:func:`bucket_items`)
+    :param out_dir: folder of the catalogue: local, to publish in the bucket, or URL in the bucket
     :param title: title of the catalogue
     :param description: description of the catalogue
     :param license: license of the collections (SPDX identifier, ``proprietary`` or ``various``)
-    :param workers: number of products read in parallel
-    :return: (Items per collection, list of the products skipped as incomplete)
+    :param workers: number of local products read in parallel
+    :param storage_options: options of the fsspec file system of the URLs (default: from the environment)
+    :return: (Items per collection, list of the local products skipped as incomplete)
     """
-    products = pd.concat([find_products(root) for root in roots], ignore_index=True)
-    products = products[products.level.isin(COLLECTIONS)]
-    with ThreadPoolExecutor(workers) as pool:
-        results = list(pool.map(lambda row: _catalog_item(row, roots), products.itertuples()))
-
-    skipped = [path for path, (_, item) in zip(products.path, results) if item is None]
+    if not isinstance(roots, dict):
+        roots = {root: root for root in ([roots] if isinstance(roots, str) else roots)}
+    local = {root: url for root, url in roots.items() if not is_url(root)}
+    results = [result for root in roots if is_url(root) for result in bucket_items(root, storage_options)]
+    skipped = []
+    if local:
+        products = pd.concat([find_products(root) for root in local], ignore_index=True)
+        products = products[products.level.isin(COLLECTIONS)]
+        with ThreadPoolExecutor(workers) as pool:
+            found = list(pool.map(lambda row: _catalog_item(row, local), products.itertuples()))
+        skipped = [path for path, (_, item) in zip(products.path, found) if item is None]
+        results += found
     items = {level: sorted((item for lev, item in results if lev == level and item is not None),
                            key=lambda item: item['properties']['datetime']) for level in COLLECTIONS}
     l2a_ids = {item['id'] for item in items['L2A']}
@@ -215,10 +271,11 @@ def build_catalog(roots, out_dir, title='GRS products', description='GRS L2A and
             if l2a_id:
                 item['links'].append({'rel': 'derived_from', 'type': MEDIA_GEOJSON, 'title': 'GRS L2A product',
                                       'href': f"../../{COLLECTIONS['L2A']['id']}/{l2a_id}/{l2a_id}.json"})
-            _write_json(os.path.join(folder, item['id'], item['id'] + '.json'), item)
+            _write_json(os.path.join(folder, item['id'], item['id'] + '.json'), item, storage_options)
         # in items.json too, the links are relative to the folder of each Item: <id>/
-        _write_json(os.path.join(folder, 'items.json'), {'type': 'FeatureCollection', 'features': level_items})
-        _write_json(os.path.join(folder, 'collection.json'), {
+        _write_json(os.path.join(folder, 'items.json'), {'type': 'FeatureCollection', 'features': level_items},
+                    storage_options)
+        _write_json(os.path.join(folder, 'collection.json'), storage_options=storage_options, content={
             'type': 'Collection', 'stac_version': STAC_VERSION, 'id': collection_id, 'title': spec['title'],
             'description': spec['description'], 'license': license, 'extent': _extent(level_items),
             'summaries': {
@@ -231,7 +288,7 @@ def build_catalog(roots, out_dir, title='GRS products', description='GRS L2A and
                for item in level_items]})
         children.append({'rel': 'child', 'href': f'./{collection_id}/collection.json', 'type': MEDIA_JSON,
                          'title': spec['title']})
-    _write_json(os.path.join(out_dir, 'catalog.json'), {
+    _write_json(os.path.join(out_dir, 'catalog.json'), storage_options=storage_options, content={
         'type': 'Catalog', 'stac_version': STAC_VERSION, 'id': 'grs-products', 'title': title,
         'description': description,
         'links': [{'rel': 'root', 'href': './catalog.json', 'type': MEDIA_JSON}] + children})

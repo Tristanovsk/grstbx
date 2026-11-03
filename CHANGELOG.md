@@ -12,6 +12,21 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   polygons drawn on the map, date by date with a progress bar, without freezing the page, and can be stopped; a
   large polygon is read at a coarser level of the pyramid. `polygon_timeseries` gives the table, from
   `Multiscale.polygon_statistics`.
+- `grstbx.batch` on buckets: the inputs and the roots of the outputs of the batches can be bucket URLs
+  (`s3://`, through fsspec, credentials from the environment or `storage_options`). `list_images`,
+  `list_l2a_products`, the completeness checks, the profiles and the summary read and write the bucket;
+  `Batch` downloads the inputs of each image to `work_dir`, runs GRS and GRSl2bgen there, uploads the
+  product folders (chunks, then Zarr metadata, then STAC Item, so that an interrupted upload leaves an
+  incomplete product) and removes the local copies. `download`, `upload`, `exists`, `is_url`.
+- `Batch(l2a_stac=True)` and `write_l2a_item`: STAC Item of each L2A product computed, next to it, as for the
+  L2B products; the `derived_from` link of an L2B Item written to a bucket points to the URL of its L2A
+  product.
+- `build_catalog` builds the catalogue from the STAC Items of the products in a bucket (`bucket_items`), given
+  bucket URLs instead of local folders, and writes it to a local folder or to the bucket.
+- Documentation: section *Inputs and outputs in an S3 bucket* of the batch tutorial, with the STAC catalogue
+  of the products; the four batch notebooks take bucket URLs (`work_dir`, `storage_options`), and the L1C to
+  L2B and GRSl2bgen notebooks end with the catalogue of the products (`catalog_dir`). `s3_bucket.sh`:
+  `WRITE=1` serves a writable bucket.
 
 ### Fixed
 

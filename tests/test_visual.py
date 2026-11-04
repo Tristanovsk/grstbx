@@ -159,3 +159,24 @@ def test_minimum_share_of_valid_pixels_of_the_polygon_series():
     min_valid.value = 2.5
     assert '2 dates plotted, 1 with less than 2.5 %' in status.object
     assert viewer.polygon_table['median'].iloc[:2].tolist() == [1, 2]
+
+
+def test_first_view_on_the_valid_pixels():
+    from grstbx.visual import Multiscale, ViewParam
+
+    size = 1000
+    x, y = 700010. + 20 * np.arange(size), 4900000. - 10 - 20 * np.arange(size)
+    values = np.full((2, size, size), np.nan)
+    values[0, 100:110, 600:620] = 1.             # a small lake; no valid pixel at the second date
+    values[0, [5, 990, 995], [990, 3, 500]] = 1.  # and a few scattered pixels far from it
+    cube = xr.Dataset({'chl': (('time', 'y', 'x'), values)},
+                      coords={'time': pd.to_datetime(['2025-01-03', '2025-01-08']), 'x': x, 'y': y})
+    viewer = ViewParam(Multiscale.from_xarray(cube.rio.write_crs('EPSG:32631')), params=['chl'])
+    (xmin, xmax), (ymin, ymax) = viewer._extent(0)
+    # centred on the lake, at least valid_min_pixels wide, with the margin
+    assert xmin < x[600] < x[619] < xmax and ymin < y[109] < y[100] < ymax
+    assert np.isclose(xmax - xmin, 20 * viewer.valid_min_pixels * (1 + 2 * viewer.valid_margin))
+    assert xmax - xmin < 0.2 * 20 * size
+    # no valid pixel: the whole image
+    (xmin, xmax), (ymin, ymax) = viewer._extent(1)
+    assert (xmin, xmax, ymin, ymax) == (x[0] - 10, x[-1] + 10, y[-1] - 10, y[0] + 10)

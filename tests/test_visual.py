@@ -131,6 +131,30 @@ def test_polygon_series_reads_the_dates_in_parallel():
     assert viewer.polygon_table['median'].iloc[:2].tolist() == [1, 2]
 
 
+def test_pixel_timeseries_reads_the_dates_in_parallel():
+    import threading
+    import time
+
+    viewer, polygon = polygon_viewer()
+    data = viewer.data
+    threads, original = set(), data.pixel
+
+    def slow(*args, **kwargs):
+        threads.add(threading.get_ident())
+        time.sleep(0.2)
+        return original(*args, **kwargs)
+
+    data.pixel = slow
+    x, y = polygon.centroid.x, polygon.centroid.y
+    t0 = time.time()
+    series = data.timeseries('Chla_OC2nasa', x, y)
+    assert time.time() - t0 < 0.5 and len(threads) == 3     # 3 dates of 0.2 s at the same time
+    assert series.index.is_monotonic_increasing and series.iloc[:2].tolist() == [1, 2]
+    assert np.isnan(series.iloc[2])
+    assert data.timeseries('Chla_OC2nasa', x, y, indexes=[2, 0]).index.tolist() == [data.times[2], data.times[0]]
+    assert data.timeseries('Chla_OC2nasa', 0, 0).empty      # outside the image
+
+
 def test_minimum_share_of_valid_pixels_of_the_polygon_series():
     import asyncio
 

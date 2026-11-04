@@ -13,6 +13,10 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   large areas over several tiles open (9050 x 4711 pixels at 20 m over 31TFJ and 31TGJ, displayed at 160 m in about
   5 s); the tiles of the other UTM zone reprojected block by block when displayed. At most 65536 pixels per side
   (4096 for products without pyramid).
+- Viewers: the time series of the pixels (points drawn and pixel under the mouse) read their dates in threads,
+  `Multiscale.timeseries_workers` (8) at a time: 3 to 4 times faster from the S3 bucket (0.7 s instead of 2.5 s for
+  40 L2B dates). They stay at full resolution: the chunks of the coarser levels of the pyramids have the same number
+  of pixels as those of level 0, so that reading a pixel from them is not faster (1.3 to 2.4 times slower for L2A).
 - Viewers: the map opens on the valid pixels of the first image (their box, from the coarsest level), or on
   their densest part when they are sparse (`Multiscale.valid_bounds`, less than 5 % of their box): a land tile
   with only a few rivers and lakes (e.g. 28PEV) no longer opens looking empty; the whole image if it has no

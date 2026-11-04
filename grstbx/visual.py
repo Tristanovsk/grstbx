@@ -562,6 +562,8 @@ class Multiscale():
 
     #: margin added on each side of the windows read for the map (fraction of their width and height)
     window_margin = 0.25
+    #: number of dates read at the same time for the time series of a pixel (one chunk per date)
+    timeseries_workers = 8
 
     def __init__(self, images, times, min_size=512, cache_size=2e9):
         self.images = images
@@ -893,14 +895,19 @@ class Multiscale():
         """
         Full-resolution time series of a layer at the pixel nearest to (x, y).
 
+        The dates are read in threads, :attr:`timeseries_workers` at a time: each date reads one chunk of
+        its full-resolution level (the chunks of the coarser levels of the pyramids have the same number of
+        pixels, so that they are not faster to read), and most of the time goes into waiting for the store.
+
         :param name: variable name or wavelength
         :param indexes: indexes of the images (default: all)
         :return: pandas.Series indexed by acquisition time (images not covering (x, y) are skipped)
         """
-        indexes = range(len(self.images)) if indexes is None else indexes
+        indexes = list(range(len(self.images)) if indexes is None else indexes)
+        with ThreadPoolExecutor(max(1, min(self.timeseries_workers, len(indexes)))) as pool:
+            pixels = list(pool.map(lambda idate: self.pixel(idate, x, y, name), indexes))
         times, values = [], []
-        for idate in indexes:
-            value = self.pixel(idate, x, y, name)
+        for idate, value in zip(indexes, pixels):
             if value is not None:
                 times.append(self.times[idate])
                 values.append(float(value))

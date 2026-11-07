@@ -55,7 +55,7 @@ def stats_from_roi(Rrs,group_coord ='wl',stat_coord='gridcell'):
     stats['pix_num'] = stacked.count(stat_coord)
     return stats
 
-file = opj(idir, 'fig','odatis_Rrs_extraction.pdf')
+file = opj(idir, 'fig', 'odatis_Rrs_extraction.pdf')
 with (PdfPages(file) as pdf):
     for station in stations:
         insitu_ = insitu[station]
@@ -495,8 +495,8 @@ for icol in range(cols):
     axs[1, icol].set_ylim(*limits[icol] )
     u.plot.set_layout(axs[1, icol])
 
-plt.savefig(opj(idir, 'fig', 'obs2co_odatis_matchups_without_outliers.png'),dpi=300)#
+plt.savefig(opj(idir, 'fig', 'obs2co_odatis_matchups_without_outliers.png'), dpi=300)#
 xmin,xmax=-0.5,30
 axs[0,1].set_xlim([xmin, xmax])
 axs[0,1].set_ylim([xmin, xmax])
-plt.savefig(opj(idir, 'fig', 'obs2co_odatis_matchups_without_outliers_zoom.png'),dpi=300)#
+plt.savefig(opj(idir, 'fig', 'obs2co_odatis_matchups_without_outliers_zoom.png'), dpi=300)#

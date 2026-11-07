@@ -26,6 +26,7 @@ import argparse
 import glob
 import io
 import json
+import logging
 import os
 import re
 import threading
@@ -39,6 +40,8 @@ import panel as pn
 import xarray as xr
 
 from .driver import is_hgrs, is_zarr
+
+logger = logging.getLogger(__name__)
 
 ACCEPTED = ('GRS L2A or L2B Zarr stores (`*.zarr`), GRS L2A NetCDF product folders (`<name>/` with '
             '`<name>.nc` and `<name>_anc.nc`), GRS L2B NetCDF files or product folders (`<name>/` with '
@@ -640,13 +643,19 @@ class _LazyLevels:
 
     def resolution(self, level):
         """
-        Pixel size of a level from the ``multiscales`` attribute of the store (scale of each level from the
-        previous one), without opening the level; None when the attribute does not give it.
+        Pixel size of a level from the ``multiscales`` attribute of the store (GRS: scale from the full
+        resolution; GRSl2bgen: scale from the previous level), without opening the level; None when the
+        attribute does not give it.
         """
-        layout = ((self.root.attrs.get('multiscales') or {}).get('layout') or []) if self.root is not None else []
+        from .driver import multiscales_layout
+
+        layout = multiscales_layout(self.root.attrs) if self.root is not None else []
         if level == 0 or len(layout) <= level:
             return None
         res = abs(float(self[0].x[1] - self[0].x[0]))
+        if isinstance(layout[level].get('scale'), (int, float)):
+            # GRS: scale of the level from the full resolution
+            return res * float(layout[level]['scale'])
         for item in layout[1:level + 1]:
             scale = (item.get('transform') or {}).get('scale')
             if not scale or len(set(scale)) != 1:
@@ -669,8 +678,14 @@ class _LazyLevels:
 
 #: area of interest of a pin (smaller areas are enlarged to this size, m)
 AREA_MIN_EXTENT = 5000.
-#: largest side of the grid of an area (pixels): beyond, open the tiles instead
+#: largest side of the grid of an area (full-resolution pixels) for products without pyramid: their coarser
+#: levels are computed from the whole area at full resolution
 AREA_MAX_PIXELS = 4096
+#: largest side of the grid of an area (full-resolution pixels) for products with pyramids: each level of the
+#: area is made of the same level of the products, and only the window displayed is read
+AREA_MAX_PIXELS_PYRAMID = 65536
+#: side of the blocks (pixels) reprojected from the products of another UTM zone, each when it is displayed
+AREA_BLOCK = 512
 
 
 def _crs_of(row):
@@ -685,73 +700,159 @@ def _crs_of(row):
     return None
 
 
-def _area_grid(area, crs, template, min_extent=AREA_MIN_EXTENT, max_pixels=AREA_MAX_PIXELS):
-    """
-    Grid of an area: pixel centres (x ascending, y descending) in ``crs``, with the pixel size of
-    ``template`` and aligned on its pixels when it is in ``crs`` (tiles of the same UTM zone share the grid).
-
-    :param area: shapely geometry (lon/lat)
-    :param template: full-resolution layer of a product
-    :return: dict with crs, x, y, transform
-    """
-    import pyproj
-    from rasterio.transform import Affine
+def _area_bounds(area, crs, min_extent=AREA_MIN_EXTENT):
+    """Bounds of an area (shapely geometry, lon/lat) in ``crs``, enlarged to at least ``min_extent`` (m)."""
     from rasterio.warp import transform_bounds
 
-    res = abs(float(template.x[1] - template.x[0]))
-    aligned = pyproj.CRS(template.rio.crs) == crs
-    xoff = float(template.x[0]) % res if aligned else res / 2
-    yoff = float(template.y[0]) % res if aligned else res / 2
     xmin, ymin, xmax, ymax = transform_bounds('EPSG:4326', crs, *area.bounds, densify_pts=21)
-    for low, high, axis in ((xmin, xmax, 'x'), (ymin, ymax, 'y')):
-        if high - low < min_extent:
-            centre = (low + high) / 2
-            low, high = centre - min_extent / 2, centre + min_extent / 2
-        if axis == 'x':
-            xmin, xmax = low, high
-        else:
-            ymin, ymax = low, high
+    if xmax - xmin < min_extent:
+        xmin, xmax = (xmin + xmax - min_extent) / 2, (xmin + xmax + min_extent) / 2
+    if ymax - ymin < min_extent:
+        ymin, ymax = (ymin + ymax - min_extent) / 2, (ymin + ymax + min_extent) / 2
+    return xmin, ymin, xmax, ymax
+
+
+def _area_grid(bounds, crs, res, template=None):
+    """
+    Grid of an area: pixel centres (x ascending, y descending) in ``crs`` with the pixel size ``res``, aligned
+    on the pixels of ``template`` (a level of a product in ``crs``: the tiles of a UTM zone share its grid).
+
+    :return: dict with crs, x, y, transform
+    """
+    from rasterio.transform import Affine
+
+    xoff = float(template.x[0]) % res if template is not None else res / 2
+    yoff = float(template.y[0]) % res if template is not None else res / 2
+    xmin, ymin, xmax, ymax = bounds
     xs = np.arange(np.floor((xmin - xoff) / res) * res + xoff, xmax + res / 2, res)
     ys = np.arange(np.ceil((ymax - yoff) / res) * res + yoff, ymin - res / 2, -res)
-    if max(len(xs), len(ys)) > max_pixels:
-        raise ValueError(f'the area is too large to be opened alone ({len(xs)} x {len(ys)} pixels, at most '
-                         f'{max_pixels}): draw a smaller area, or open the whole products')
     transform = Affine(res, 0, xs[0] - res / 2, 0, -res, ys[0] + res / 2)
     return {'crs': crs, 'x': xs, 'y': ys, 'transform': transform}
 
 
+def _area_grids(area, crs, template):
+    """
+    Grids of the levels of an area, one per level of the pyramid of ``template`` (:class:`_LazyLevels` of a
+    product), with the pixel size of its levels; aligned on its pixels when it is in ``crs``.
+    """
+    import pyproj
+
+    aligned = pyproj.CRS(template[0].rio.crs) == crs
+    nlevels = len(template)
+    bounds = _area_bounds(area, crs)
+    res = abs(float(template[0].x[1] - template[0].x[0]))
+    grids = []
+    for level in range(nlevels):
+        level_res = (template.resolution(level) or abs(float(template[level].x[1] - template[level].x[0]))
+                     if level else res)
+        grids.append(_area_grid(bounds, crs, level_res, template[level] if aligned else None))
+    largest = AREA_MAX_PIXELS_PYRAMID if nlevels > 1 else AREA_MAX_PIXELS
+    nx, ny = len(grids[0]['x']), len(grids[0]['y'])
+    if max(nx, ny) > largest:
+        raise ValueError(f'the area is too large to be opened alone ({nx} x {ny} pixels, at most {largest}'
+                         f'{"" if nlevels > 1 else " for products without pyramid"}): draw a smaller area, or open '
+                         'the whole products')
+    return grids
+
+
+def _warp(da, grid, block=AREA_BLOCK):
+    """
+    Lazy reprojection (nearest neighbour) of a layer (..., y, x) onto the grid of an area: each block of
+    ``block`` x ``block`` pixels of the grid is reprojected from its window of the layer when it is read.
+    """
+    import dask.array as dsa
+    from rasterio.enums import Resampling
+    from rasterio.transform import Affine
+    from rasterio.warp import reproject, transform_bounds
+
+    da = da.transpose(..., 'y', 'x')
+    xs, ys, crs = grid['x'], grid['y'], grid['crs']
+    res = xs[1] - xs[0]
+    src_crs, sx, sy = da.rio.crs, da.x.values, da.y.values
+    sdx, sdy = sx[1] - sx[0], sy[1] - sy[0]
+    lead = da.shape[:-2]
+    dtype = np.result_type(da.dtype, np.float32)
+
+    def warp_block(_, block_info=None):
+        (y0, y1), (x0, x1) = block_info[None]['array-location'][-2:]
+        out = np.full(lead + (y1 - y0, x1 - x0), np.nan, dtype)
+        bounds = transform_bounds(crs, src_crs, xs[x0] - res / 2, ys[y1 - 1] - res / 2, xs[x1 - 1] + res / 2,
+                                  ys[y0] + res / 2, densify_pts=21)
+        # window of the layer covering the block, with a margin of 2 pixels
+        ix = np.nonzero((sx >= bounds[0] - 2 * abs(sdx)) & (sx <= bounds[2] + 2 * abs(sdx)))[0]
+        iy = np.nonzero((sy >= bounds[1] - 2 * abs(sdy)) & (sy <= bounds[3] + 2 * abs(sdy)))[0]
+        if len(ix) < 2 or len(iy) < 2:
+            return out
+        window = da.isel(x=slice(ix[0], ix[-1] + 1), y=slice(iy[0], iy[-1] + 1))
+        values = np.asarray(window.compute(scheduler='synchronous').values, dtype)
+        reproject(values, out, src_transform=Affine(sdx, 0, sx[ix[0]] - sdx / 2, 0, sdy, sy[iy[0]] - sdy / 2),
+                  src_crs=src_crs, dst_transform=Affine(res, 0, xs[x0] - res / 2, 0, -res, ys[y0] + res / 2),
+                  dst_crs=crs, resampling=Resampling.nearest, src_nodata=np.nan, dst_nodata=np.nan)
+        return out
+
+    blocks = dsa.empty(lead + (len(ys), len(xs)), chunks=lead + (block, block), dtype=dtype)
+    coords = {dim: da[dim].values for dim in da.dims[:-2] if dim in da.coords}
+    return xr.DataArray(blocks.map_blocks(warp_block, dtype=dtype), dims=da.dims,
+                        coords={**coords, 'y': ys, 'x': xs}, name=da.name, attrs=da.attrs)
+
+
+def _has_grid(layers):
+    """True if the coordinates of a level of a product are finite (an incomplete GRS store has NaN ones)."""
+    return all(layers.sizes[dim] > 1 and np.isfinite(layers[dim].values[[0, -1]]).all() for dim in ('x', 'y'))
+
+
 class _AreaLevels:
     """
-    Image of one acquisition over an area (sequence used by :class:`~grstbx.visual.Multiscale`): the
-    products of its tiles, clipped to the area and combined on one grid, at full resolution (the coarser
-    levels are computed by Multiscale). The tiles of the UTM zone of the grid stay lazy; the others are
-    reprojected (nearest neighbour), which reads their part of the area. Built when first displayed.
+    Image of one acquisition over an area (sequence used by :class:`~grstbx.visual.Multiscale`): at each level
+    of the pyramid, the same level of the products of its tiles, clipped to the area and combined on the grid
+    of the level. All stays lazy: only the window displayed is read. The tiles of the UTM zone of the grid
+    are aligned on it (exactly at full resolution; at the coarser levels, the pyramids of neighbouring tiles
+    are offset by a fraction of a pixel, and their nearest pixel is taken); the tiles of another zone are
+    reprojected block by block (nearest neighbour, see :func:`_warp`). Each level is built when first read.
     """
 
-    def __init__(self, paths, grid, kind, params=None, mask_invalid=True):
-        self.paths, self.grid, self.kind, self.params, self.mask_invalid = paths, grid, kind, params, mask_invalid
-        self._image = None
+    def __init__(self, paths, grids, kind, params=None, mask_invalid=True):
+        self.paths, self.grids, self.kind, self.params, self.mask_invalid = paths, grids, kind, params, mask_invalid
+        self.grid = grids[0]
+        self._products = {}
+        self._images = {}
         self._lock = threading.Lock()
 
     def __len__(self):
-        return 1
+        return len(self.grids)
+
+    def resolution(self, level):
+        """Pixel size of a level (see :meth:`grstbx.visual.Multiscale.resolution`)."""
+        xs = self.grids[level]['x']
+        return float(xs[1] - xs[0])
 
     def __getitem__(self, level):
-        if level not in (0, -1):
+        if level < 0:
+            level += len(self)
+        if not 0 <= level < len(self):
             raise IndexError(level)
         with self._lock:         # several threads read the dates of a time series
-            if self._image is None:
-                self._image = self._mosaic()
-        return self._image
+            if level not in self._images:
+                self._images[level] = self._mosaic(level)
+        return self._images[level]
 
-    def _piece(self, layers):
-        """Part of a product on the grid of the area, None if it does not cover it."""
+    def _product(self, path):
+        if path not in self._products:
+            self._products[path] = _LazyLevels(path, self.kind, self.params, self.mask_invalid)
+        return self._products[path]
+
+    @staticmethod
+    def _warp(layers, grid):
+        if isinstance(layers, xr.Dataset):
+            return xr.Dataset({name: _warp(layers[name], grid) for name in layers.data_vars})
+        return _warp(layers, grid)
+
+    def _piece(self, layers, grid):
+        """Part of a product (one level) on the grid of a level of the area, None if it does not cover it."""
         import pyproj
-        from rasterio.enums import Resampling
         from rasterio.warp import transform_bounds
-        from rioxarray.exceptions import NoDataInBounds, OneDimensionalRaster
 
-        crs, xs, ys = self.grid['crs'], self.grid['x'], self.grid['y']
+        crs, xs, ys = grid['crs'], grid['x'], grid['y']
         res = xs[1] - xs[0]
         if pyproj.CRS(layers.rio.crs) == crs:
             ydesc = bool(layers.y[0] > layers.y[-1])
@@ -759,53 +860,69 @@ class _AreaLevels:
                                y=slice(ys[0] + res, ys[-1] - res) if ydesc else slice(ys[-1] - res, ys[0] + res))
             if piece.sizes['x'] == 0 or piece.sizes['y'] == 0:
                 return None
-            return piece.reindex(x=xs, y=ys, method='nearest', tolerance=res / 4)
-        bounds = transform_bounds(crs, layers.rio.crs, xs[0] - res, ys[-1] - res, xs[-1] + res, ys[0] + res,
-                                  densify_pts=21)
-        try:
-            piece = layers.rio.clip_box(*bounds)
-        except (NoDataInBounds, OneDimensionalRaster):
+            return piece.reindex(x=xs, y=ys, method='nearest', tolerance=res / 2)
+        xmin, ymin, xmax, ymax = transform_bounds(crs, layers.rio.crs, xs[0], ys[-1], xs[-1], ys[0], densify_pts=21)
+        lxmin, lymin, lxmax, lymax = layers.rio.bounds()
+        if xmax <= lxmin or xmin >= lxmax or ymax <= lymin or ymin >= lymax:
             return None
-        piece = piece.rio.reproject(crs, transform=self.grid['transform'], shape=(len(ys), len(xs)),
-                                    resampling=Resampling.nearest, nodata=np.nan)
-        return piece.assign_coords(x=xs, y=ys)
+        return self._warp(layers, grid)
 
-    def _mosaic(self):
-        image = None
+    def _mosaic(self, level):
+        grid = self.grids[level]
+        image = layers = None
         for path in self.paths:
-            layers = _layers(_open_level(path), self.kind, self.params, self.mask_invalid)
-            piece = self._piece(layers)
+            product = self._product(path)
+            # a product with fewer levels gives its coarsest one
+            layers = product[min(level, len(product) - 1)]
+            if not _has_grid(layers):
+                if level == 0:
+                    logger.warning(f'{path}: no coordinates (incomplete product?), left out of the area')
+                continue
+            piece = self._piece(layers, grid)
             if piece is None:
                 continue
+            # same blocks for all the pieces, so that their combination does not multiply them
+            piece = piece.chunk({'x': AREA_BLOCK, 'y': AREA_BLOCK})
             # first valid pixel: the tiles of an acquisition overlap with the same values
             image = piece if image is None else image.combine_first(piece)
         if image is None:      # no product covers the area: empty image on the grid
-            image = layers.isel(x=slice(0, 1), y=slice(0, 1)).reindex(x=self.grid['x'], y=self.grid['y'])
-        return image.drop_vars('spatial_ref', errors='ignore').rio.write_crs(self.grid['crs'])
+            image = layers.isel(x=slice(0, 1), y=slice(0, 1)).assign_coords(
+                x=grid['x'][:1], y=grid['y'][:1]).reindex(x=grid['x'], y=grid['y'])
+            image = image.where(False)
+        return image.drop_vars('spatial_ref', errors='ignore').rio.write_crs(grid['crs'])
 
 
 def _open_area(products, area, kind, params, mask, first):
     """
     Images of the acquisitions of ``products`` over ``area`` (see :class:`_AreaLevels`): the products of
-    the same satellite and sensing time are combined, on the grid of the UTM zone of most products.
+    the same satellite and sensing time are combined, on the grids of the UTM zone of most products.
 
-    :param first: first product (opened), to read the grid when no product of the zone is described
-    :return: (images, times, grid)
+    :param first: first product (opened), for its CRS when the products are not described
+    :return: (images, times, grid of the full resolution)
     """
     import pyproj
 
     crss = [_crs_of(row) for row in products.itertuples()]
     known = [crs for crs in crss if crs is not None]
     crs = max(known, key=known.count) if known else pyproj.CRS(first.rio.crs)
-    # pixel size and alignment from a product of that zone
-    path = next((path for path, product_crs in zip(products.path, crss) if product_crs == crs), products.path[0])
-    grid = _area_grid(area, crs, first if path == products.path[0] else _open_level(path))
+    # pixel sizes, levels and alignment from a product of that zone, with a pyramid when there is one
+    in_zone = [path for path, product_crs in zip(products.path, crss) if product_crs == crs] or [products.path[0]]
+    candidates = [path for path in in_zone if is_zarr(path)] + [path for path in in_zone if not is_zarr(path)]
+    template = None
+    for path in candidates:
+        template = _LazyLevels(path, kind, params, mask)
+        if _has_grid(template[0]):
+            break
+        template = None
+    if template is None:
+        raise ValueError('no product of the area has coordinates (incomplete products?)')
+    grids = _area_grids(area, crs, template)
     images, times = [], []
     for (_, time), group in products.groupby([products.satellite.fillna(''), products.time], sort=True):
-        images.append(_AreaLevels(list(group.path), grid, kind, params, mask))
+        images.append(_AreaLevels(list(group.path), grids, kind, params, mask))
         times.append(time)
     order = np.argsort(times, kind='stable')
-    return [images[i] for i in order], [times[i] for i in order], grid
+    return [images[i] for i in order], [times[i] for i in order], grids[0]
 
 
 def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None, end=None,
@@ -834,8 +951,10 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
                             :func:`select_products`)
     :param area: open only this area (shapely geometry or (lon_min, lat_min, lon_max, lat_max), lon/lat):
                  one image per acquisition, the products of its tiles clipped to the bounding box of the
-                 area and combined on one grid, even across UTM zones (at most :data:`AREA_MAX_PIXELS`
-                 pixels per side; a pin opens :data:`AREA_MIN_EXTENT` m around it)
+                 area and combined on one grid per level of their pyramids, even across UTM zones; only the
+                 window displayed is read (at most :data:`AREA_MAX_PIXELS_PYRAMID` pixels per side, or
+                 :data:`AREA_MAX_PIXELS` for products without pyramid; a pin opens :data:`AREA_MIN_EXTENT` m
+                 around it)
     :return: (data, kind, params, title): :class:`~grstbx.visual.Multiscale`, ``'L2A'`` or ``'L2B'``,
              displayed parameters (L2B, None for L2A), Markdown title of the viewer
     :raises SeveralZones: the products are in several UTM zones, and no tile nor area is given
@@ -893,7 +1012,7 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
         area = box(*area) if isinstance(area, (list, tuple)) else area
         images, times, grid = _open_area(products, area, kind, params, mask, first)
         data = Multiscale(images, np.array(times, dtype='datetime64[ns]'), min_size=min_size, cache_size=cache_size)
-        data.scheduler = 'synchronous'    # reprojected tiles are in memory, the others are dask arrays
+        data.scheduler = 'synchronous'    # the reprojected blocks read the products themselves
         dates = pd.DatetimeIndex(data.times)
         where = f', tiles {", ".join(sorted(tiles.unique()))}' if len(tiles) else ''
         title = (f'## {len(images)} {kind} images of the area\n{len(products)} products{where}, '

@@ -135,6 +135,8 @@ in buckets (``s3://`` URLs, through fsspec), each image being processed in a loc
    grstbx.batch.zarr_complete
    grstbx.batch.netcdf_complete
    grstbx.batch.l2b_complete
+   grstbx.batch.no_water_marker
+   grstbx.batch.l2b_to_zarr
    grstbx.batch.remove_output
    grstbx.batch.write_l2a_item
    grstbx.batch.is_url
@@ -162,6 +164,15 @@ from local folders of products or from the STAC Items of the products in a bucke
    grstbx.stac.build_catalog
    grstbx.stac.product_item
    grstbx.stac.bucket_items
+
+The local bucket of the tutorial is served by the ``grstbx-s3-bucket`` command (``rclone serve s3``):
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   grstbx.bucket.main
+   grstbx.bucket.script_path
 
 Matchups
 --------

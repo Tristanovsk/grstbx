@@ -378,6 +378,50 @@ def l2b_complete(path, stac=True, storage_options=None):
     return exists(item_path(path) if stac else path, storage_options)
 
 
+def l2b_to_zarr(path, ofile=None, stac=True, overwrite=False, chunks=512):
+    """
+    Convert a GRSl2bgen L2B NetCDF product into a multiscale (pyramid) Zarr store, as written by GRSl2bgen
+    ``--format zarr`` (:meth:`GRSl2bgen.output.L2bProduct.export_to_zarr_pyramid`): one group per level,
+    chunks of ``chunks`` pixels, consolidated metadata. The packing of the NetCDF variables (``int16`` with
+    ``scale_factor`` and ``add_offset``, class indexes in ``uint8``) is kept, so that the values are the same.
+
+    :param path: L2B NetCDF file
+    :param ofile: Zarr store to write; default: in a product folder next to the file,
+                  ``<dir>/<name>/<name>.zarr`` (layout of GRSl2bgen ``--product_dir``)
+    :param stac: write the STAC Item of the store next to it, last, with its quick look
+                 (:func:`GRSl2bgen.stac.write_stac_item`), so that the product is complete
+                 (:func:`l2b_complete`)
+    :param overwrite: convert again a product already complete
+    :return: path of the store
+    """
+    import xarray as xr
+    from GRSl2bgen.output import L2bProduct
+    from GRSl2bgen.stac import write_stac_item
+
+    name = os.path.splitext(os.path.basename(path))[0]
+    ofile = ofile or opj(os.path.dirname(path), name, f'{name}.zarr')
+    if l2b_complete(ofile, stac=stac) and not overwrite:
+        return ofile
+    # read by the chunks of the file (each decompressed once), rechunked by the writer
+    ds = xr.open_dataset(path, decode_coords='all', chunks={})
+    keep = ('dtype', 'scale_factor', 'add_offset', '_FillValue')
+    encoding = {name_: {**{k: v for k, v in ds[name_].encoding.items() if k in keep and v is not None},
+                        'grid_mapping': 'spatial_ref'} for name_ in ds.data_vars}
+    # the writer of GRSl2bgen, with the product and the packing of the NetCDF file
+    product = L2bProduct.__new__(L2bProduct)
+    product.l2b_prod, product.variables = ds, list(ds.data_vars)
+    product._packing_encoding = lambda persist=False: encoding
+    os.makedirs(os.path.dirname(ofile), exist_ok=True)
+    export = product.export_to_zarr_pyramid
+    product.export_to_zarr_pyramid = lambda tmp, persist=False: export(tmp, persist=persist,
+                                                                        chunks={'y': chunks, 'x': chunks})
+    product.export(ofile, pyramid=True)
+    ds.close()
+    if stac:
+        write_stac_item(ofile)
+    return ofile
+
+
 def remove_output(path, storage_options=None):
     """Remove a product: file, or folder (Zarr store, product folder), local or in a bucket; nothing if
     it does not exist."""
@@ -666,6 +710,8 @@ def run_grs(level1, l2a, cams_file=None, dem_file=None, resolution=20, aot_resol
                            `resolution` (GRS 3.x; None: configuration of GRS)
     :param opac_model: aerosol model (None: from CAMS)
     :param scale_aot: scaling factor of the CAMS AOD
+    :return: ``'no_water'`` when GRS stopped on an image without water and wrote the marker
+             :func:`no_water_marker` instead of the product (GRS 3.1.1 or later), else ``'done'``
     """
     import grs
 
@@ -686,7 +732,8 @@ def run_grs(level1, l2a, cams_file=None, dem_file=None, resolution=20, aot_resol
         odir = l2a if int(grs.__version__.split('.')[0]) >= 3 else outdir
         process = grs.Process()
         process.execute(level1, odir=odir, **options)
-        process.write_output()
+        process.write_output()      # GRS 3.1.1: marker file instead of the product for an image without water
+        status = 'no_water' if getattr(process, 'no_water', False) else 'done'
     except Exception:
         logging.exception(f'L2A processing failed: {level1}')
         remove_output(outdir)
@@ -696,6 +743,7 @@ def run_grs(level1, l2a, cams_file=None, dem_file=None, resolution=20, aot_resol
         handler.close()
         process = None
         gc.collect()
+    return status
 
 
 def write_l2a_item(l2a):
@@ -773,6 +821,15 @@ def _relink(item_file, rel, href):
             link['href'] = href
     with open(item_file, 'w') as f:
         json.dump(item, f, indent=2)
+
+
+def no_water_marker(l2a):
+    """
+    Marker file written by GRS (3.1.1 or later) instead of the L2A product of an image without water (less
+    water than its ``min_water_area``): ``<folder>/<name>_no_water.txt`` next to the product
+    ``<folder>/<name>.zarr``. The image is then not processed again, as with ``grs --no_clobber``.
+    """
+    return os.path.splitext(str(l2a).rstrip('/'))[0] + '_no_water.txt'
 
 
 def _l2a_marker(l2a):
@@ -920,6 +977,9 @@ class Batch:
         else:
             plan['run_l2b'] = ~plan['l2b_done'] | self.overwrite_l2b | self.overwrite_l2a
             plan['run_l2a'] = plan['run_l2b'] & (~plan['l2a_done'] | self.overwrite_l2a)
+        if 'no_water' in plan and not self.overwrite_l2a:      # images without water: nothing to compute
+            plan['run_l2a'] &= ~plan['no_water']
+            plan['run_l2b'] &= ~plan['no_water']
         return plan
 
     def plan_level1(self, images):
@@ -929,8 +989,9 @@ class Batch:
         :param images: table of :func:`list_images` (index: acquisition date; ``tile``, ``name``,
                        ``path``, ``cloud_cover``)
         :return: copy of `images` with the columns ``cams_file``, ``dem_file``, ``l2a``, ``l2b`` (if
-                 `l2b_dir`), ``profile``, ``cams_ok``, ``cloudy``, ``l2a_done``, ``l2b_done``,
-                 ``run_l2a`` and ``run_l2b``
+                 `l2b_dir`), ``profile``, ``cams_ok``, ``cloudy``, ``no_water`` (marker of GRS for an image
+                 without water, :func:`no_water_marker`: not processed again unless `overwrite_l2a`),
+                 ``l2a_done``, ``l2b_done``, ``run_l2a`` and ``run_l2b``
         """
         plan = images.copy()
         dates = list(plan.index)
@@ -947,6 +1008,7 @@ class Batch:
         plan['profile'] = [self.profile_path(name, tile) for name, tile in zip(plan['name'], plan['tile'])]
         plan['cams_ok'] = [file is None or os.path.exists(file) for file in plan['cams_file']]
         plan['cloudy'] = plan['cloud_cover'] >= self.max_cloud_cover
+        plan['no_water'] = [exists(no_water_marker(l2a), self.storage_options) for l2a in plan['l2a']]
         plan['l2a_done'] = plan['l2a'].map(self._l2a_complete).astype(bool)
         plan['l2b_done'] = plan['l2b'].map(self._l2b_complete).astype(bool) if self.l2b_dir is not None else False
         return self._steps(plan)
@@ -974,7 +1036,7 @@ class Batch:
         plan['l2b'] = [self.l2b_path(l2a, tile, date)
                        for l2a, tile, date in zip(plan['l2a'], plan['tile'], plan.index)]
         plan['profile'] = [self.profile_path(name, tile) for name, tile in zip(plan['name'], plan['tile'])]
-        plan['cams_ok'], plan['cloudy'] = True, False
+        plan['cams_ok'], plan['cloudy'], plan['no_water'] = True, False, False
         plan['l2a_done'] = (plan['complete'] if 'complete' in plan
                             else plan['l2a'].map(self._l2a_complete)).astype(bool)
         plan['l2b_done'] = plan['l2b'].map(self._l2b_complete).astype(bool)
@@ -992,6 +1054,8 @@ class Batch:
             lines = [f"L2A: {plan['l2a_done'].sum()} done, {(plan['run_l2a'] & ~blocked).sum()} to compute, "
                      f"{(blocked & plan['cloudy']).sum()} too cloudy, {(blocked & ~plan['cams_ok']).sum()} "
                      'without CAMS file']
+            if 'no_water' in plan:
+                lines[0] += f", {(plan['no_water'] & ~plan['run_l2a']).sum()} without water"
         else:                           # L2A inputs
             lines = [f"L2A: {plan['l2a_done'].sum()} complete, {(~plan['l2a_done']).sum()} incomplete"]
         if 'l2b' in plan:
@@ -1009,13 +1073,14 @@ class Batch:
 
         :param row: row of a plan (pandas.Series)
         :return: record of the summary: ``tile``, ``name``, ``status`` (``done``, ``skipped``,
-                 ``no_cams``, ``cloudy``, ``L2A failed``, ``L2B failed``), ``l2a`` and ``l2b``
-                 (``done``, ``reused`` or empty), ``error``, ``duration_s``
+                 ``no_cams``, ``cloudy``, ``no_water``, ``L2A failed``, ``L2B failed``), ``l2a`` and ``l2b``
+                 (``done``, ``reused``, ``no_water`` or empty), ``error``, ``duration_s``. ``no_water``: GRS
+                 found no water in the image (now, or in a previous run: marker :func:`no_water_marker`)
         """
         record = dict(tile=row['tile'], name=row['name'], status='done', l2a='', l2b='', error='',
                       duration_s=0.)
         if not (row['run_l2a'] or row['run_l2b']):
-            return record | dict(status='skipped')
+            return record | dict(status='no_water' if row.get('no_water', False) else 'skipped')
         if row['run_l2a'] and not row['cams_ok']:
             return record | dict(status='no_cams', error=f"missing {row['cams_file']}")
         if row['run_l2a'] and row['cloudy']:
@@ -1028,20 +1093,30 @@ class Batch:
         staged = []
         try:
             if row['run_l2a']:
-                with profiler.step('L2A'):
+                with profiler.step('L2A') as step:
                     level1 = row['path']
                     if is_url(level1):
                         level1 = download(level1, self._local(level1, 'L1'), so)
                         staged.append(level1)
                     if is_url(row['l2a']):
                         staged.append(os.path.dirname(l2a))
-                    run_grs(level1, l2a, cams_file=row['cams_file'], dem_file=row['dem_file'],
-                            resolution=self.resolution, aot_resolution=self.aot_resolution,
-                            opac_model=self.opac_model, scale_aot=self.scale_aot)
-                    if self.l2a_stac:
-                        write_l2a_item(l2a)
-                    if is_url(row['l2a']):
-                        upload(os.path.dirname(l2a), os.path.dirname(row['l2a']), so, last=item_path(l2a))
+                    status = run_grs(level1, l2a, cams_file=row['cams_file'], dem_file=row['dem_file'],
+                                     resolution=self.resolution, aot_resolution=self.aot_resolution,
+                                     opac_model=self.opac_model, scale_aot=self.scale_aot)
+                    if status == 'no_water':        # marker file instead of the product: no Item, no L2B
+                        step['status'] = 'no water'
+                        if is_url(row['l2a']):
+                            upload(no_water_marker(l2a), no_water_marker(row['l2a']), so)
+                    else:
+                        if self.l2a_stac:
+                            write_l2a_item(l2a)
+                        if is_url(row['l2a']):
+                            upload(os.path.dirname(l2a), os.path.dirname(row['l2a']), so, last=item_path(l2a))
+                if status == 'no_water':
+                    if row['run_l2b']:
+                        profiler.skip('L2B', 'not run')
+                    record |= dict(status='no_water', l2a='no_water')
+                    return record
                 record['l2a'] = 'done'
             else:
                 profiler.skip('L2A', 'reused')

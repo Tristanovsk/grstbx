@@ -177,7 +177,12 @@ def stub_processors(monkeypatch):
         calls.append('L2A')
         if 'L2A' in fail:
             raise RuntimeError('GRS failed')
+        if 'water' in fail:         # GRS 3.1.1 on an image without water: marker instead of the product
+            os.makedirs(os.path.dirname(l2a), exist_ok=True)
+            Path(batch.no_water_marker(l2a)).write_text('no water')
+            return 'no_water'
         make_zarr(Path(l2a))
+        return 'done'
 
     def run_grsl2bgen(l2a, l2b, **kwargs):
         calls.append('L2B')
@@ -237,6 +242,57 @@ def test_no_cams(tmp_path, level1, stub_processors):
     run = new_batch(tmp_path, cams_file_template=str(tmp_path / 'cams' / 'missing_{date:%Y}.nc'))
     record = run.process(run.plan_level1(images).iloc[0])
     assert record['status'] == 'no_cams' and 'missing_2025.nc' in record['error']
+
+
+def test_no_water(tmp_path, level1, stub_processors):
+    """An image without water (GRS 3.1.1 marker) is reported, has no L2B step, and is not run again."""
+    calls, fail = stub_processors
+    images = batch.list_images(level1, ['31TEJ'])
+    run = new_batch(tmp_path)
+    plan = run.plan_level1(images)
+    assert not plan['no_water'].any()
+    fail.add('water')
+    record = run.process(plan.iloc[0])
+    assert record['status'] == 'no_water' and record['l2a'] == 'no_water' and calls == ['L2A']
+    marker = batch.no_water_marker(plan['l2a'].iloc[0])
+    assert marker.endswith('_no_water.txt') and os.path.dirname(marker) == os.path.dirname(plan['l2a'].iloc[0])
+    steps = batch.read_profile(plan['profile'].iloc[0])['steps']
+    assert [(s['step'], s['status']) for s in steps] == [('L2A', 'no water'), ('L2B', 'not run')]
+
+    # next plan: nothing to run for this image, reported as no_water; overwrite_l2a runs it again
+    fail.clear()
+    calls.clear()
+    plan = run.plan_level1(images)
+    assert plan['no_water'].tolist() == [True, False, False]
+    assert not plan['run_l2a'].iloc[0] and not plan['run_l2b'].iloc[0]
+    assert '1 without water' in run.describe(plan)
+    assert run.process(plan.iloc[0])['status'] == 'no_water' and calls == []
+    rerun = new_batch(tmp_path, overwrite_l2a=True)
+    plan = rerun.plan_level1(images)
+    assert plan['run_l2a'].iloc[0] and plan['run_l2b'].iloc[0]
+
+
+def test_run_grs_no_water(tmp_path, monkeypatch):
+    """run_grs returns 'no_water' when GRS stops on an image without water and writes its marker."""
+    import sys
+    import types
+
+    class Process:
+        def execute(self, level1, odir, **kwargs):
+            self.odir, self.no_water = odir, 'water' not in level1
+
+        def write_output(self):
+            if self.no_water:
+                Path(batch.no_water_marker(self.odir)).write_text('no water')
+            else:
+                make_zarr(Path(self.odir))
+
+    monkeypatch.setitem(sys.modules, 'grs', types.SimpleNamespace(__version__='3.1.1', Process=Process))
+    l2a = str(tmp_path / 'L2A' / 'name' / 'name.zarr')
+    assert batch.run_grs('dry_land.SAFE', l2a) == 'no_water'
+    assert os.path.exists(tmp_path / 'L2A' / 'name' / 'name_no_water.txt') and not os.path.exists(l2a)
+    assert batch.run_grs('water.SAFE', l2a) == 'done'
+    assert os.path.exists(l2a) and not os.path.exists(tmp_path / 'L2A' / 'name' / 'name_no_water.txt')
 
 
 def test_profiler_step_failure(tmp_path):
@@ -357,3 +413,34 @@ def test_run_with_bucket(tmp_path, bucket, stub_processors, monkeypatch):
     assert run.save_summary(summary).startswith(f'{url}/L2B/batch_')
     with pytest.raises(ValueError, match='local folders'):
         run.commands(plan)
+
+
+def test_l2b_to_zarr(tmp_path):
+    pytest.importorskip('GRSl2bgen')
+    import xarray as xr
+    from conftest import l2b_product
+
+    from grstbx.driver import open_zarr_image, zarr_levels
+
+    ds = l2b_product('2025-01-03T10:33:39', chla=1.5, size=1100).drop_vars('forecast_period')
+    ds['Chla_OC2nasa'] = ds.Chla_OC2nasa * (1 + ds.x / ds.x.max())
+    ds['owt_index_Bi2024'] = xr.where(ds['mask'] == 0, 3., np.nan)
+    name = 'S2A_MSIL2B_20250103T103339_N0511_R108_T31TGJ_20250103T150000_V3.1.0'
+    path = tmp_path / '31TGJ' / '2025' / '01' / '03' / f'{name}.nc'
+    path.parent.mkdir(parents=True)
+    encoding = {v: {'dtype': 'int16', 'scale_factor': 0.001, 'add_offset': 30., '_FillValue': -32768}
+                for v in ('Chla_OC2nasa', 'TURB_dogliotti')}
+    encoding['owt_index_Bi2024'] = {'dtype': 'uint8', '_FillValue': 0}
+    ds.to_netcdf(path, encoding=encoding)
+
+    store = batch.l2b_to_zarr(str(path), stac=False)
+    assert store == str(path.parent / name / f'{name}.zarr')
+    assert zarr_levels(store) == ['0', '1', '2']           # down to 256 pixels
+    original, converted = xr.open_dataset(path, decode_coords='all'), open_zarr_image(store)
+    for variable in original.data_vars:
+        assert np.array_equal(original[variable].values, converted[variable].values, equal_nan=True), variable
+    assert converted.Chla_OC2nasa.encoding['dtype'] == 'int16'
+    assert converted.Chla_OC2nasa.encoding['scale_factor'] == 0.001
+    assert open_zarr_image(store, level=1).sizes['x'] == 550
+    assert not batch.l2b_complete(store)                     # no Item
+    assert batch.l2b_to_zarr(str(path), stac=False) == store

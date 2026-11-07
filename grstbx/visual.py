@@ -562,6 +562,8 @@ class Multiscale():
 
     #: margin added on each side of the windows read for the map (fraction of their width and height)
     window_margin = 0.25
+    #: number of dates read at the same time for the time series of a pixel (one chunk per date)
+    timeseries_workers = 8
 
     def __init__(self, images, times, min_size=512, cache_size=2e9):
         self.images = images
@@ -622,12 +624,20 @@ class Multiscale():
         return da.drop_vars([c for c in da.coords if c not in ('x', 'y', 'wl', 'spatial_ref')])
 
     def nlevels(self, idate):
-        """Number of resolution levels of the image ``idate`` (stored or computed)."""
+        """
+        Number of resolution levels of the image ``idate``: its stored levels, then levels computed from the
+        coarsest one (2x2 mean) until the image is at most ``min_size`` pixels per side (e.g. an area over
+        many tiles, whose coarsest stored level can still be thousands of pixels wide).
+        """
         levels = self.images[idate]
-        if len(levels) > 1:
-            return len(levels)
-        size = max(levels[0].sizes['x'], levels[0].sizes['y'])
-        return 1 + max(0, int(np.ceil(np.log2(size / self.min_size))))
+        nstored = len(levels)
+        if nstored > 1:
+            # size of the coarsest stored level from the pixel sizes, without opening it
+            size = max(levels[0].sizes['x'], levels[0].sizes['y']) * self.resolution(idate, 0) / \
+                self.resolution(idate, nstored - 1)
+        else:
+            size = max(levels[0].sizes['x'], levels[0].sizes['y'])
+        return nstored + max(0, int(np.ceil(np.log2(size / self.min_size))))
 
     def resolution(self, idate, level=0):
         """Pixel size of a level (in units of the CRS)."""
@@ -644,6 +654,59 @@ class Multiscale():
         if idate not in self._bounds:
             self._bounds[idate] = self.images[idate][0].rio.bounds()
         return self._bounds[idate]
+
+    #: share of valid pixels below which :meth:`valid_bounds` looks for the densest part of the valid pixels
+    valid_min_share = 0.05
+
+    def valid_bounds(self, idate, name):
+        """
+        (xmin, ymin, xmax, ymax) of the pixels with a value of a layer of the image ``idate``, in its CRS,
+        from its coarsest level (cheap to read); None if no pixel has a value. When the valid pixels are
+        sparse (less than :attr:`valid_min_share` of their box, e.g. rivers and a lake in a land tile), the
+        box of their densest part: the window, halved until it is valid enough, holding the most of them.
+        Kept per image and layer.
+        """
+        key = ('valid_bounds', idate, tuple(name) if isinstance(name, (list, tuple)) else name)
+        if key not in self._bounds:
+            level = self.nlevels(idate) - 1
+            da = self.layer(idate, name, level)
+            valid = np.isfinite(da)
+            other = [dim for dim in da.dims if dim not in ('x', 'y')]
+            if other:
+                valid = valid.any(other)
+            valid = valid.transpose('y', 'x').values
+            if not valid.any():
+                self._bounds[key] = None
+            else:
+                rows, cols = self._densest(valid, self.valid_min_share)
+                xs, ys = da.x.values[cols], da.y.values[rows]
+                half = self.resolution(idate, level) / 2
+                self._bounds[key] = (xs.min() - half, ys.min() - half, xs.max() + half, ys.max() + half)
+        return self._bounds[key]
+
+    @staticmethod
+    def _densest(valid, min_share, min_cells=4):
+        """
+        (first, last) row and column of the valid pixels of a boolean grid, or of their densest part when
+        they fill less than ``min_share`` of their box (see :meth:`valid_bounds`).
+        """
+        def box(mask, r0=0, c0=0):
+            rows, cols = np.nonzero(mask.any(axis=1))[0], np.nonzero(mask.any(axis=0))[0]
+            return np.array([r0 + rows[0], r0 + rows[-1]]), np.array([c0 + cols[0], c0 + cols[-1]])
+
+        rows, cols = box(valid)
+        sub = valid[rows[0]:rows[1] + 1, cols[0]:cols[1] + 1]
+        if sub.mean() >= min_share:
+            return rows, cols
+        # number of valid pixels in every window of h x w pixels, from the summed-area table
+        table = np.pad(sub.cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+        h, w = sub.shape
+        while True:
+            h, w = max(h // 2, 1), max(w // 2, 1)
+            counts = table[h:, w:] - table[:-h, w:] - table[h:, :-w] + table[:-h, :-w]
+            i, j = np.unravel_index(counts.argmax(), counts.shape)
+            if counts[i, j] >= min_share * h * w or max(h, w) <= min_cells:
+                return box(sub[i:i + h, j:j + w], rows[0] + i, cols[0] + j)
 
     def layer(self, idate, name, level=0):
         """Lazy (stored levels) or in-memory (computed levels) 2-D or 3-D layer of an image."""
@@ -840,14 +903,19 @@ class Multiscale():
         """
         Full-resolution time series of a layer at the pixel nearest to (x, y).
 
+        The dates are read in threads, :attr:`timeseries_workers` at a time: each date reads one chunk of
+        its full-resolution level (the chunks of the coarser levels of the pyramids have the same number of
+        pixels, so that they are not faster to read), and most of the time goes into waiting for the store.
+
         :param name: variable name or wavelength
         :param indexes: indexes of the images (default: all)
         :return: pandas.Series indexed by acquisition time (images not covering (x, y) are skipped)
         """
-        indexes = range(len(self.images)) if indexes is None else indexes
+        indexes = list(range(len(self.images)) if indexes is None else indexes)
+        with ThreadPoolExecutor(max(1, min(self.timeseries_workers, len(indexes)))) as pool:
+            pixels = list(pool.map(lambda idate: self.pixel(idate, x, y, name), indexes))
         times, values = [], []
-        for idate in indexes:
-            value = self.pixel(idate, x, y, name)
+        for idate, value in zip(indexes, pixels):
             if value is not None:
                 times.append(self.times[idate])
                 values.append(float(value))
@@ -877,6 +945,10 @@ class _MultiscaleViewer(Utils):
     #: dates read at the same time for the time series over the polygons (threads): useful when the
     #: requests wait on a remote bucket; on local files, opening the stores is CPU-bound and 1 is as fast
     polygon_workers = 4
+    #: first view of the map: margin around the valid pixels (fraction of their extent) and smallest extent
+    #: (full-resolution pixels), see :meth:`_extent`
+    valid_margin = 0.05
+    valid_min_pixels = 100
 
     def __init__(self, data, dates=None, reproject=False, minmaxvalues=(0, 0.02), minmax=(0, 0.06),
                  width=1200, height=800, min_size=512, basemap=DEFAULT_BASEMAP, cmap=DEFAULT_RRS_COLORMAP,
@@ -1194,9 +1266,29 @@ class _MultiscaleViewer(Utils):
 
     # -- rendering
 
+    def _initial_layer(self):
+        """Layer whose valid pixels frame the first view of the map (None: the whole image)."""
+        return None
+
     def _extent(self, idate=0):
-        """Full extent of an image in the CRS of the map."""
-        xmin, ymin, xmax, ymax = self._to_display.transform_bounds(*self.data.bounds(self.indexes[idate]))
+        """
+        Extent of the first view of an image, in the CRS of the map: the box of its valid pixels (see
+        :meth:`Multiscale.valid_bounds`), with a margin and at least :attr:`valid_min_pixels` full-resolution
+        pixels wide, so that a sparse image (e.g. only rivers in a land tile) does not open looking empty;
+        the whole image if it has no valid pixel.
+        """
+        image = self.indexes[idate]
+        bounds = self.data.bounds(image)
+        name = self._initial_layer()
+        valid = self.data.valid_bounds(image, name) if name is not None else None
+        if valid is not None:
+            smallest = self.valid_min_pixels * self.data.resolution(image, 0)
+            hx, hy = [max(size, smallest) * (0.5 + self.valid_margin)
+                      for size in (valid[2] - valid[0], valid[3] - valid[1])]
+            cx, cy = (valid[0] + valid[2]) / 2, (valid[1] + valid[3]) / 2
+            bounds = (max(cx - hx, bounds[0]), max(cy - hy, bounds[1]),
+                      min(cx + hx, bounds[2]), min(cy + hy, bounds[3]))
+        xmin, ymin, xmax, ymax = self._to_display.transform_bounds(*bounds)
         return (xmin, xmax), (ymin, ymax)
 
     def _read(self, idate, name, x_range, y_range, width, height):
@@ -1424,6 +1516,9 @@ class ViewSpectral(_MultiscaleViewer):
 
     def _nearest_band(self, wl):
         return self.wls[np.abs(self.wls - wl).argmin()]
+
+    def _initial_layer(self):
+        return list(self.rgb_bands)
 
     @staticmethod
     def _band_label(wl):
@@ -1655,6 +1750,9 @@ class ViewParam(_MultiscaleViewer):
             # keep the 2D maps
             self.params = [param for param in image.data_vars
                            if set(image[param].dims) == {'x', 'y'}]
+
+    def _initial_layer(self):
+        return self.params[0] if self.params else None
 
     def _timeseries_curve(self, param, x=None, y=None, color=None):
         """

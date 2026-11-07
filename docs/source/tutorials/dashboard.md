@@ -137,11 +137,22 @@ puts them in the *Products* field and opens them.
 
 With an area (search map, polygon or bounding box), **Open the area only** (ticked by default) opens only
 the bounding box of the area, as one image per acquisition: the products of the tiles of an overpass are
-clipped and combined on one 20 m grid, so that an area across two tiles is one image per date, even
-across two UTM zones. The grid is in the UTM zone of most products and aligned on their pixels; the
-products of the other zone are reprojected (nearest neighbour). A pin opens 5 km around it, and an area
-is at most 4096 pixels per side (about 80 km). The map, the points, the polygons and the exports then work
-on the area only. In Python: `open_products(found.item, area=polygon)`.
+clipped and combined on one grid, so that an area across several tiles is one image per date, even across
+two UTM zones. The grid is in the UTM zone of most products and aligned on their pixels; the products of
+the other zone are reprojected (nearest neighbour), block by block of 512 pixels, each block when it is
+displayed. A pin opens 5 km around it. In Python: `open_products(found.item, area=polygon)`.
+
+The area has one level per level of the pyramids of the Zarr products (20, 40, 80, 160 and 320 m for
+Sentinel-2), each made of the same level of the tiles: zoomed out, the map reads the coarse levels only,
+and zoomed in, the window displayed at full resolution. Nothing else is read, so that a large area opens
+as easily as a small one: e.g. the coasts of the Gulf of Lion and of Provence across tiles 31TFJ and
+31TGJ (9050 x 4711 pixels at 20 m) open in a few seconds, and the whole area is displayed at 160 m. The
+full resolution is exactly the one of the products; at the coarser levels, the pyramids of neighbouring
+tiles are offset by a fraction of their pixels, and the nearest pixel of each is taken (less than half a
+coarse pixel). An area is at most 65536 pixels per side (`AREA_MAX_PIXELS_PYRAMID`). Products without
+pyramid (NetCDF L2B) give their full resolution at each level, which reads more of them when zoomed out;
+an area made only of such products is at most 4096 pixels per side (about 80 km), as its coarser levels are
+computed from the whole area.
 
 Without it, the whole products are opened. They must be in one UTM zone: when the results span several
 zones, the dashboard asks to choose a tile in the *Time series* card.

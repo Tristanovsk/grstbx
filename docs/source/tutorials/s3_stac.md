@@ -3,7 +3,7 @@
 Object storage and STAC catalogues are how data lakes and cloud platforms share satellite products. The
 notebook below works the same way on a local machine, without moving the products:
 
-- `s3_bucket.sh` serves the folders of products as a bucket with `rclone serve s3`, in place: **nothing is
+- `grstbx-s3-bucket` (command installed with grstbx) serves the folders of products as a bucket with `rclone serve s3`, in place: **nothing is
   copied**. The server is read-only, listens on the local machine only and generates its own key, written
   to the AWS profile `grstbx-local` with the address of the server, so that the notebooks hold no secret;
 - {func}`~grstbx.stac.build_catalog` writes a static STAC catalogue of the products, the collections
@@ -18,18 +18,21 @@ catalogue next to them:
 
 ```
 s3://grstbx-s3/
+    sentinel-2/l1c/    Level-1C images      -> /data/satellite/Sentinel-2/L1C
     sentinel-2/l2a/    GRS L2A products     -> /data/satellite/Sentinel-2/L2A_zarr
     sentinel-2/l2b/    GRSl2bgen L2B products -> /data/satellite/Sentinel-2/L2B_zarr
     stac/              catalog.json, grs-l2a/, grs-l2b/
 ```
 
 Below each prefix, the tree of the batches is kept: `<tile>/YYYY/MM/DD/<name>/`, one folder per product with
-its log and its STAC Item. Other sensors or levels get their own prefixes (`landsat-8/l2a/`,
-`sentinel-2/l1c/`): give `s3_bucket.sh` the links as `<prefix>=<folder>`.
+its log and its STAC Item. Other sensors or levels get their own prefixes (e.g. `landsat-8/l2a/`):
+give `grstbx-s3-bucket` the links as `<prefix>=<folder>` (`grstbx-s3-bucket --help` for the bucket name, the root
+folder, the address and the profile). The command runs the shell script `s3_bucket.sh` shipped with grstbx,
+whose path is given by `grstbx-s3-bucket --script`, to run it or adapt it without the command.
 
 ```bash
 pip install "grstbx[remote]"
-bash s3_bucket.sh      # leave it running; rclone must be installed
+grstbx-s3-bucket       # leave it running; rclone must be installed
 ```
 
 ```python
@@ -74,7 +77,7 @@ URLs (`s3://grstbx-s3/sentinel-2/l2b`): each image is processed in a local work 
 folders are uploaded, the STAC Item last. To let them write to the local bucket, start it in writable mode:
 
 ```bash
-WRITE=1 bash s3_bucket.sh
+grstbx-s3-bucket --write
 ```
 
 The products are then written to the folders linked into the bucket. Once the batch is done, the

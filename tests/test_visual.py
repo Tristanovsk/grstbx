@@ -131,6 +131,30 @@ def test_polygon_series_reads_the_dates_in_parallel():
     assert viewer.polygon_table['median'].iloc[:2].tolist() == [1, 2]
 
 
+def test_pixel_timeseries_reads_the_dates_in_parallel():
+    import threading
+    import time
+
+    viewer, polygon = polygon_viewer()
+    data = viewer.data
+    threads, original = set(), data.pixel
+
+    def slow(*args, **kwargs):
+        threads.add(threading.get_ident())
+        time.sleep(0.2)
+        return original(*args, **kwargs)
+
+    data.pixel = slow
+    x, y = polygon.centroid.x, polygon.centroid.y
+    t0 = time.time()
+    series = data.timeseries('Chla_OC2nasa', x, y)
+    assert time.time() - t0 < 0.5 and len(threads) == 3     # 3 dates of 0.2 s at the same time
+    assert series.index.is_monotonic_increasing and series.iloc[:2].tolist() == [1, 2]
+    assert np.isnan(series.iloc[2])
+    assert data.timeseries('Chla_OC2nasa', x, y, indexes=[2, 0]).index.tolist() == [data.times[2], data.times[0]]
+    assert data.timeseries('Chla_OC2nasa', 0, 0).empty      # outside the image
+
+
 def test_minimum_share_of_valid_pixels_of_the_polygon_series():
     import asyncio
 
@@ -159,3 +183,24 @@ def test_minimum_share_of_valid_pixels_of_the_polygon_series():
     min_valid.value = 2.5
     assert '2 dates plotted, 1 with less than 2.5 %' in status.object
     assert viewer.polygon_table['median'].iloc[:2].tolist() == [1, 2]
+
+
+def test_first_view_on_the_valid_pixels():
+    from grstbx.visual import Multiscale, ViewParam
+
+    size = 1000
+    x, y = 700010. + 20 * np.arange(size), 4900000. - 10 - 20 * np.arange(size)
+    values = np.full((2, size, size), np.nan)
+    values[0, 100:110, 600:620] = 1.             # a small lake; no valid pixel at the second date
+    values[0, [5, 990, 995], [990, 3, 500]] = 1.  # and a few scattered pixels far from it
+    cube = xr.Dataset({'chl': (('time', 'y', 'x'), values)},
+                      coords={'time': pd.to_datetime(['2025-01-03', '2025-01-08']), 'x': x, 'y': y})
+    viewer = ViewParam(Multiscale.from_xarray(cube.rio.write_crs('EPSG:32631')), params=['chl'])
+    (xmin, xmax), (ymin, ymax) = viewer._extent(0)
+    # centred on the lake, at least valid_min_pixels wide, with the margin
+    assert xmin < x[600] < x[619] < xmax and ymin < y[109] < y[100] < ymax
+    assert np.isclose(xmax - xmin, 20 * viewer.valid_min_pixels * (1 + 2 * viewer.valid_margin))
+    assert xmax - xmin < 0.2 * 20 * size
+    # no valid pixel: the whole image
+    (xmin, xmax), (ymin, ymax) = viewer._extent(1)
+    assert (xmin, xmax, ymin, ymax) == (x[0] - 10, x[-1] + 10, y[-1] - 10, y[0] + 10)

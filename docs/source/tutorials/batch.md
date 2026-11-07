@@ -20,7 +20,9 @@ merges the batch notebooks of the two processors:
   existing L2A product being reused (`overwrite_l2b` recomputes the L2B products alone, e.g. with a new
   version of GRSl2bgen);
 - the batch itself: too cloudy images or images without CAMS file are skipped when their L2A product is
-  to be computed, a failing step is logged and does not stop the batch, and a summary table is saved;
+  to be computed, the images in which GRS (3.1.1 or later) finds no water get the status `no_water` and are
+  not processed again (marker file `<name>_no_water.txt`), a failing step is logged and does not stop the
+  batch, and a summary table is saved;
 - a **profiling file** per image (`<l2b_dir>/profiles/<tile>/<image>_profile.json`): wall time, CPU time
   and peak memory of the L2A and L2B steps, and the memory curve sampled during the processing, to size
   the machine or the number of images processed in parallel;
@@ -90,8 +92,8 @@ run = batch.Batch('s3://grstbx-s3/sentinel-2/l2a', 's3://grstbx-s3/sentinel-2/l2
 summary = run.run(run.plan_level1(images))
 ```
 
-The local bucket of {doc}`s3_stac` serves the folders of products in place. Start it with `WRITE=1 bash
-s3_bucket.sh` to let the batches write to it: the products are then written to the local folders linked
+The local bucket of {doc}`s3_stac` serves the folders of products in place. Start it with `grstbx-s3-bucket
+--write` to let the batches write to it: the products are then written to the local folders linked
 into the bucket. Two limits: the check of the products in a bucket costs about 20 requests per L2A product
 (about 0.15 s per product with the local bucket), and the shell commands
 ({meth}`~grstbx.batch.Batch.commands`) need local folders. To run them on a bucket, mount it as a folder
@@ -136,6 +138,17 @@ the command line, one `GRSl2bgen` process per product.
 :maxdepth: 1
 
 batch/grsl2bgen_batch
+```
+
+L2B products written as NetCDF (GRSl2bgen `--format netcdf`, the default of the versions before 1.2) can be
+converted into the Zarr pyramids of GRSl2bgen `--format zarr` with {func}`~grstbx.batch.l2b_to_zarr`, e.g.
+to open large areas over several tiles in the viewers (see {doc}`dashboard`): the packing of the variables is
+kept, so the values are the same, and the store is written in a product folder next to the file with its
+STAC Item and quick look. A full tile takes about 2 minutes, mostly reading the NetCDF file.
+
+```python
+for path in sorted(glob.glob('/data/L2B/31TGJ/*/*/*/*.nc')):
+    batch.l2b_to_zarr(path)       # /data/L2B/31TGJ/YYYY/MM/DD/<name>/<name>.zarr and <name>.json
 ```
 
 ## L1C to L2A: notebooks and bash scripts for GRS 2.x and 3.x

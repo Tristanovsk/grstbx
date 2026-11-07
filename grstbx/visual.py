@@ -624,12 +624,20 @@ class Multiscale():
         return da.drop_vars([c for c in da.coords if c not in ('x', 'y', 'wl', 'spatial_ref')])
 
     def nlevels(self, idate):
-        """Number of resolution levels of the image ``idate`` (stored or computed)."""
+        """
+        Number of resolution levels of the image ``idate``: its stored levels, then levels computed from the
+        coarsest one (2x2 mean) until the image is at most ``min_size`` pixels per side (e.g. an area over
+        many tiles, whose coarsest stored level can still be thousands of pixels wide).
+        """
         levels = self.images[idate]
-        if len(levels) > 1:
-            return len(levels)
-        size = max(levels[0].sizes['x'], levels[0].sizes['y'])
-        return 1 + max(0, int(np.ceil(np.log2(size / self.min_size))))
+        nstored = len(levels)
+        if nstored > 1:
+            # size of the coarsest stored level from the pixel sizes, without opening it
+            size = max(levels[0].sizes['x'], levels[0].sizes['y']) * self.resolution(idate, 0) / \
+                self.resolution(idate, nstored - 1)
+        else:
+            size = max(levels[0].sizes['x'], levels[0].sizes['y'])
+        return nstored + max(0, int(np.ceil(np.log2(size / self.min_size))))
 
     def resolution(self, idate, level=0):
         """Pixel size of a level (in units of the CRS)."""

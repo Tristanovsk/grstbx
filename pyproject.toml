@@ -61,6 +61,8 @@ dependencies = [
 [project.scripts]
 # web dashboard of an L2A product (grstbx.app)
 grstbx-viewer = "grstbx.app:main"
+# local S3 bucket of the products, served in place by rclone (grstbx.bucket, script grstbx/data/s3_bucket.sh)
+grstbx-s3-bucket = "grstbx.bucket:main"
 
 [project.optional-dependencies]
 # Jupyter environment to run the notebooks and the interactive viewers
@@ -104,7 +106,7 @@ version = { attr = "grstbx.__version__" }
 include = ["grstbx*"]
 
 [tool.setuptools.package-data]
-"grstbx.data" = ["*.nc", "*.txt", "*.csv", "*.dat"]
+"grstbx.data" = ["*.nc", "*.txt", "*.csv", "*.dat", "*.sh"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["__pycache__/*", "*.pyc"]

@@ -545,13 +545,18 @@ def test_search_map_starts_on_the_area():
     assert x1 - x0 == 2 * SearchMap.WORLD
 
 
-def _pyramid_product(folder, tile, stamp, chla, crs='EPSG:32631', x0=700010, y0=4899990, size=64, nlevels=3):
-    """L2B Zarr pyramid of a tile (levels '0', '1', ... of 20, 40, ... m), the left quarter without data."""
+def _pyramid_product(folder, tile, stamp, chla, crs='EPSG:32631', x0=700010, y0=4899990, size=64, nlevels=3,
+                     grs_layout=False):
+    """
+    L2B Zarr pyramid of a tile (levels '0', '1', ... of 20, 40, ... m), the left quarter without data;
+    ``grs_layout``: ``multiscales`` attribute as written by GRS (list, ``group`` and ``scale`` of each level)
+    instead of GRSl2bgen.
+    """
     import zarr
     from conftest import l2b_product
 
     ds = l2b_product(pd.Timestamp(stamp), chla, size=size).drop_vars(['time', 'forecast_period'])
-    ds = ds.assign_coords(x=x0 + 20 * np.arange(size), y=y0 - 20 * np.arange(size)).rio.write_crs(crs)
+    ds = ds.assign_coords(x=x0 + 20. * np.arange(size), y=y0 - 20. * np.arange(size)).rio.write_crs(crs)
     path = folder / f'S2A_MSIL2B_{stamp}_N0511_R108_T{tile}_{stamp[:8]}T150000_V3.1.0.zarr'
     level = ds
     for index in range(nlevels):
@@ -559,9 +564,21 @@ def _pyramid_product(folder, tile, stamp, chla, crs='EPSG:32631', x0=700010, y0=
         level = level.coarsen(x=2, y=2).mean().rio.write_crs(crs)
     layout = [{'asset': '0'}] + [{'asset': str(i), 'derived_from': str(i - 1), 'transform': {'scale': [2.0, 2.0]}}
                                  for i in range(1, nlevels)]
+    multiscales = {'layout': layout}
+    if grs_layout:
+        multiscales = [{'layout': [{'group': str(i), 'scale': 2 ** i} for i in range(nlevels)]}]
     zarr.open_group(path, mode='a').attrs.update(
-        {'multiscales': {'layout': layout}, 'acquisition_date': pd.Timestamp(stamp).isoformat()})
+        {'multiscales': multiscales, 'acquisition_date': pd.Timestamp(stamp).isoformat()})
     return str(path)
+
+
+@pytest.mark.parametrize('grs_layout', [False, True])
+def test_open_pyramid_levels(tmp_path, grs_layout):
+    """Levels and resolutions of the pyramids of GRS (list) and GRSl2bgen (dict) ``multiscales``."""
+    path = _pyramid_product(tmp_path, '31TGJ', '20250103T103339', 1., grs_layout=grs_layout)
+    data, kind, params, title = open_products(path)
+    image = data.images[0]
+    assert len(image) == 3 and [image.resolution(level) for level in range(3)] == [None, 40., 80.]
 
 
 def test_open_area_from_the_pyramids(tmp_path, monkeypatch):
@@ -593,6 +610,36 @@ def test_open_area_from_the_pyramids(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match='without pyramid'):
         open_products([_tile_product(tmp_path, '31TGJ', '20250108T103421', 4.)], area=area)
+
+
+def test_open_area_coarser_levels_and_incomplete_products(tmp_path, monkeypatch):
+    """Levels computed beyond the pyramids of a large area; the products without coordinates are left out."""
+    import pyproj
+    import zarr
+    from shapely.geometry import box
+
+    from grstbx import app as app_module
+
+    good = _pyramid_product(tmp_path, '31TGJ', '20250103T103339', 1.)
+    broken = _pyramid_product(tmp_path, '31TFJ', '20250103T103339', 2., x0=700010 - 64 * 20, grs_layout=True)
+    for level in range(3):      # incomplete GRS store: coordinates never written
+        group = zarr.open_group(broken, path=str(level), mode='a')
+        group['x'][:] = np.nan
+    to_lonlat = pyproj.Transformer.from_crs(32631, 4326, always_xy=True)
+    area = box(*to_lonlat.transform(690000, 4880000), *to_lonlat.transform(720000, 4910000))
+    monkeypatch.setattr(app_module, 'AREA_MAX_PIXELS', 50)
+    data, kind, params, title = open_products([broken, good], area=area, min_size=64)
+    image = data.images[0]
+    # 1500 pixels of 20 m, coarsest stored level of 80 m (375 pixels): 3 levels computed down to 64 pixels
+    assert len(image) == 3 and data.nlevels(0) == 6
+    assert [data.resolution(0, level) for level in range(6)] == [20., 40., 80., 160., 320., 640.]
+    layer = data.layer(0, 'Chla_OC2nasa', 5)
+    assert layer.sizes['x'] <= 64 and np.nanmax(layer.values) == 1      # only the complete product
+    da, level = data.window(0, 'Chla_OC2nasa', data.bounds(0), 30000 / 50)
+    assert level == 4
+
+    with pytest.raises(ValueError, match='no product of the area has coordinates'):
+        open_products([broken], area=area)
 
 
 def test_warp_reads_only_the_blocks_displayed(tmp_path, monkeypatch):

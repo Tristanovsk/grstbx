@@ -39,11 +39,23 @@ def zarr_levels(path):
     return _levels(zarr.open_group(path, mode='r'))
 
 
+def multiscales_layout(attrs):
+    """
+    Layout of the ``multiscales`` attribute of a pyramid (one dict per level, finest first; empty if none).
+
+    GRSl2bgen writes ``{'layout': [{'asset': '0'}, ...]}``, GRS ``[{'layout': [{'group': '0'}, ...]}]``.
+    """
+    multiscales = attrs.get('multiscales')
+    if isinstance(multiscales, list):
+        multiscales = multiscales[0] if multiscales else None
+    return (multiscales.get('layout') if isinstance(multiscales, dict) else None) or []
+
+
 def _levels(root):
     """Resolution levels of an open root group, see :func:`zarr_levels`."""
-    multiscales = root.attrs.get('multiscales')
-    if isinstance(multiscales, dict) and multiscales.get('layout'):
-        return [str(level['asset']) for level in multiscales['layout']]
+    layout = multiscales_layout(root.attrs)
+    if layout:
+        return [str(level.get('asset', level.get('group'))) for level in layout]
     return sorted((name for name, _ in root.groups() if name.isdigit()), key=int)
 
 

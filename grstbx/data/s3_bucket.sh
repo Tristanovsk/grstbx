@@ -3,13 +3,18 @@
 # of the products are linked into the bucket. Read-only, on the local machine only, with a generated key.
 # The server runs in the foreground until it is stopped (Ctrl-C): keep this terminal open, or use tmux.
 #
-#   bash s3_bucket.sh                                       # default layout below
-#   bash s3_bucket.sh sentinel-2/l2a=/data/L2A sentinel-2/l2b=/data/L2B   # other folders: <prefix>=<folder>
-#   BUCKET=my-bucket bash s3_bucket.sh /data/L2A /data/L2B  # a folder alone is linked by its name
-#   WRITE=1 bash s3_bucket.sh                               # writable: batches write their products
+#   grstbx-s3-bucket                                        # default layout below (command installed with grstbx)
+#   grstbx-s3-bucket --write                                # writable: batches write their products
 #                                                           # to the bucket, i.e. into the linked folders
+#   grstbx-s3-bucket sentinel-2/l1c=/data/L1C sentinel-2/l2a=/data/L2A   # other folders: <prefix>=<folder>
+#   grstbx-s3-bucket --bucket my-bucket /data/L2A /data/L2B # a folder alone is linked by its name
+#   grstbx-s3-bucket --help                                 # all the options
+#
+# or the script itself (path: grstbx-s3-bucket --script), options as environment variables:
+#   WRITE=1 BUCKET=grstbx-s3 S3_ROOT=/data/satellite/s3 ADDRESS=127.0.0.1:9000 PROFILE=grstbx-local bash s3_bucket.sh
 #
 # Default layout, one prefix per sensor and level (whatever the format of the products):
+#   s3://grstbx-s3/sentinel-2/l1c/    -> /data/satellite/Sentinel-2/L1C        Level-1C images, <tile>/YYYY/MM/DD/<image>.SAFE/
 #   s3://grstbx-s3/sentinel-2/l2a/    -> /data/satellite/Sentinel-2/L2A_zarr   GRS L2A, <tile>/YYYY/MM/DD/<name>/
 #   s3://grstbx-s3/sentinel-2/l2b/    -> /data/satellite/Sentinel-2/L2B_zarr   GRSl2bgen L2B, same tree
 #   s3://grstbx-s3/stac/              STAC catalogue of the products (grstbx.stac.build_catalog)
@@ -26,7 +31,8 @@ ADDRESS=${ADDRESS:-127.0.0.1:9000}
 PROFILE=${PROFILE:-grstbx-local}
 WRITE=${WRITE:-0}
 LINKS=("$@")
-[ ${#LINKS[@]} -gt 0 ] || LINKS=(sentinel-2/l2a=/data/satellite/Sentinel-2/L2A_zarr
+[ ${#LINKS[@]} -gt 0 ] || LINKS=(sentinel-2/l1c=/data/satellite/Sentinel-2/L1C
+                                 sentinel-2/l2a=/data/satellite/Sentinel-2/L2A_zarr
                                  sentinel-2/l2b=/data/satellite/Sentinel-2/L2B_zarr)
 
 mkdir -p "$S3_ROOT/$BUCKET/stac"

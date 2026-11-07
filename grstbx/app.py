@@ -26,6 +26,7 @@ import argparse
 import glob
 import io
 import json
+import logging
 import os
 import re
 import threading
@@ -39,6 +40,8 @@ import panel as pn
 import xarray as xr
 
 from .driver import is_hgrs, is_zarr
+
+logger = logging.getLogger(__name__)
 
 ACCEPTED = ('GRS L2A or L2B Zarr stores (`*.zarr`), GRS L2A NetCDF product folders (`<name>/` with '
             '`<name>.nc` and `<name>_anc.nc`), GRS L2B NetCDF files or product folders (`<name>/` with '
@@ -640,13 +643,19 @@ class _LazyLevels:
 
     def resolution(self, level):
         """
-        Pixel size of a level from the ``multiscales`` attribute of the store (scale of each level from the
-        previous one), without opening the level; None when the attribute does not give it.
+        Pixel size of a level from the ``multiscales`` attribute of the store (GRS: scale from the full
+        resolution; GRSl2bgen: scale from the previous level), without opening the level; None when the
+        attribute does not give it.
         """
-        layout = ((self.root.attrs.get('multiscales') or {}).get('layout') or []) if self.root is not None else []
+        from .driver import multiscales_layout
+
+        layout = multiscales_layout(self.root.attrs) if self.root is not None else []
         if level == 0 or len(layout) <= level:
             return None
         res = abs(float(self[0].x[1] - self[0].x[0]))
+        if isinstance(layout[level].get('scale'), (int, float)):
+            # GRS: scale of the level from the full resolution
+            return res * float(layout[level]['scale'])
         for item in layout[1:level + 1]:
             scale = (item.get('transform') or {}).get('scale')
             if not scale or len(set(scale)) != 1:
@@ -787,6 +796,11 @@ def _warp(da, grid, block=AREA_BLOCK):
                         coords={**coords, 'y': ys, 'x': xs}, name=da.name, attrs=da.attrs)
 
 
+def _has_grid(layers):
+    """True if the coordinates of a level of a product are finite (an incomplete GRS store has NaN ones)."""
+    return all(layers.sizes[dim] > 1 and np.isfinite(layers[dim].values[[0, -1]]).all() for dim in ('x', 'y'))
+
+
 class _AreaLevels:
     """
     Image of one acquisition over an area (sequence used by :class:`~grstbx.visual.Multiscale`): at each level
@@ -855,11 +869,15 @@ class _AreaLevels:
 
     def _mosaic(self, level):
         grid = self.grids[level]
-        image = None
+        image = layers = None
         for path in self.paths:
             product = self._product(path)
             # a product with fewer levels gives its coarsest one
             layers = product[min(level, len(product) - 1)]
+            if not _has_grid(layers):
+                if level == 0:
+                    logger.warning(f'{path}: no coordinates (incomplete product?), left out of the area')
+                continue
             piece = self._piece(layers, grid)
             if piece is None:
                 continue
@@ -868,7 +886,9 @@ class _AreaLevels:
             # first valid pixel: the tiles of an acquisition overlap with the same values
             image = piece if image is None else image.combine_first(piece)
         if image is None:      # no product covers the area: empty image on the grid
-            image = layers.isel(x=slice(0, 1), y=slice(0, 1)).reindex(x=grid['x'], y=grid['y'])
+            image = layers.isel(x=slice(0, 1), y=slice(0, 1)).assign_coords(
+                x=grid['x'][:1], y=grid['y'][:1]).reindex(x=grid['x'], y=grid['y'])
+            image = image.where(False)
         return image.drop_vars('spatial_ref', errors='ignore').rio.write_crs(grid['crs'])
 
 
@@ -887,8 +907,16 @@ def _open_area(products, area, kind, params, mask, first):
     crs = max(known, key=known.count) if known else pyproj.CRS(first.rio.crs)
     # pixel sizes, levels and alignment from a product of that zone, with a pyramid when there is one
     in_zone = [path for path, product_crs in zip(products.path, crss) if product_crs == crs] or [products.path[0]]
-    path = next((path for path in in_zone if is_zarr(path)), in_zone[0])
-    grids = _area_grids(area, crs, _LazyLevels(path, kind, params, mask))
+    candidates = [path for path in in_zone if is_zarr(path)] + [path for path in in_zone if not is_zarr(path)]
+    template = None
+    for path in candidates:
+        template = _LazyLevels(path, kind, params, mask)
+        if _has_grid(template[0]):
+            break
+        template = None
+    if template is None:
+        raise ValueError('no product of the area has coordinates (incomplete products?)')
+    grids = _area_grids(area, crs, template)
     images, times = [], []
     for (_, time), group in products.groupby([products.satellite.fillna(''), products.time], sort=True):
         images.append(_AreaLevels(list(group.path), grids, kind, params, mask))

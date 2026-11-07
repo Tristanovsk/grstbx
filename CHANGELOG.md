@@ -8,6 +8,14 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Added
 
+- `grstbx-s3-bucket` command (`grstbx.bucket`): serves the local S3 bucket of the products with `rclone serve s3`,
+  read-only or writable (`--write`), with options for the folders linked (`<prefix>=<folder>`), the bucket name, the
+  root folder, the address and the AWS profile. It runs the script `s3_bucket.sh`, now shipped with the package
+  (`grstbx/data`, path given by `grstbx-s3-bucket --script`) instead of the tutorial folder; its default layout
+  also links the Level-1C images (`sentinel-2/l1c`).
+- `batch.l2b_to_zarr`: conversion of an L2B NetCDF product into the Zarr pyramid of GRSl2bgen (its writer, with
+  the packing of the NetCDF variables, so that the values are the same), in a product folder next to the file with
+  its STAC Item and quick look.
 - *Open the area only* and `open_products(area=...)` use the pyramids of the Zarr products: one level of the area per
   level of the pyramids, made of the same level of the tiles, all lazy, so that only the window displayed is read and
   large areas over several tiles open (9050 x 4711 pixels at 20 m over 31TFJ and 31TGJ, displayed at 160 m in about
@@ -21,6 +29,9 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   their densest part when they are sparse (`Multiscale.valid_bounds`, less than 5 % of their box): a land tile
   with only a few rivers and lakes (e.g. 28PEV) no longer opens looking empty; the whole image if it has no
   valid pixel.
+- Viewers: the images whose pyramid is still larger than `min_size` at its coarsest level (e.g. an area over many
+  tiles) get coarser levels computed from it (2x2 mean), so that a zoomed-out map displays about the size of the
+  screen (762 x 801 pixels instead of 3048 x 3204 for an area of 1000 km).
 - Viewers: the spectra (L2A) or time series (L2B) of the points and under the mouse in a panel on the right of the map,
   with a fixed size so that their updates at each move of the mouse no longer make the page scroll; the time series of
   the polygons below the map and the panel (`visu(side=False)`: plot below the map); the empty time series show the
@@ -69,6 +80,18 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Fixed
 
+- Batch processing: the images without water of GRS 3.1.1 (it stops early and writes the marker file
+  `<name>_no_water.txt` instead of the L2A product) were reported as `L2A failed` (or `L2B failed` without
+  `l2a_stac`) and processed again at each run. `run_grs` now returns `'no_water'`, the image gets the status
+  `no_water` with no L2B step, the marker is uploaded with products in a bucket, and the plans have a
+  `no_water` column: the image is not run again unless `overwrite_l2a` (`batch.no_water_marker`).
+- Batch notebook: the L2B quick look opens level `0` of the Zarr pyramids (`pyramid=True`), whose root holds no
+  variable (the maps of the L2B parameters were left out); the optical water type shown is `owt_index_Ta2025`
+  (Tarasenko et al., 2025, with the Optical Bloom Types of Gernez et al., 2023).
+- `grstbx-viewer`: the Zarr pyramids of GRS (`multiscales` attribute as a list, levels by `group` and `scale`) open
+  again ("'list' object has no attribute 'get'"); only those of GRSl2bgen (a dict, levels by `asset`) were read.
+- *Open the area only*: the incomplete products (Zarr store without coordinates) are left out of the area with a
+  warning, instead of failing.
 - `select_products`: the last processing of an acquisition is kept per level; the L2A and L2B products of an
   image were taken for two processings of the same product, and one of the two levels was dropped without
   notice.

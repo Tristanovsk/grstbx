@@ -99,7 +99,8 @@ Inputs
    * - In situ data
      - 0..n
      - Measurements of the site for the matchups: e.g. HYPERNETS radiometer (NetCDF), monitoring
-       networks (CSV), AERONET-OC (:meth:`~grstbx.utils.Data.read_aeronet_ocv3`).
+       networks (CSV), AERONET-OC (shared ``aeronet_oc_db`` database:
+       :meth:`~grstbx.utils.Data.open_aeronet_oc`, :meth:`~grstbx.utils.Data.read_aeronet_ocv3`).
    * - Folder of products
      - 0..n
      - Tree ``<tile>/YYYY/MM/DD/<product>`` of the GRS batches (root, tile, year or month folder), explored

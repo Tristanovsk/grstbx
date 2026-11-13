@@ -47,6 +47,16 @@ from grstbx import Data
 df = Data().read_aeronet_ocv3('20200101_20201231_Venise.lev15', skiprows=8)
 ```
 
+The AERONET-OC data shared by the packages are in the AERONET-OC database (`aeronet_oc_db`, optional
+dependency `pip install grstbx[aeronet]`), kept up to date with `aeronet-oc-db update`; its location is
+`$AERONET_OC_ROOT` or `~/.config/aeronet_oc_db/config.toml`:
+
+```python
+sites = Data.aeronet_oc_sites(level='lev15')          # location, Sentinel-2 tile, coverage
+df = Data().read_aeronet_oc_site('Venise', 'lev15')   # same DataFrame as read_aeronet_ocv3
+ds = Data.open_aeronet_oc('Venise', 'lev20')          # xarray.Dataset (time, wl) with Rrs_Lwn_fQ
+```
+
 Remove wavelength ranges (e.g. absorption bands) from a hyperspectral DataArray or Dataset with a `wl`
 dimension ({meth}`Data.remove_wl_dataarray <grstbx.utils.Data.remove_wl_dataarray>`,
 {meth}`Data.remove_wl_dataset <grstbx.utils.Data.remove_wl_dataset>`); only the wavelength coordinate is

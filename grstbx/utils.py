@@ -189,6 +189,37 @@ class Data:
         df.sort_index(axis=1, level=2, inplace=True)
         return df
 
+    def read_aeronet_oc_site(self, site, level='lev20'):
+        '''
+        Read the AERONET-OC file of a site from the shared AERONET-OC database (``aeronet_oc_db``, optional
+        dependency ``pip install grstbx[aeronet]``; files kept up to date by ``aeronet-oc-db update``,
+        location ``$AERONET_OC_ROOT`` or ``~/.config/aeronet_oc_db/config.toml``).
+
+        :param site: AERONET site name (e.g. ``'Venise'``)
+        :param level: ``'lev15'`` or ``'lev20'``
+        :return: pandas.DataFrame, see :meth:`read_aeronet_ocv3`
+        '''
+        import aeronet_oc_db
+        return self.read_aeronet_ocv3(str(aeronet_oc_db.raw_file(site, level)))
+
+    @staticmethod
+    def open_aeronet_oc(site, level='lev20', legacy_names=False):
+        '''
+        xarray.Dataset (time, wl) of an AERONET-OC site from the shared database (``aeronet_oc_db``), with
+        the remote sensing reflectances ``Rrs_Lwn``, ``Rrs_Lwn_fQ`` and ``Rrs_Lwn_IOP``.
+
+        :param legacy_names: variable names of the former ``AERONET/netcdf/OCv3`` files
+        '''
+        import aeronet_oc_db
+        return aeronet_oc_db.open_site(site, level, legacy_names=legacy_names)
+
+    @staticmethod
+    def aeronet_oc_sites(level=None):
+        '''AERONET-OC sites of the shared database: location, Sentinel-2 tile and coverage
+        (see ``aeronet_oc_db.site_info``)'''
+        import aeronet_oc_db
+        return aeronet_oc_db.site_info(level)
+
     @staticmethod
     def _wl_to_keep(wl, wl_to_remove):
         # only the wavelength coordinate is needed: no data is loaded or computed

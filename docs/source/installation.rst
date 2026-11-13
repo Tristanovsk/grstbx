@@ -68,8 +68,9 @@ extra           content                                                         
 ==============  ==============================================================  ======================================
 ``notebook``    JupyterLab, ipykernel, jupyter_bokeh                            run the notebooks and the viewers
 ``regrid``      xesmf                                                           :meth:`grstbx.utils.Reproj.regridding`
+``remote``      fsspec, s3fs, aiohttp, h5netcdf                                 products in buckets (:doc:`tutorials/s3_stac`)
 ``docs``        Sphinx, sphinx-book-theme, myst-nb...                           build this documentation
-``all``         ``notebook`` and ``docs``
+``all``         ``notebook``, ``docs``, ``test`` and ``remote``
 ==============  ==============================================================  ======================================
 
 ``xesmf`` depends on ESMF, which is not available on PyPI: install it with
@@ -83,6 +84,14 @@ Export of subsets
 of the `GRS processor <https://github.com/Tristanovsk/grs>`__: they need the ``grs`` package >= 3.0.1
 in the same environment. It is imported only when exporting; the rest of grstbx (including
 :func:`~grstbx.subset.crop_l2a` and :func:`~grstbx.subset.export_rrs_geotiff`) works without it.
+
+Level-1 images in buckets
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Reading the Level-1 images in place from a bucket, and their STAC catalogue (see :doc:`tutorials/s3_stac`),
+are done by `GRSdriver <https://github.com/Tristanovsk/GRSdriver>`__ >= 2.1, not by grstbx:
+``pip install "GRSdriver[remote]>=2.1"`` in the same environment. The batches of :mod:`grstbx.batch` do not
+need it: they download each Level-1 image before running GRS.
 
 Jupyter kernel
 --------------

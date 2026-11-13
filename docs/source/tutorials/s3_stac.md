@@ -22,6 +22,7 @@ s3://grstbx-s3/
     sentinel-2/l2a/    GRS L2A products     -> /data/satellite/Sentinel-2/L2A_zarr
     sentinel-2/l2b/    GRSl2bgen L2B products -> /data/satellite/Sentinel-2/L2B_zarr
     stac/              catalog.json, grs-l2a/, grs-l2b/
+    stac-l1/           catalogue of the Level-1 images (GRSdriver): sentinel-2-l1c/, landsat-c2-l1/
 ```
 
 Below each prefix, the tree of the batches is kept: `<tile>/YYYY/MM/DD/<name>/`, one folder per product with
@@ -68,6 +69,35 @@ grstbx: set the name of the bucket in the first cell to run it on your own data.
 :maxdepth: 1
 
 s3_stac/grstbx_s3_stac
+```
+
+## Level-1 images in the bucket
+
+The Level-1 images of the bucket (`sentinel-2/l1c`) are read in place by
+[GRSdriver](https://github.com/Tristanovsk/GRSdriver) >= 2.1, the readers used by GRS: the metadata through
+fsspec and only the parts of the rasters needed through GDAL (`/vsis3/`), with the same `AWS_PROFILE` or
+`storage_options` (`pip install "GRSdriver[remote]"`):
+
+```python
+import os
+from GRSdriver import Sentinel2Driver
+
+os.environ['AWS_PROFILE'] = 'grstbx-local'
+l1c = Sentinel2Driver('s3://grstbx-s3/sentinel-2/l1c/31TFJ/2023/06/11/S2A_MSIL1C_..._.SAFE', resolution=20)
+```
+
+`GRSdriver.stac` builds the catalogue of the Level-1 images (collections `sentinel-2-l1c` and `landsat-c2-l1`),
+with the same layout as the catalogue of grstbx but in its own prefix, `stac-l1/`, then searches it and opens
+the images found:
+
+```python
+from GRSdriver import stac
+
+stac.build_catalog({'/data/satellite/Sentinel-2/L1C': 's3://grstbx-s3/sentinel-2/l1c'},
+                   's3://grstbx-s3/stac-l1')
+found = stac.search('s3://grstbx-s3/stac-l1/catalog.json', bbox=(5.03, 43.40, 5.24, 43.56),
+                    start='2023-06-01', end='2023-06-30', max_cloud_cover=20)
+l1c = stac.open_item(found.iloc[0], resolution=20)
 ```
 
 ## Batches writing to the bucket

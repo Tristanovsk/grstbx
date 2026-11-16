@@ -156,6 +156,7 @@ def _exporter_class():
 
         def __init__(self, l2_prod, ancillary, complevel=5):
             # the constructor of L2aProduct builds the product from the processor outputs: not called
+            self.prod = None        # no Level-1 product: no L1C quicklook (grs >= 3.1 reads prod.quicklook_l1c)
             self.l2_prod = _sanitize(l2_prod)
             # the GRS writers always write the ancillary part: empty when there is none
             self.ancillary = _sanitize(xr.Dataset() if ancillary is None else ancillary)

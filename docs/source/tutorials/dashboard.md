@@ -125,8 +125,8 @@ The **STAC search** card finds products by area, period and cloud cover in a STA
 - **period** and **maximum cloud cover**.
 
 The **search map** (*Area of the STAC search*, on the start page, and folded below the viewer once
-products are open) is a basemap to draw the area before any product is open. It starts on the Étang de
-Berre and the Gulf of Fos; `--search-area lon_min,lat_min,lon_max,lat_max` starts it elsewhere, and
+products are open) is a basemap to draw the area before any product is open. It starts on metropolitan
+France (with Corsica); `--search-area lon_min,lat_min,lon_max,lat_max` starts it elsewhere, and
 `--search-area world` on the whole world. Draw pins with the Point
 Draw tool, polygons with the Polygon Draw tool (double-click to start and to close) and lasso shapes with
 the Freehand Draw tool. The search keeps the products that intersect one of the shapes, and drawing a

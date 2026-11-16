@@ -317,6 +317,12 @@ def test_commands(tmp_path, level1):
     assert f'GRSl2bgen {tmp_path}/L2A/31TEJ/2025/08/01/{L2A} -o {tmp_path}/L2B/31TEJ/2025/08/01/{L2B}.nc' in line
     assert f'{L2A}.zarr/0/mask/zarr.json ] && /usr/bin/time -v' in line
     assert '_profile_L2A.txt grs' in line and '_profile_L2B.txt GRSl2bgen' in line
+    assert '--pyramid' not in line
+
+    # Zarr L2B pyramid: --pyramid passed to GRSl2bgen
+    zarr = new_batch(tmp_path, l2b_ext='.zarr', pyramid=True)
+    line = zarr.commands(zarr.plan_level1(images))[0]
+    assert f'-o {tmp_path}/L2B/31TEJ/2025/08/01/{L2B}.zarr --product_dir --stac --pyramid' in line
 
     # L2A done: GRSl2bgen only; GRS only: no L2B step, no guard
     make_zarr(tmp_path / 'L2A' / '31TEJ' / '2025/08/01' / L2A / f'{L2A}.zarr')

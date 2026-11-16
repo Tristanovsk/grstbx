@@ -1228,6 +1228,8 @@ class Batch:
                 out = opj(os.path.dirname(os.path.dirname(row['l2b'])), os.path.basename(row['l2b']))
                 l2a = os.path.dirname(row['l2a']) if 'cloud_cover' in plan else row['l2a']
                 cmd = f'GRSl2bgen {l2a} -o {out} --product_dir' + (' --stac' if self.stac else '')
+                if self.pyramid and out.endswith('.zarr'):
+                    cmd += ' --pyramid'
                 # grs exits with 0 when it fails and 255 when the product exists (--no_clobber): the
                 # L2B step runs if the L2A product exists
                 cmd = f'[ -e {_l2a_marker(row["l2a"])} ] && {timer("L2B")}{cmd}'

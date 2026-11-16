@@ -107,6 +107,12 @@ def test_matchup_table_quality_metrics(tmp_path):
     assert back.time.dtype.kind == 'M' and len(back) == len(table) and back.sites.iloc[0] == 'SITE'
 
 
+def test_matchup_table_without_l2a(tmp_path):
+    items = pd.DataFrame([{'id': 'x', 'time': pd.Timestamp('2024-07-01'), 'station': 'SITE', 'sites': ['SITE'],
+                           'subset': str(tmp_path / 'sentinel-2/l1c/SITE/2024/07/01/x_SITE.nc')}])
+    assert val.matchup_table(items, version='3.1.1', root=tmp_path, verbose=False).empty
+
+
 def test_matchup_metrics_log_and_ape():
     x = np.array([0.01, 0.02, 0.04])
     m = matchup_metrics(x, 2 * x)

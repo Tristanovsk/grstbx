@@ -427,6 +427,10 @@ def matchup_table(items, extractions=None, version=None, root=DATA_ROOT, insitu_
         extractions = extract_l2a(items.l2a, window, size, platform_nir, workers)
     else:
         items['l2a'] = [str(l2a_path(s, version or '', root)) for s in items.subset]
+    if extractions.empty or 'l2a' not in extractions:
+        if verbose:
+            print('no L2A product to extract: run process_subsets first', flush=True)
+        return pd.DataFrame()
     sat = items.drop(columns=['item'], errors='ignore').merge(extractions, on='l2a', how='inner')
     if 'error' in sat:
         sat = sat[sat['error'].isna()].drop(columns='error')

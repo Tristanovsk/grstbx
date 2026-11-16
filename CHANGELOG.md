@@ -6,6 +6,30 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+### Added
+
+- `grstbx.validation` and the command `grstbx-validation`: validation of the GRS L2A Rrs with AERONET-OC on the
+  Sentinel-2 L1C subsets of 5 km x 5 km around the AERONET-OC stations (static STAC catalogue of the bucket
+  `aeronet-oc`, made by `notebook/validation_image_subset/aeronet_oc_s2_subsets.py`): subsets of the catalogue
+  (`read_items`), GRS on the subsets, one process per image, L2A products with their STAC Item in the tree of the
+  bucket (`process_subsets`, `grstbx-validation grs`), statistics of the water pixels of a ring (or box) around the
+  station without the platform (`extract_window`, `extract_l2a`), AERONET-OC measurements of the in situ validation
+  database with the three normalisations (`read_aeronet_oc`), matchup table, one row per image and band, nearest
+  Level 2.0 measurement first and nearest band within 15 nm (`matchup_table`, `grstbx-validation matchups`), quality
+  criteria kept as columns (`quality`: lag, valid fraction, CV(560), level, AOT, sunglint) and statistics by group
+  (`metrics_table`).
+- `grstbx.validation_app`: dashboard of the matchups (panel, holoviews, bokeh), in a notebook
+  (`validation.dashboard(table)`) or as a web application (`grstbx-validation dashboard <tables> --show`, several
+  tables to compare GRS versions): criteria and selections changed interactively, map of the stations, scatter
+  plots per band or all bands (1:1 and regression lines, statistics, hover), statistics by band, station and both
+  with a heat map, distributions of the residuals, spectra of a matchup with the quicklooks of the L2A product,
+  residuals in time and against their drivers (AOT, sunglint, geometry, wind, lag, homogeneity), download of the
+  selected matchups.
+- `matchup_metrics`: MAE, MedAPE and the log-space RMSE, bias and MAE (`rmse_log`, `bias_log`, `mae_log`), as in
+  satmatchup and the ACIX intercomparisons.
+- Notebooks `notebook/validation_image_subset`: the dataset of subsets (`aeronet_oc_s2_l1c_subsets.ipynb`) and the
+  validation with the dashboard (`grs_aeronet_oc_validation.ipynb`).
+
 ## [2.7.0] - 2026-11-16
 
 Products in an S3 bucket (local bucket served by `grstbx-s3-bucket`, batches reading and writing buckets, static

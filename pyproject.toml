@@ -63,6 +63,8 @@ dependencies = [
 grstbx-viewer = "grstbx.app:main"
 # local S3 bucket of the products, served in place by rclone (grstbx.bucket, script grstbx/data/s3_bucket.sh)
 grstbx-s3-bucket = "grstbx.bucket:main"
+# validation of GRS with AERONET-OC on the subsets of the bucket aeronet-oc: GRS runs, matchups, dashboard
+grstbx-validation = "grstbx.validation:main"
 
 [project.optional-dependencies]
 # Jupyter environment to run the notebooks and the interactive viewers

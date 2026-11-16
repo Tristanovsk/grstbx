@@ -188,6 +188,41 @@ validation tutorial).
    grstbx.matchup.matchup_metrics
    grstbx.matchup.plot_matchup
 
+Validation with AERONET-OC
+--------------------------
+
+GRS on the Sentinel-2 subsets around the AERONET-OC stations (STAC catalogue of the bucket ``aeronet-oc``),
+matchup table, quality criteria and statistics (:mod:`grstbx.validation`, command line ``grstbx-validation``),
+and dashboard of the matchups (:mod:`grstbx.validation_app`).
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   grstbx.validation.read_items
+   grstbx.validation.process_subsets
+   grstbx.validation.run_grs
+   grstbx.validation.l2a_path
+   grstbx.validation.cams_file
+   grstbx.validation.window_mask
+   grstbx.validation.extract_window
+   grstbx.validation.extract_l2a
+   grstbx.validation.read_aeronet_oc
+   grstbx.validation.band_pairs
+   grstbx.validation.matchup_table
+   grstbx.validation.quality
+   grstbx.validation.metrics_table
+   grstbx.validation.save_table
+   grstbx.validation.read_table
+   grstbx.validation.dashboard
+
+.. autosummary::
+   :toctree: generated
+   :template: autosummary/class.rst
+   :nosignatures:
+
+   grstbx.validation_app.MatchupDashboard
+
 Masking
 -------
 

@@ -6,7 +6,21 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-11-16
+
+Products in an S3 bucket (local bucket served by `grstbx-s3-bucket`, batches reading and writing buckets, static
+STAC catalogue), download of Sentinel-2 images from the Copernicus Data Space Ecosystem, *Open the area only* over
+several tiles and UTM zones with the Zarr pyramids, time series of polygons, and export of the images of an area
+to Google Drive.
+
 ### Added
+
+- Documentation: tutorial *Export*, with the notebooks exporting the images of an area (point and box, bounding
+  box or vector file) between two dates, for the levels L1C, L2A and L2B, tile by tile, to a Google Drive folder
+  with rclone: NetCDF (L2A with the GRS writers, L2B with its packing) or zipped Zarr stores, L1C as a zip of
+  GeoTIFFs with their metadata, and a manifest of the exports. One notebook for the local bucket `grstbx-s3`, one
+  for the TREX datalake of CNES (example: Lake Balaton, six tiles over two UTM zones; SLURM job array per year,
+  upload from a login node through the proxy).
 
 - `grstbx-s3-bucket` command (`grstbx.bucket`): serves the local S3 bucket of the products with `rclone serve s3`,
   read-only or writable (`--write`), with options for the folders linked (`<prefix>=<folder>`), the bucket name, the
@@ -80,6 +94,10 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Fixed
 
+- `export_l2a` (and `crop_and_export`) failed with GRS 3.1 ("'L2aExporter' object has no attribute 'prod'"):
+  the exporter has no Level-1 product, hence no L1C quick look.
+- `Batch.commands`: `--pyramid` is passed to `GRSl2bgen` for a Zarr L2B pyramid (`l2b_ext='.zarr'`,
+  `pyramid=True`); the command lines wrote single-resolution stores.
 - Batch processing: the images without water of GRS 3.1.1 (it stops early and writes the marker file
   `<name>_no_water.txt` instead of the L2A product) were reported as `L2A failed` (or `L2B failed` without
   `l2a_stac`) and processed again at each run. `run_grs` now returns `'no_water'`, the image gets the status
@@ -140,6 +158,9 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Changed
 
+- Documentation: the L1C to L2A and L2B batch notebook is written for GRS 3.1.1, GRSl2bgen 1.2.0dev1 and
+  GRSdriver 2.1.1 (versions printed and checked), with Zarr L2B pyramids and STAC Items of the L2A and L2B
+  products by default.
 - Time series of the polygons about 4 times faster on the products of a bucket (87 s to 21 s for 40 dates and 3
   polygons on the local bucket): the polygons close to each other are read in one window per date, the masks of the
   polygons are kept for the dates on the same grid, and several dates are read at the same time
@@ -378,7 +399,8 @@ Tools for L2B handling.
 Fix for reprojection in any system, especially useful for reprojection in pseudo-Mercator (EPSG:3857) for
 visualization with web mapping tools (e.g. OpenStreetMap, Google Maps).
 
-[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/Tristanovsk/grstbx/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/Tristanovsk/grstbx/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/Tristanovsk/grstbx/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/Tristanovsk/grstbx/compare/v2.3.0...v2.4.0

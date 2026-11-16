@@ -24,11 +24,14 @@ v2.4.0: first release on PyPI; web dashboard grstbx-viewer (grstbx.app), viewer 
 v2.5.0: time series of folders in grstbx-viewer, bounded caches of the viewers, tests and continuous integration
 v2.6.0: STAC Items and STAC search in grstbx-viewer, remote products (https, s3), GRSl2bgen L2B product folders,
         dashboard inline in Jupyter notebooks (app.panel) and JupyterHub sessions
+v2.7.0: products in S3 buckets (grstbx-s3-bucket, batches on buckets, static STAC catalogue), Sentinel-2 download
+        from CDSE (grstbx.download), areas over several tiles with the Zarr pyramids, time series of polygons,
+        export of the images of an area to Google Drive
         (full history: CHANGELOG.md)
 
 '''
 
-__version__ = '2.7.0.dev0'
+__version__ = '2.7.0'
 
 from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels, open_hgrs_l2a, is_hgrs
 #from .driver_v1 import l2grs_v1

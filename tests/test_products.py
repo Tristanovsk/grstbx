@@ -540,7 +540,7 @@ def test_search_map_starts_on_the_area():
     lon1, lat1 = to_lonlat.transform(x1, y1)
     lon_min, lat_min, lon_max, lat_max = SEARCH_AREA
     assert lon0 <= lon_min and lon1 >= lon_max and lat0 <= lat_min + 1e-9 and lat1 >= lat_max - 1e-9
-    assert lon1 - lon0 < 2                                          # around the Etang de Berre
+    assert lon1 - lon0 < 40                                         # around metropolitan France
     (x0, x1), _ = SearchMap(width=800, height=400, area=None).extent()
     assert x1 - x0 == 2 * SearchMap.WORLD
 

@@ -82,6 +82,7 @@ or, without notebook, the web dashboard (see :doc:`tutorials/dashboard`):
    tutorials/s3_stac
    tutorials/l2b_datacube
    tutorials/subset_export
+   tutorials/export
    tutorials/utilities
    tutorials/validation
    tutorials/case_studies

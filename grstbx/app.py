@@ -1238,9 +1238,9 @@ def _file_browser(root, products_input):
                      sizing_mode='stretch_width')
 
 
-#: area shown by the search map at start-up (lon_min, lat_min, lon_max, lat_max): the Etang de Berre and the
-#: Gulf of Fos
-SEARCH_AREA = (4.80, 43.30, 5.40, 43.62)
+#: area shown by the search map at start-up (lon_min, lat_min, lon_max, lat_max): metropolitan France, with
+#: Corsica
+SEARCH_AREA = (-5.2, 41.3, 9.6, 51.1)
 
 
 class SearchMap:
@@ -1408,7 +1408,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     :param max_cloud_cover: maximum cloud cover (%) of the products with a STAC Item
     :param stac: catalogue of the *STAC search* card (STAC API URL, or folder / glob pattern of STAC Items)
     :param search_area: area shown by the search map at start-up (lon_min, lat_min, lon_max, lat_max), default
-                        the Etang de Berre (:data:`SEARCH_AREA`); None: the whole world
+                        metropolitan France (:data:`SEARCH_AREA`); None: the whole world
     :param url_state: keep the products opened and the state of the map in the URL of the page (served
                       dashboard), so that reloading the page shows the same map and the URL can be shared
                       (or the :class:`panel.io.location.Location` to use)
@@ -1836,7 +1836,7 @@ def main(argv=None):
                         help='keep all the processings of each acquisition (default: the last one only)')
     parser.add_argument('--search-area', default=','.join(map(str, SEARCH_AREA)),
                         help='area shown by the search map at start-up: lon_min,lat_min,lon_max,lat_max, or "world" '
-                             '(default: the Etang de Berre, %(default)s)')
+                             '(default: metropolitan France, %(default)s)')
     parser.add_argument('--stac', help='catalogue of the STAC search card: STAC API URL, or folder / glob pattern '
                                        'of STAC Items (e.g. the L2B products of GRSl2bgen --stac)')
     series.add_argument('--max-cloud-cover', type=float,

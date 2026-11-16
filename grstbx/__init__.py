@@ -31,7 +31,7 @@ v2.7.0: products in S3 buckets (grstbx-s3-bucket, batches on buckets, static STA
 
 '''
 
-__version__ = '2.7.0'
+__version__ = '2.8.0.dev0'
 
 from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels, open_hgrs_l2a, is_hgrs
 #from .driver_v1 import l2grs_v1

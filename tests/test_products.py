@@ -661,3 +661,32 @@ def test_warp_reads_only_the_blocks_displayed(tmp_path, monkeypatch):
     assert warped.shape == (len(grid['y']), len(grid['x'])) and not reads
     block = warped.isel(x=slice(32, 64), y=slice(32, 64)).values     # one block of the grid
     assert len(reads) == 1 and max(reads[0]) < 50 and np.nanmax(block) == 3
+
+
+def test_dashboard_keeps_its_state_in_the_url(l2b_files):
+    import urllib.parse
+
+    class Location:
+        search = ''
+
+    def query():
+        return dict(urllib.parse.parse_qsl(location.search[1:]))
+
+    location = Location()
+    app, widget = dashboard(url_state=location)
+    widget('Products').value = '\n'.join(l2b_files[:2])
+    widget('Open').clicks += 1
+    assert query()['products'].splitlines() == l2b_files[:2] and query()['date'].startswith('2025-01-03')
+    viewer = app.main[0].objects[0]
+    dates = [w for w in app.main[0].select(pn.widgets.Select)
+             if isinstance(w.options, dict) and any('2025-01-08' in key for key in w.options)]
+    dates[0].value = 1        # a change of the map is written in the URL
+    assert query()['date'].startswith('2025-01-08')
+
+    # a new page with this URL opens the same products at the same date and place
+    location.search += '&' + urllib.parse.urlencode({'view': '6.0,44.0,6.1,44.1'})
+    app, widget = dashboard(url_state=location)
+    assert widget('Products').value.splitlines() == l2b_files[:2]
+    if len(app.main[0].objects) != 3:      # opened at load in a served page
+        widget('Open').clicks += 1
+    assert app.main[0].objects[0] is not viewer and query()['date'].startswith('2025-01-08')

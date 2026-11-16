@@ -204,3 +204,80 @@ def test_first_view_on_the_valid_pixels():
     # no valid pixel: the whole image
     (xmin, xmax), (ymin, ymax) = viewer._extent(1)
     assert (xmin, xmax, ymin, ymax) == (x[0] - 10, x[-1] + 10, y[-1] - 10, y[0] + 10)
+
+
+def test_state_of_the_map():
+    viewer, _ = polygon_viewer()
+    viewer.visu()
+    date, cmap = viewer.widgets['date'], viewer.widgets['colormap']
+    state = viewer.state()
+    assert state['date'] == viewer.datetimes[0].strftime('%Y-%m-%dT%H:%M:%S') and 'view' not in state
+    changes = []
+    viewer.on_state_change(changes.append)
+    other = next(name for name in cmap.options if name != cmap.value_name)
+    viewer.set_state({'date': '2025-01-08', 'layer': 'Chla_OC2nasa', 'cmap': other, 'log': '1', 'range': '0.5,3',
+                      'opacity': '0.4', 'reverse': 'true', 'basemap': 'no such basemap', 'layer ': 'x'})
+    assert date.value == 1 and cmap.value_name == other and viewer.widgets['log'].value
+    assert viewer.widgets['range'].value == (0.5, 3) and viewer.widgets['opacity'].value == 0.4
+    assert changes and changes[-1]['date'].startswith('2025-01-08') and changes[-1]['range'] == '0.5,3'
+    viewer.set_state({'date': 'not a date', 'layer': 'unknown', 'range': 'a,b'})     # left out
+    assert date.value == 1 and viewer.widgets['range'].value == (0.5, 3)
+    # the view follows the map
+    x0, x1 = viewer.data.bounds(0)[0], viewer.data.bounds(0)[2]
+    y0, y1 = viewer.data.bounds(0)[1], viewer.data.bounds(0)[3]
+    viewer._range_stream.event(x_range=(x0, x1), y_range=(y0, y1))
+    assert len(changes[-1]['view'].split(',')) == 4
+
+
+def test_dates_from_the_player_and_the_time_series():
+    import panel as pn
+
+    viewer, _ = polygon_viewer()
+    layout = viewer.visu()
+    player = next(w for w in layout.select(pn.widgets.Player))
+    player.value = 2
+    assert viewer.widgets['date'].value == 2
+    viewer.widgets['date'].value = 1
+    assert player.value == 1
+    # a click near a date of a time series plot (ms since 1970 on the Bokeh time axes)
+    assert viewer._nearest_date(pd.Timestamp('2025-01-12').value / 1e6) == 2
+    assert viewer._nearest_date(np.datetime64('2025-01-04')) == 0
+
+
+def test_first_view_from_the_previous_map():
+    import pyproj
+
+    from conftest import l2b_product
+    from grstbx.visual import Multiscale, ViewParam
+
+    cube = l2b_product(pd.Timestamp('2025-01-03'), size=40)[['Chla_OC2nasa']].expand_dims(time=[pd.Timestamp('2025-01-03')])
+    data = Multiscale.from_xarray(cube.rio.write_crs('EPSG:32631'))
+    to_lonlat = pyproj.Transformer.from_crs(32631, 4326, always_xy=True)
+    xmin, ymin, xmax, ymax = data.bounds(0)
+    inside = to_lonlat.transform_bounds(xmin, ymin, (xmin + xmax) / 2, (ymin + ymax) / 2)
+    (vx0, vx1), (vy0, vy1) = ViewParam(data, view=inside)._extent(0)
+    tol = 0.05 * (xmax - xmin)       # the lon/lat box of the view is a little larger
+    assert abs(vx0 - xmin) < tol and abs(vx1 - (xmin + xmax) / 2) < tol
+    assert abs(vy0 - ymin) < tol and abs(vy1 - (ymin + ymax) / 2) < tol
+    # a view far from the image: its valid pixels
+    assert ViewParam(data, view=(-60, -10, -59, -9))._extent(0) == ViewParam(data)._extent(0)
+
+
+def test_click_on_the_time_series_selects_the_date():
+    import holoviews as hv
+    import panel as pn
+
+    hv.extension('bokeh')
+    viewer, polygon = polygon_viewer()
+    layout = viewer.visu()
+    plot = hv.renderer('bokeh').get_plot(list(layout.select(pn.pane.HoloViews))[1].object)
+    taps = [c for sub in plot.subplots.values() for c in sub.callbacks if type(c).__name__ == 'TapCallback']
+    assert taps, 'the time series plot has no Tap callback'
+    for stream in taps[0].streams:
+        stream.event(x=np.datetime64('2025-01-12'), y=1.)
+    assert viewer.widgets['date'].value == 2
+    # the plot of the polygons too
+    set_polygon(viewer, polygon)
+    table = viewer.polygon_timeseries('Chla_OC2nasa')
+    plot = hv.renderer('bokeh').get_plot(viewer._polygon_plot(table, 'Chla'))
+    assert any(type(c).__name__ == 'TapCallback' for sub in plot.subplots.values() for c in sub.callbacks)

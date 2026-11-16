@@ -1264,7 +1264,8 @@ class SearchMap:
 
         self.basemap = basemap or visual.DEFAULT_BASEMAP
         self.width, self.height, self.area = width, height, area
-        self.pane = pn.pane.HoloViews()
+        # own axes: not linked to the map of the viewer, which opens on its products
+        self.pane = pn.pane.HoloViews(linked_axes=False)
         self._subscribers = []
         self.clear()
 
@@ -1339,9 +1340,52 @@ class SearchMap:
         return shapely.union_all(shapes) if shapes else None
 
 
+class _UrlState:
+    """
+    State of the dashboard in the query of the URL of the page: the products opened (with the options of the
+    time series) and the state of the map (see :meth:`grstbx.visual.ViewParam.state`), so that reloading the
+    page shows the same map, and the URL can be shared. Without ``location`` (e.g. in a notebook or in the
+    tests), the state is kept in :attr:`query` only.
+    """
+
+    #: longest list of products (characters) written in the URL: the long lists (e.g. STAC results) are left out
+    max_products = 8000
+
+    def __init__(self, location=None):
+        self.location = location
+        search = location.search if location is not None else ''
+        self.query = dict(urllib.parse.parse_qsl((search or '').lstrip('?')))
+
+    def update(self, values, clear=()):
+        """Set the ``values`` (None or '': removed) and remove the keys ``clear``."""
+        for key in clear:
+            self.query.pop(key, None)
+        for key, value in values.items():
+            if value is None or value == '' or (key == 'products' and len(str(value)) > self.max_products):
+                self.query.pop(key, None)
+            else:
+                self.query[key] = str(value)
+        if self.location is not None:
+            search = '?' + urllib.parse.urlencode(self.query) if self.query else ''
+            if search != (self.location.search or ''):
+                self.location.search = search
+
+    def view(self):
+        """Visible area of the map (lon_min, lat_min, lon_max, lat_max), or None."""
+        try:
+            view = tuple(float(v) for v in self.query['view'].split(','))
+        except (KeyError, ValueError):
+            return None
+        return view if len(view) == 4 else None
+
+
+#: keys of the URL written by the map (see :meth:`grstbx.visual.ViewParam.state`)
+MAP_KEYS = ('date', 'layer', 'cmap', 'reverse', 'log', 'range', 'opacity', 'basemap', 'view')
+
+
 def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, width=820, height=620,
                tile=None, start=None, end=None, last_processing=True, mask_l2a=True, mask_l2b=True,
-               cache_size=2e9, max_cloud_cover=None, stac=None, search_area=SEARCH_AREA):
+               cache_size=2e9, max_cloud_cover=None, stac=None, search_area=SEARCH_AREA, url_state=True):
     """
     Build the dashboard (one per browser session).
 
@@ -1365,12 +1409,29 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     :param stac: catalogue of the *STAC search* card (STAC API URL, or folder / glob pattern of STAC Items)
     :param search_area: area shown by the search map at start-up (lon_min, lat_min, lon_max, lat_max), default
                         the Etang de Berre (:data:`SEARCH_AREA`); None: the whole world
+    :param url_state: keep the products opened and the state of the map in the URL of the page (served
+                      dashboard), so that reloading the page shows the same map and the URL can be shared
+                      (or the :class:`panel.io.location.Location` to use)
     :return: panel template
     """
     from . import visual
 
     pn.extension(notifications=True)
     paths = [path] if isinstance(path, (str, os.PathLike)) else list(path or [])
+    if url_state is True:
+        url_state = pn.state.location if pn.state.curdoc is not None and pn.state.curdoc.session_context else None
+    url = _UrlState(url_state or None)
+    # state of the URL restored at the first opening (products of the URL, unless given to the dashboard)
+    restore = dict(url.query) if url.query.get('products') and not paths else {}
+    if restore:
+        paths = restore['products'].splitlines()
+        tile = restore.get('tile', tile)
+        start, end = restore.get('start', start), restore.get('end', end)
+        last_processing = restore.get('last', str(last_processing)).lower() in ('1', 'true')
+        try:
+            max_cloud_cover = float(restore['cloud']) if 'cloud' in restore else max_cloud_cover
+        except ValueError:
+            pass
     if root is None:
         first = str(paths[0]).rstrip('/') if paths else ''
         root = os.path.dirname(first.split('*')[0]) if first else os.getcwd()
@@ -1456,6 +1517,9 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
     rgb_card = pn.Card(title='RGB composite (L2A)', visible=False, sizing_mode='stretch_width')
 
     main = pn.Column(sizing_mode='stretch_width')
+    # height kept by the main area while a viewer is open, so that the page does not jump when the
+    # viewer is replaced (controls, map, polygons, exports)
+    viewer_height = height + 1000
     intro = pn.pane.Markdown(
         '## Open GRS products\n\n'
         'Enter the products in the **Products** field of the sidebar, or add them with the **File browser**, '
@@ -1514,6 +1578,7 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
         """After a failed opening: the viewer already open stays, with its polygons and points."""
         if state['viewer'] is None:
             area_card.collapsed = False
+            main.styles = {}
             main.objects = start_page
             contrast_card.visible = rgb_card.visible = False
 
@@ -1533,8 +1598,11 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
             ndates = len(data.images)
             # the live time series of L2B reads one block per date: off at opening for long series
             live = kind == 'L2A' or ndates <= LIVE_MAX_DATES
+            # the map keeps its area (the previous viewer, or the URL at start-up) if it overlaps the products
+            previous = state['viewer']
+            view = previous.current_view() if previous is not None else url.view() if restore else None
             options = dict(reproject=reproject_box.value, basemap=basemap_select.value, cmap=cmap_select.value,
-                           width=width, height=height, title=title, live=live)
+                           width=width, height=height, title=title, live=live, view=view, responsive=True)
             if kind == 'L2A':
                 viewer = visual.ViewSpectral(data, minmaxvalues=tuple(rrs_range.value),
                                              minmax=(0, max(0.1, rrs_range.value[1])), **options)
@@ -1546,9 +1614,25 @@ def create_app(path=None, root=None, reproject=True, basemap=None, cmap=None, wi
                     f'{ndates} dates: the live time series under the mouse is off (it reads every date); tick '
                     '"Live time series" to turn it on, or draw points.', duration=10000)
             state['viewer'] = viewer
-            # the search map stays below the viewer, folded
+            layout = viewer.visu(controls=False)
+            # the map of the URL at start-up, or else the map of the previous viewer of the same level
+            if restore:
+                viewer.set_state(restore)
+                restore.clear()
+            elif previous is not None and type(previous) is type(viewer):
+                viewer.set_state(previous.state())
+            # the search map stays below the viewer, folded; the viewer is replaced at once, in an area of
+            # constant height
             area_card.collapsed = True
-            main.objects = [viewer.visu(controls=False), _exports(viewer), area_card]
+            main.styles = {'min-height': f'{viewer_height}px'}
+            main.objects = [layout, _exports(viewer), area_card]
+            # the products and the map in the URL
+            url.update({'products': products_input.value.strip(), 'tile': tile_select.value or None,
+                        'start': start_picker.value, 'end': end_picker.value,
+                        'last': None if last_box.value else '0', 'cloud': cloud_input.value},
+                       clear=MAP_KEYS)
+            url.update(viewer.state())
+            viewer.on_state_change(lambda values: url.update(values) if state['viewer'] is viewer else None)
             contrast_card.objects = [viewer.display_controls()]
             contrast_card.visible = True
             rgb_card.objects = [viewer.rgb_controls()] if kind == 'L2A' else []
@@ -1678,7 +1762,7 @@ def panel(path=None, root=None, sidebar_width=380, **kwargs):
     :param kwargs: other arguments of :func:`create_app`
     :return: panel layout
     """
-    template = create_app(path=path, root=root, **kwargs)
+    template = create_app(path=path, root=root, **{'url_state': False, **kwargs})
     return pn.Row(pn.Column(*template.sidebar, width=sidebar_width), *template.main)
 
 

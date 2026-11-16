@@ -67,8 +67,8 @@ batch notebooks of {mod}`grstbx.batch` can be bucket URLs instead of local folde
 `s3://grstbx-s3/sentinel-2/l1c` and `s3://grstbx-s3/sentinel-2/l2b`. The two can be mixed, e.g. local Level-1
 images and products written to a bucket. Paths are read and written through fsspec
 (`pip install "grstbx[remote]"`). The credentials and the endpoint come from the environment (e.g.
-`AWS_PROFILE`, see {doc}`s3_stac`) or from `storage_options`. GRS and GRSl2bgen work on local files, so
-{class}`~grstbx.batch.Batch` stages the images one at a time:
+`AWS_PROFILE`, see {doc}`s3_stac`) or from `storage_options`. {class}`~grstbx.batch.Batch` runs GRS and
+GRSl2bgen on local files, so it stages the images one at a time:
 
 1. the Level-1 image, or the L2A product when only its L2B product is computed, is downloaded to
    `work_dir`, a local folder (a temporary folder by default: choose a disk with a few GB free per image);
@@ -79,6 +79,11 @@ images and products written to a bucket. Paths are read and written through fssp
    at the next run;
 4. the local copies are removed, and the profile of the image and the summary of the batch are written
    to the bucket.
+
+The Level-1 image is downloaded even though GRSdriver >= 2.1 reads it in place (see {doc}`s3_stac`): the
+batch works the same way for all the versions of GRS. GRS >= 3.1.1 also takes URLs for its own inputs and
+output (`grs s3://.../S2B_MSIL1C_....SAFE --odir s3://.../l2a`), reading the Level-1 bands in place with
+GRSdriver >= 2.1; this is outside of the batches.
 
 ```python
 import os

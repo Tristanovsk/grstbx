@@ -952,7 +952,7 @@ class _MultiscaleViewer(Utils):
 
     def __init__(self, data, dates=None, reproject=False, minmaxvalues=(0, 0.02), minmax=(0, 0.06),
                  width=1200, height=800, min_size=512, basemap=DEFAULT_BASEMAP, cmap=DEFAULT_RRS_COLORMAP,
-                 aoi=None, poi=None):
+                 aoi=None, poi=None, view=None, responsive=False):
         if not isinstance(data, Multiscale):
             if isinstance(data, (str, os.PathLike)) or (
                     isinstance(data, (list, tuple)) and isinstance(data[0], (str, os.PathLike))):
@@ -971,6 +971,12 @@ class _MultiscaleViewer(Utils):
 
         # layout settings
         self.width, self.height = width, height
+        self.responsive = responsive
+        # first view of the map (lon_min, lat_min, lon_max, lat_max), see :meth:`_extent`
+        self.view = view
+        # widgets of the map (filled by :meth:`visu`) and stream of its visible ranges (see :meth:`state`)
+        self.widgets = {}
+        self._range_stream = None
         self.minmaxvalues = minmaxvalues
         self.minmax = minmax
 
@@ -1124,10 +1130,15 @@ class _MultiscaleViewer(Utils):
                             color=color, size=5, tools=['hover'])]
         resolution = table.resolution.max() if len(table) else 0
         dates = bokeh.models.DatetimeTickFormatter(days='%Y-%m-%d', months='%Y-%m', years='%Y')
-        return hv.Overlay(overlay or [hv.Curve([], 'Time', label)]).opts(
-            opts.Overlay(width=self._polygon_width(), height=350, show_grid=True, xformatter=dates, xrotation=30,
+        size = dict(responsive=True, height=350) if self.responsive else dict(width=self._polygon_width(), height=350)
+        plot = hv.Overlay(overlay or [hv.Curve([], 'Time', label)])
+        if 'date' in self.widgets:
+            plot = self._date_line() * plot
+        return plot.opts(
+            opts.Overlay(**size, show_grid=True, xformatter=dates, xrotation=30,
                          legend_position='top_right', show_legend=table.polygon.nunique() > 1,
-                         title=f'Time series of the polygons: median and quartiles, {resolution:.0f} m'))
+                         title=f'Time series of the polygons: median and quartiles, {resolution:.0f} m '
+                               '(click: date of the map)'))
 
     def _layout(self, controls, map_, plot, help_text, layer_widget, side=True):
         """
@@ -1137,13 +1148,24 @@ class _MultiscaleViewer(Utils):
         """
         self._side = side
         width, height = (self.side_width, self.side_height) if side else (self.width, 350)
-        plot = pn.pane.HoloViews(plot.opts(opts.Overlay(width=width, height=height)), width=width, height=height,
-                                 linked_axes=False)
-        hint = pn.pane.Markdown(help_text, width=width, styles={'font-size': '0.9em', 'color': '#555'})
-        panel = pn.Column(plot, hint, width=width + 20) if side else pn.Column(plot, hint)
-        map_pane = pn.pane.HoloViews(map_, width=self.width, height=self.height)
-        return pn.Column(controls, pn.Row(map_pane, panel) if side else pn.Column(map_pane, panel),
-                         self._polygon_panel(layer_widget))
+        if side or not self.responsive:
+            plot = plot.opts(opts.Overlay(width=width, height=height))
+            sizes = dict(width=width, height=height)
+        else:
+            plot = plot.opts(opts.Overlay(responsive=True, height=height))
+            sizes = dict(sizing_mode='stretch_width', height=height)
+        plot = pn.pane.HoloViews(plot, linked_axes=False, **sizes)
+        hint = pn.pane.Markdown(help_text, styles={'font-size': '0.9em', 'color': '#555'},
+                                **({'width': width} if 'width' in sizes else {'sizing_mode': 'stretch_width'}))
+        panel = pn.Column(plot, hint, width=width + 20) if side else pn.Column(plot, hint, sizing_mode='stretch_width')
+        stretch = {'sizing_mode': 'stretch_width'} if self.responsive else {}
+        if self.responsive:
+            map_pane = pn.pane.HoloViews(map_, height=self.height, sizing_mode='stretch_width', min_width=400,
+                                         linked_axes=False)
+        else:
+            map_pane = pn.pane.HoloViews(map_, width=self.width, height=self.height, linked_axes=False)
+        return pn.Column(controls, pn.Row(map_pane, panel, **stretch) if side else
+                         pn.Column(map_pane, panel, **stretch), self._polygon_panel(layer_widget), **stretch)
 
     def _polygon_width(self):
         """Width of the plot of the polygons: below the map and the panel on its right."""
@@ -1216,7 +1238,8 @@ class _MultiscaleViewer(Utils):
         stop = pn.widgets.Button(name='Stop', button_type='light', visible=False)
         progress = pn.indicators.Progress(value=0, max=1, width=300, visible=False, bar_color='primary')
         status = pn.pane.Markdown('Draw polygons on the map, then read the selected layer over all the dates.')
-        pane = pn.pane.HoloViews(None, visible=False, linked_axes=False, width=self._polygon_width(), height=350)
+        size = dict(sizing_mode='stretch_width') if self.responsive else dict(width=self._polygon_width())
+        pane = pn.pane.HoloViews(None, visible=False, linked_axes=False, height=350, **size)
         min_valid = pn.widgets.FloatInput(name='Minimum valid pixels (%)', value=100 * self.polygon_min_valid,
                                           start=0, end=100, step=5, width=170)
         min_valid.param.watch(lambda event: self._polygon_threshold((event.new or 0) / 100,
@@ -1236,7 +1259,8 @@ class _MultiscaleViewer(Utils):
         stop.on_click(halt)
         for widget in (button, stop, progress):
             widget.align = 'end'
-        return pn.Column(pn.Row(button, min_valid, stop, progress), status, pane)
+        return pn.Column(pn.Row(button, min_valid, stop, progress), status, pane,
+                         **({'sizing_mode': 'stretch_width'} if self.responsive else {}))
 
     def get_points(self, poi_stream=None, crs=4326):
         """Points drawn on the map as a GeoDataFrame in ``crs``."""
@@ -1279,6 +1303,9 @@ class _MultiscaleViewer(Utils):
         """
         image = self.indexes[idate]
         bounds = self.data.bounds(image)
+        view = self._view_extent(bounds)
+        if view is not None:
+            return view
         name = self._initial_layer()
         valid = self.data.valid_bounds(image, name) if name is not None else None
         if valid is not None:
@@ -1290,6 +1317,140 @@ class _MultiscaleViewer(Utils):
                       min(cx + hx, bounds[2]), min(cy + hy, bounds[3]))
         xmin, ymin, xmax, ymax = self._to_display.transform_bounds(*bounds)
         return (xmin, xmax), (ymin, ymax)
+
+    def _view_extent(self, bounds):
+        """The :attr:`view` (lon/lat) in the CRS of the map, if it overlaps the image (``bounds``, CRS of the
+        images); otherwise None."""
+        if self.view is None:
+            return None
+        from_lonlat = pyproj.Transformer.from_crs(4326, self.display_crs, always_xy=True)
+        xmin, ymin, xmax, ymax = from_lonlat.transform_bounds(*self.view)
+        bxmin, bymin, bxmax, bymax = self._to_display.transform_bounds(*bounds)
+        if xmin < xmax and ymin < ymax and xmin < bxmax and bxmin < xmax and ymin < bymax and bymin < ymax:
+            return (xmin, xmax), (ymin, ymax)
+        return None
+
+    def current_view(self):
+        """Area visible on the map (lon_min, lat_min, lon_max, lat_max), None before the first display."""
+        stream = self._range_stream
+        if stream is None or stream.x_range is None or stream.y_range is None:
+            return None
+        to_lonlat = pyproj.Transformer.from_crs(self.display_crs, 4326, always_xy=True)
+        return tuple(float(v) for v in to_lonlat.transform_bounds(
+            stream.x_range[0], stream.y_range[0], stream.x_range[1], stream.y_range[1]))
+
+    # -- state of the map as text (e.g. in the URL of the dashboard, see :mod:`grstbx.app`)
+
+    def _layer_key(self, value):
+        return str(value)
+
+    def _layer_value(self, key):
+        """Value of the layer widget from :meth:`_layer_key` (None: unknown layer)."""
+        return key if key in self.widgets['layer'].options else None
+
+    def _nearest_date(self, time):
+        """Index (in the date widget) of the date closest to ``time`` (datetime, or ms since 1970 as on the time
+        axes of Bokeh); None without time."""
+        if time is None:
+            return None
+        time = pd.Timestamp(time, unit='ms') if isinstance(time, (int, float, np.number)) else pd.Timestamp(time)
+        times = pd.DatetimeIndex(self.datetimes)
+        if times.tz is not None:
+            times = times.tz_convert(None)
+        if time.tz is not None:
+            time = time.tz_convert(None)
+        return int(np.abs((times - time).total_seconds()).argmin())
+
+    def state(self):
+        """
+        State of the map as a dict of strings: date, layer (band or parameter), colormap (cmap, reverse, log),
+        colour range, opacity, basemap and visible area (view: lon_min, lat_min, lon_max, lat_max). It can be
+        applied again with :meth:`set_state` (except the view, given at the creation of the viewer).
+        """
+        w = self.widgets
+        if not w:
+            return {}
+        state = {'date': self.datetimes[w['date'].value].strftime('%Y-%m-%dT%H:%M:%S'),
+                 'layer': self._layer_key(w['layer'].value),
+                 'cmap': w['colormap'].value_name, 'reverse': str(int(w['reverse'].value)),
+                 'log': str(int(w['log'].value)), 'range': '{:g},{:g}'.format(*w['range'].value),
+                 'opacity': '{:g}'.format(w['opacity'].value)}
+        if self.reproject:
+            state['basemap'] = w['basemap'].value
+        # before any pan or zoom: the view given at the creation of the viewer
+        view = self.current_view() or self.view
+        if view is not None:
+            state['view'] = ','.join(f'{v:.5f}' for v in view)
+        return state
+
+    def set_state(self, state):
+        """Apply a state of :meth:`state` (dict of strings, missing or invalid values are left out)."""
+        w = self.widgets
+        if not w:
+            return
+        setters = {
+            'date': lambda v: setattr(w['date'], 'value', self._nearest_date(pd.Timestamp(v))),
+            'layer': lambda v: None if self._layer_value(v) is None else setattr(w['layer'], 'value',
+                                                                                  self._layer_value(v)),
+            'cmap': lambda v: setattr(w['colormap'], 'value_name', v) if v in w['colormap'].options else None,
+            'reverse': lambda v: setattr(w['reverse'], 'value', str(v).lower() in ('1', 'true')),
+            'log': lambda v: setattr(w['log'], 'value', str(v).lower() in ('1', 'true')),
+            'range': lambda v: setattr(w['range'], 'value', tuple(float(x) for x in str(v).split(','))[:2]),
+            'opacity': lambda v: setattr(w['opacity'], 'value', min(max(float(v), 0.), 1.)),
+            'basemap': lambda v: setattr(w['basemap'], 'value', v) if v in w['basemap'].options else None,
+        }
+        for key, setter in setters.items():
+            if state.get(key) not in (None, ''):
+                try:
+                    setter(state[key])
+                except (ValueError, TypeError):
+                    pass
+
+    def on_state_change(self, callback):
+        """Call ``callback(state)`` (see :meth:`state`) at each change of the map: widgets, pan and zoom."""
+        def notify(*events, **ranges):
+            callback(self.state())
+
+        for widget in self.widgets.values():
+            widget.param.watch(notify, 'value')
+        if self._range_stream is not None:
+            self._range_stream.add_subscriber(notify)
+
+    def _date_player(self, date_widget):
+        """Previous / play / next buttons of the dates, linked to the date widget."""
+        n = len(self.datetimes)
+        player = pn.widgets.Player(start=0, end=max(n - 1, 1), value=0, interval=2000, loop_policy='once',
+                                   show_loop_controls=False, show_value=False, scale_buttons=1.2, width=230,
+                                   visible_buttons=['previous', 'play', 'pause', 'next'], visible=n > 1,
+                                   align='center')
+        player.link(date_widget, value='value', bidirectional=True)
+        return player
+
+    def _date_line(self):
+        """
+        Dotted vertical line at the date of the map, to overlay on a time series plot (as its first layer): a
+        click on the plot displays the date closest to it on the map (the Tap stream of the plot is attached to
+        this layer).
+        """
+        tap = hv.streams.Tap(x=None, y=None)
+
+        def select(x=None, y=None):
+            idate = self._nearest_date(x)
+            if idate is not None and idate != self.widgets['date'].value:
+                self.widgets['date'].value = idate
+
+        def line(date, x=None, y=None):
+            return hv.VLine(self.datetimes[date]).opts(color='grey', line_dash='dotted', line_width=1.5)
+
+        tap.add_subscriber(select)
+        return hv.DynamicMap(pn.bind(line, date=self.widgets['date']), streams=[tap])
+
+    def _size(self, height=None):
+        """Size options of the plots of the map: full width of the page (:attr:`responsive`) or fixed."""
+        height = height or self.height
+        if self.responsive:
+            return dict(responsive=True, height=height, min_width=400)
+        return dict(width=self.width, height=height)
 
     def _read(self, idate, name, x_range, y_range, width, height):
         """Visible window of a layer, in the CRS of the map (cached)."""
@@ -1330,13 +1491,13 @@ class _MultiscaleViewer(Utils):
 
     def _image_opts(self):
         hover = self.custom_hover('image') if self.reproject else 'hover'
-        return dict(width=self.width, height=self.height, colorbar=True, tools=[hover],
+        return dict(**self._size(), colorbar=True, tools=[hover],
                     active_tools=['wheel_zoom'], clipping_colors={'NaN': '#00000000'})
 
     def _tiles(self, basemap):
         gopts = hv.opts.Tiles(xaxis=None, yaxis=None, bgcolor='black', show_grid=False,
                               active_tools=['wheel_zoom'])
-        return basemap_tiles(basemap).opts(gopts).opts(width=self.width, height=self.height)
+        return basemap_tiles(basemap).opts(gopts).opts(**self._size())
 
     def _basemap_widget(self):
         # basemaps are in web Mercator: only available when the images are reprojected
@@ -1393,18 +1554,19 @@ class _MultiscaleViewer(Utils):
                                    contrast=contrast, brightness=brightness, **style)
             return element.opts(alpha=opacity)
 
+        self._range_stream = hv.streams.RangeXY()
         image = hv.DynamicMap(
             pn.bind(render_image, date=date_widget, layer=layer_widget, cmap=cmap_widget,
                     opacity=opacity_widget, clim=range_widget, log=log_widget, contrast=self.pn_contrast,
                     brightness=self.pn_brightness),
-            streams=[hv.streams.RangeXY(), hv.streams.PlotSize()]
+            streams=[self._range_stream, hv.streams.PlotSize()]
         ).opts(opts.Image(**self._image_opts()))
         if self.has_rgb:
             rgb = hv.DynamicMap(
                 pn.bind(render_rgb, date=date_widget, layer=layer_widget, opacity=opacity_widget,
                         contrast=self.pn_contrast, brightness=self.pn_brightness, **self._rgb_bindings()),
                 streams=[hv.streams.RangeXY(), hv.streams.PlotSize()]
-            ).opts(opts.RGB(width=self.width, height=self.height, active_tools=['wheel_zoom']))
+            ).opts(opts.RGB(**self._size(), active_tools=['wheel_zoom']))
             image = rgb * image
         if not self.reproject:
             return image * self.aoi_polygons
@@ -1467,6 +1629,9 @@ class ViewSpectral(_MultiscaleViewer):
     :param title: title of the viewer, in Markdown (e.g. '## PRISMA L2A', '## Landsat 9 L2A'),
                   default '## S2 L2A'
     :param live: initial state of the *Live spectrum* checkbox
+    :param view: first view of the map (lon_min, lat_min, lon_max, lat_max), if it overlaps the first image
+                 (default: its valid pixels)
+    :param responsive: the map takes the width of the page (``width`` is then only its initial width)
     """
 
     def __init__(self, raster, dates=None,
@@ -1483,11 +1648,13 @@ class ViewSpectral(_MultiscaleViewer):
                  aoi=None,
                  poi=None,
                  title='## S2 L2A',
-                 live=True):
+                 live=True,
+                 view=None,
+                 responsive=False):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
                          width=width, height=height, basemap=basemap, cmap=cmap, aoi=aoi,
-                         poi=poi)
+                         poi=poi, view=view, responsive=responsive)
         self.title = title
         self.live = live
 
@@ -1516,6 +1683,16 @@ class ViewSpectral(_MultiscaleViewer):
 
     def _nearest_band(self, wl):
         return self.wls[np.abs(self.wls - wl).argmin()]
+
+    def _layer_key(self, value):
+        return 'RGB' if value == 'RGB' else '{:g}'.format(value)
+
+    def _layer_value(self, key):
+        if key == 'RGB':
+            return key
+        wl = float(key)
+        band = self.bands[np.abs(self.bands - wl).argmin()]
+        return band if abs(band - wl) < 1 else None
 
     def _initial_layer(self):
         return list(self.rgb_bands)
@@ -1642,6 +1819,8 @@ class ViewSpectral(_MultiscaleViewer):
             band = 'RGB' if layer == 'RGB' else 'wl = {:.0f} nm'.format(layer)
             return '{}, {}'.format(self.datetimes[date], band)
 
+        self.widgets = dict(layer=pn_band, date=pn_date, colormap=pn_colormap, reverse=pn_reverse, log=pn_log,
+                            range=range_slider, opacity=pn_opacity, basemap=pn_basemaps)
         map_ = self._map(pn_band, pn_date, cmap, pn_opacity, range_slider, pn_basemaps, title, pn_log)
         spectra = hv.DynamicMap(pn.bind(self._spectra, date=pn_date), streams=[self.poi_stream])
         # spectrum under the mouse (HoloViews throttles the pointer events and keeps the last one)
@@ -1658,7 +1837,7 @@ class ViewSpectral(_MultiscaleViewer):
                 pn.Column(
                     pn.Row('### Band', pn_band, pn_live),
                     pn.Row(
-                        pn.Row('### Date', pn_date),
+                        pn.Row('### Date', pn_date, self._date_player(pn_date)),
                         pn.Row('#### Basemap', pn_basemaps)
                     ),
                     pn.Row(pn.Row('', range_slider), pn.Row('#### Opacity', pn_opacity)),
@@ -1722,6 +1901,9 @@ class ViewParam(_MultiscaleViewer):
     :param title: title of the viewer, in Markdown (e.g. '## EnMAP L2B'), default '## S2 L2B'
     :param live: initial state of the *Live time series* checkbox (reading the time series under the mouse
                  reads one block of each date: untick it for long time series)
+    :param view: first view of the map (lon_min, lat_min, lon_max, lat_max), if it overlaps the first image
+                 (default: its valid pixels)
+    :param responsive: the map takes the width of the page (``width`` is then only its initial width)
     """
 
     def __init__(self, raster, dates=None,
@@ -1736,11 +1918,13 @@ class ViewParam(_MultiscaleViewer):
                  aoi=None,
                  poi=None,
                  title='## S2 L2B',
-                 live=True):
+                 live=True,
+                 view=None,
+                 responsive=False):
 
         super().__init__(raster, dates=dates, reproject=reproject, minmaxvalues=minmaxvalues, minmax=minmax,
                          width=width, height=height, basemap=basemap, cmap=cmap, aoi=aoi,
-                         poi=poi)
+                         poi=poi, view=view, responsive=responsive)
         self.title = title
         self.live = live
 
@@ -1770,7 +1954,7 @@ class ViewParam(_MultiscaleViewer):
             curve, points = curve.opts(color=color), points.opts(color=color)
         return curve * points
 
-    def _timeseries(self, data, date, param):
+    def _timeseries(self, data, param):
         """Full-resolution time series of the points drawn on the map."""
         curves = {}
         if data:
@@ -1778,7 +1962,7 @@ class ViewParam(_MultiscaleViewer):
                 curves[ipoint] = self._timeseries_curve(param, x, y, color=self.point_color(ipoint))
         if not curves:
             curves[0] = self._timeseries_curve(param)
-        return hv.NdOverlay(curves, kdims='point').opts(show_legend=False) * hv.VLine(self.datetimes[date])
+        return hv.NdOverlay(curves, kdims='point').opts(show_legend=False)
 
     def _live_timeseries(self, param, live, x=None, y=None):
         """Full-resolution time series of the parameter at the pixel under the mouse."""
@@ -1808,9 +1992,11 @@ class ViewParam(_MultiscaleViewer):
         def title(date, param):
             return '{}, {}'.format(self.datetimes[date], param)
 
+        self.widgets = dict(layer=pn_param, date=pn_date, colormap=pn_colormap, reverse=pn_reverse, log=pn_log,
+                            range=range_slider, opacity=pn_opacity, basemap=pn_basemaps)
         map_ = self._map(pn_param, pn_date, cmap, pn_opacity, range_slider, pn_basemaps, title, pn_log)
-        points = hv.DynamicMap(pn.bind(self._timeseries, date=pn_date, param=pn_param),
-                               streams=[self.poi_stream])
+        # the date of the map is a separate layer: the time series are not read again at each date
+        points = hv.DynamicMap(pn.bind(self._timeseries, param=pn_param), streams=[self.poi_stream])
         # time series under the mouse (HoloViews throttles the pointer events and keeps the last one)
         pointer = hv.streams.PointerXY(x=None, y=None, source=self.poi_points)
         live = hv.DynamicMap(pn.bind(self._live_timeseries, param=pn_param, live=pn_live),
@@ -1819,10 +2005,10 @@ class ViewParam(_MultiscaleViewer):
             opts.Scatter(color='black', size=4, tools=['hover'], framewise=True))
         points = points.opts(
             opts.Curve(line_width=1.5, framewise=True),
-            opts.Scatter(size=5, tools=['hover'], framewise=True),
-            opts.VLine(color='grey', line_dash='dotted', line_width=1.5))
+            opts.Scatter(size=5, tools=['hover'], framewise=True))
         dates = bokeh.models.DatetimeTickFormatter(days='%Y-%m-%d', months='%Y-%m', years='%Y')
-        timeseries = (points * live).opts(
+        # the date line first: the Tap stream of a later layer is not linked after a layer with options
+        timeseries = (self._date_line() * points * live).opts(
             opts.Overlay(show_grid=True, framewise=True, xformatter=dates, xrotation=30, show_legend=False,
                          title='Time series of the points and under the mouse'))
 
@@ -1832,7 +2018,7 @@ class ViewParam(_MultiscaleViewer):
                 pn.Column(
                     pn.Row('### Parameter', pn_param, pn_live),
                     pn.Row(
-                        pn.Row('### Date', pn_date),
+                        pn.Row('### Date', pn_date, self._date_player(pn_date)),
                         pn.Row('#### Basemap', pn_basemaps)
                     ),
                     pn.Row(range_slider, pn.Row('#### Opacity', pn_opacity)),
@@ -1843,5 +2029,6 @@ class ViewParam(_MultiscaleViewer):
             (map_ * self.poi_points).opts(opts.Points(active_tools=['point_draw'], color='color')),
             timeseries,
             'Full-resolution time series: dashed line under the mouse (*Live time series*), coloured lines at '
-            'the points added with the **Point Draw** tool; the dotted line is the date of the map.',
+            'the points added with the **Point Draw** tool; the dotted line is the date of the map. Click on the '
+            'plot to display the closest date on the map.',
             pn_param, side=side)

@@ -6,6 +6,15 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+### Changed
+
+- `batch.Batch`: each image is processed in its own child process (`isolate=True`, default; started with
+  `python -m grstbx.batch`): all the memory of the image is given back to the system when it ends, so that the
+  memory does not grow along a long batch, and an image whose process is killed (e.g. by the system when it runs
+  out of memory) is recorded as `L2A failed` / `L2B failed` with its exit code, its partial outputs removed, and
+  the batch goes on. `Batch.run(plan, workers=N)`: N images at a time. A subclass of `Batch` defined in a notebook
+  is sent to the children as `Batch`. `isolate=False`: in the process of the batch, as before.
+
 ## [2.8.0] - 2026-11-17
 
 Validation of the GRS L2A remote sensing reflectance with AERONET-OC and HYPERNETS on Sentinel-2 subsets of 5 km

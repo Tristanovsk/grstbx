@@ -120,7 +120,7 @@ def test_list_l2a_products(tmp_path):
 
 def new_batch(tmp_path, **kwargs):
     options = dict(cams_file_template=str(tmp_path / 'cams' / 'cams_{date:%Y-%m}.nc'),
-                   max_cloud_cover=0.6, version='3.1.0')
+                   max_cloud_cover=0.6, version='3.1.0', isolate=False)   # stand-ins of this process
     return batch.Batch(str(tmp_path / 'L2A'), str(tmp_path / 'L2B'), **options | kwargs)
 
 
@@ -392,7 +392,8 @@ def test_run_with_bucket(tmp_path, bucket, stub_processors, monkeypatch):
     monkeypatch.setattr(batch, 'write_l2a_item', lambda l2a: items.append(l2a) or
                         open(batch.item_path(l2a), 'w').write('{}'))
     work = tmp_path / 'work'
-    run = batch.Batch(f'{url}/L2A', f'{url}/L2B', cams_file_template=str(tmp_path / 'cams' / 'cams_{date:%Y-%m}.nc'),
+    run = batch.Batch(f'{url}/L2A', f'{url}/L2B', isolate=False,
+                      cams_file_template=str(tmp_path / 'cams' / 'cams_{date:%Y-%m}.nc'),
                       max_cloud_cover=0.6, version='3.1.0', l2a_stac=True, work_dir=str(work), memory_interval=0.05)
     images = batch.list_images(f'{url}/L1C', ['31TEJ'])
     plan = run.plan_level1(images)
@@ -411,7 +412,7 @@ def test_run_with_bucket(tmp_path, bucket, stub_processors, monkeypatch):
     monkeypatch.setattr(batch, 'run_grsl2bgen', lambda l2a, l2b, **kw: seen.append((l2a, kw['l2a_href'])) or
                         (os.makedirs(os.path.dirname(l2b), exist_ok=True), open(l2b, 'w').close(),
                          open(batch.item_path(l2b), 'w').close()))
-    rerun = batch.Batch(f'{url}/L2A', f'{url}/L2B', version='3.1.0', overwrite_l2b=True, work_dir=str(work),
+    rerun = batch.Batch(f'{url}/L2A', f'{url}/L2B', version='3.1.0', overwrite_l2b=True, work_dir=str(work), isolate=False,
                         max_cloud_cover=0.6, cams_file_template=run.cams_file_template)
     summary = rerun.run(rerun.plan_level1(images), verbose=False)
     assert summary['l2a'].tolist() == ['reused', 'reused', ''] and len(seen) == 2
@@ -450,3 +451,71 @@ def test_l2b_to_zarr(tmp_path):
     assert open_zarr_image(store, level=1).sizes['x'] == 550
     assert not batch.l2b_complete(store)                     # no Item
     assert batch.l2b_to_zarr(str(path), stac=False) == store
+
+
+FAKE_GRS = """
+import json, os, signal
+from pathlib import Path
+__version__ = '3.1.0'
+
+
+class Process:
+    def execute(self, level1, odir=None, **kwargs):
+        self.odir = odir
+        Path(os.environ['FAKE_PIDS']).open('a').write(f'{os.getpid()}\\n')
+        if os.path.basename(level1).startswith('S2B'):       # the second image: killed as by the OOM killer
+            os.makedirs(odir, exist_ok=True)                  # partial product left behind
+            os.kill(os.getpid(), signal.SIGKILL)
+
+    def write_output(self):
+        store = Path(self.odir)
+        store.mkdir(parents=True, exist_ok=True)
+        (store / 'zarr.json').write_text(json.dumps({'attributes': {'multiscales': [{'layout': [{'group': '0'}]}]},
+                                                     'zarr_format': 3, 'node_type': 'group'}))
+        for var in ['.', 'Rrs', 'mask']:
+            (store / '0' / var).mkdir(parents=True, exist_ok=True)
+            (store / '0' / var / 'zarr.json').write_text('{}')
+"""
+
+
+def test_run_isolated(tmp_path, level1, monkeypatch):
+    """Each image in its own process (spawn): a child killed (SIGKILL) fails its image only."""
+    pkg = tmp_path / 'fake_pkgs' / 'grs'
+    pkg.mkdir(parents=True)
+    (pkg / '__init__.py').write_text(FAKE_GRS)
+    monkeypatch.syspath_prepend(str(tmp_path / 'fake_pkgs'))      # sys.path is passed on to the children
+    monkeypatch.setenv('FAKE_PIDS', str(tmp_path / 'pids.txt'))
+    images = batch.list_images(level1, ['31TEJ'])
+    run = batch.Batch(str(tmp_path / 'L2A'), cams_file_template=str(tmp_path / 'cams' / 'cams_{date:%Y-%m}.nc'),
+                      max_cloud_cover=0.6, version='3.1.0', memory_interval=0.05)
+    assert run.isolate
+    plan = run.plan_level1(images)
+    summary = run.run(plan, verbose=False)
+    killed = plan['name'].str.startswith('S2B')
+    assert summary['status'].tolist() == ['L2A failed' if k else s for k, s in zip(killed, ['done', 'done', 'cloudy'])]
+    error = summary.loc[killed.values, 'error'].iloc[0]
+    assert 'signal 9' in error and 'out of memory' in error
+    assert not os.path.exists(os.path.dirname(plan.loc[killed.values, 'l2a'].iloc[0]))   # partial output removed
+    done = plan[~killed & ~plan['cloudy']]
+    assert batch.l2a_complete(done['l2a'].iloc[0])
+    assert batch.read_profile(done['profile'].iloc[0])['status'] == 'done'           # written by the child
+    pids = {int(p) for p in (tmp_path / 'pids.txt').read_text().split()}
+    assert len(pids) == 2 and os.getpid() not in pids                              # one process per image
+
+    # the failed image again, two at a time: still killed, the others skipped, records in the order of the plan
+    rerun = run.run(run.plan_level1(images), verbose=False, workers=2)
+    assert rerun['name'].tolist() == plan['name'].tolist()
+    assert rerun['status'].tolist() == ['L2A failed' if k else s for k, s in zip(killed, ['skipped', 'skipped', 'cloudy'])]
+
+
+def test_for_child_main_subclass(tmp_path):
+    """A subclass defined in a notebook (__main__) reaches the child as its importable base class."""
+    Notebook = type('TrexBatch', (batch.Batch,), {'__module__': '__main__', '_l2a_complete': lambda self, p: True})
+    run = Notebook(str(tmp_path / 'L2A'), version='3.1.0')
+    run.quick_check = True
+    clone = run._for_child()
+    assert type(clone) is batch.Batch and clone.quick_check and clone.l2a_dir == run.l2a_dir
+    import pickle
+    assert type(pickle.loads(pickle.dumps(clone))) is batch.Batch
+    plain = batch.Batch(str(tmp_path / 'L2A'))
+    assert plain._for_child() is plain

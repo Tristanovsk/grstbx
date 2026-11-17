@@ -265,7 +265,8 @@ def test_batch_and_catalogue_in_bucket(tmp_path, monkeypatch):
     with serve_s3(root, tmp_path, monkeypatch, read_only=False):
         products = batch.list_l2a_products(f'{BUCKET}/L2A')
         assert products['complete'].all() and products['path'].iloc[0].startswith(BUCKET)
-        run = batch.Batch(l2b_dir=f'{BUCKET}/L2B', l2b_ext='.zarr', work_dir=str(tmp_path / 'work'))
+        run = batch.Batch(l2b_dir=f'{BUCKET}/L2B', l2b_ext='.zarr', work_dir=str(tmp_path / 'work'),
+                          isolate=False)   # stand-in of this process
         plan = run.plan_l2a(products)
         assert run.run(plan, verbose=False)['status'].tolist() == ['done']
         assert run.plan_l2a(products)['l2b_done'].all() and batch.read_profiles(plan['profile'])['status'].tolist() == ['reused', 'done']

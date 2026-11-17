@@ -442,7 +442,7 @@ def test_l2b_to_zarr(tmp_path):
     store = batch.l2b_to_zarr(str(path), stac=False)
     assert store == str(path.parent / name / f'{name}.zarr')
     assert zarr_levels(store) == ['0', '1', '2']           # down to 256 pixels
-    original, converted = xr.open_dataset(path, decode_coords='all'), open_zarr_image(store)
+    original, converted = xr.open_dataset(path, decode_coords='all'), open_zarr_image(store, float32=False)
     for variable in original.data_vars:
         assert np.array_equal(original[variable].values, converted[variable].values, equal_nan=True), variable
     assert converted.Chla_OC2nasa.encoding['dtype'] == 'int16'

@@ -45,6 +45,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from .driver import to_float32
 from .matchup import matchup_metrics
 
 #: harmonised AERONET-OC dataset of the in situ validation database (``GRSTBX_AERONET_OC`` to change it)
@@ -359,7 +360,8 @@ def extract_l2a(paths, window='ring', size=(4, 7), platform_nir=8e-4, workers=4)
             with xr.open_dataset(path) as ds:
                 version = str(ds.attrs.get('version', ''))
                 model, mixture = aerosol_model(ds.attrs)
-                ds = ds[[v for v in ('Rrs', 'mask', 'aot550', 'BRDFg', 'wind', 'sza', 'vza', 'raa') if v in ds]].load()
+                ds = ds[[v for v in ('Rrs', 'mask', 'aot550', 'BRDFg', 'wind', 'sza', 'vza', 'raa') if v in ds]]
+                ds = to_float32(ds).load()          # half the memory of the float64 decoding
             return {'l2a': str(path), 'version': version, 'aerosol_model': model, 'aerosol_combination': mixture,
                     **extract_window(ds, window, size, platform_nir)}
         except Exception as exc:

@@ -45,6 +45,7 @@ Loading images and datacubes
    grstbx.driver.is_zarr
    grstbx.driver.open_hgrs_l2a
    grstbx.driver.is_hgrs
+   grstbx.driver.to_float32
 
 Cropping and export
 -------------------

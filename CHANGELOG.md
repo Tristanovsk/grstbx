@@ -56,6 +56,18 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   Drive; SLURM job arrays flagged by `GRS_BATCH_JOB` / `EXPORT_BATCH_JOB`, as JupyterHub of TREX also runs in a
   SLURM job).
 
+### Changed
+
+- Products decoded in float32 instead of float64: the GRS products store their reflectances, AOT, sunglint and
+  angles as int16 with a float64 `scale_factor`, which xarray decoded to float64. `driver.to_float32` casts them
+  lazily, keeping their encoding (the exports still write int16); applied by default by `open_zarr_image`, `L2grs`
+  (L2A and L2B, NetCDF and Zarr), `open_hgrs_l2a`, the dashboard and `validation.extract_l2a` (`float32=False`:
+  float64 as before). Same values to 1e-7 relative, half the memory: on a full Sentinel-2 tile at 20 m, peak memory
+  5.5 -> 3.3 GB for the Rrs of an L2A Zarr product, 9.1 -> 6.3 GB for an L2B NetCDF product; about 15 % less CPU.
+- `import grstbx` in about 1 s instead of 2.5 s: rioxarray (with rasterio and dask.array) is imported on the first
+  use of the `.rio` accessor (lazy accessor of `grstbx._rio`, replaced by the one of rioxarray), and dask and
+  `rasterio.features` inside the functions that use them; faster command lines and batch processes.
+
 ### Fixed
 
 - Dashboard of the matchups: the axes of the views are not linked any more (the in situ Rrs `x` of the scatter

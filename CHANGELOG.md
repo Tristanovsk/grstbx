@@ -6,6 +6,13 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-11-17
+
+Validation of the GRS L2A remote sensing reflectance with AERONET-OC and HYPERNETS on Sentinel-2 subsets of 5 km
+around the stations (`grstbx.validation`, command `grstbx-validation`), with the aerosol model of GRS and a
+dashboard of the matchups; products decoded in float32 instead of float64 (half the memory) and faster import;
+documentation reorganised by topic, with an HPC section (CNES TREX) and the validation tutorials.
+
 ### Added
 
 - `grstbx.validation` and the command `grstbx-validation`: validation of the GRS L2A Rrs with AERONET-OC on the
@@ -475,7 +482,8 @@ Tools for L2B handling.
 Fix for reprojection in any system, especially useful for reprojection in pseudo-Mercator (EPSG:3857) for
 visualization with web mapping tools (e.g. OpenStreetMap, Google Maps).
 
-[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/Tristanovsk/grstbx/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/Tristanovsk/grstbx/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/Tristanovsk/grstbx/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/Tristanovsk/grstbx/compare/v2.4.0...v2.5.0

@@ -27,6 +27,22 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   selected matchups.
 - `matchup_metrics`: MAE, MedAPE and the log-space RMSE, bias and MAE (`rmse_log`, `bias_log`, `mae_log`), as in
   satmatchup and the ACIX intercomparisons.
+- Aerosol model of GRS in the matchup table (`aerosol_model`: the OPAC model selected by GRS, or the mixture of the
+  LUT models `'0.90 WASO_rh0 + 0.10 MACL_rh70'`; `aerosol_combination`: the weights, JSON), read from the attributes
+  of the L2A products (`validation.aerosol_model`; `validation.add_aerosol_model` for the tables made before), and in
+  the dashboard: colour of the scatter plots, selection, statistics and residuals by aerosol model and band.
+- Dashboard of the matchups: square scatter plots (frame of the same size in all the panels whatever the axis
+  labels, legend or colour bar) in a tight grid (axis labels on the outer panels, one legend or one colour bar per
+  row, shared toolbar, colours of the categories and colour scale the same in all the panels), colormap and opacity
+  of the points chosen in the sidebar, same range on both axes kept by the box zoom; web style after the Bokeh
+  demos, with an earth palette (gold, cream, brick red, sage, olive): warm page, plots on a cream background with
+  faint grid lines, serif titles, terracotta widgets, gold download button.
+
+### Fixed
+
+- Dashboard of the matchups: the axes of the views are not linked any more (the in situ Rrs `x` of the scatter
+  plots took the range of the easting `x` of the map, and the ranges were not refreshed when the in situ
+  normalisation changed); the scatter plot of all the bands keeps its square size instead of the page width.
 - Notebooks `notebook/validation_image_subset`: the dataset of subsets (`aeronet_oc_s2_l1c_subsets.ipynb`) and the
   validation with the dashboard (`grs_aeronet_oc_validation.ipynb`).
 

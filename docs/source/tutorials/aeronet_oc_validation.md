@@ -19,6 +19,7 @@ items = val.read_items(stations=['AAOT'])            # subsets of the STAC catal
 runs = val.process_subsets(items, workers=2)          # GRS on the subsets without L2A product
 table = val.matchup_table(items)                      # one row per image and band
 val.save_table(table, '/data/satellite/validation/matchups/grs_3.1.1.csv')
+# table = val.add_aerosol_model(table)               # aerosol model column of a table made before grstbx 2.8
 ok = val.quality(table)                               # default criteria: Level 2.0, 1 h, 50 % valid, CV < 0.2
 val.metrics_table(table[ok], by='wl')                 # statistics by band
 val.dashboard(table)                                  # dashboard, in a notebook
@@ -95,7 +96,7 @@ where the AERONET-OC stations are, and within about 15 hPa over the mountains ab
 |---|---|
 | satellite window | ring of pixels 4 to 7 pixels (80 to 140 m) around the station (Chebyshev distance), without the platform and its shadow; or a box (`window='box'`) |
 | valid pixels | water (`mask == 0`), finite $R_{rs}$ in all the bands, not brighter than the median of the window at 865 nm by more than 8 10{sup}`-4` sr{sup}`-1` (platform, boats) |
-| satellite value | median of the valid pixels per band, with their mean and standard deviation; median AOT(550), sunglint `BRDFg`, wind, angles |
+| satellite value | median of the valid pixels per band, with their mean and standard deviation; median AOT(550), sunglint `BRDFg`, wind, angles; aerosol model of GRS (`aerosol_model`: the OPAC model selected, or the mixture of the LUT models, e.g. `0.90 WASO_rh0 + 0.10 MACL_rh70`, with its weights in `aerosol_combination`), read from the attributes of the L2A product |
 | in situ data | AERONET-OC measurements of the validation database ({func}`~grstbx.validation.read_aeronet_oc`): `Rrs_insitu` = Lwn / F0 without bidirectional correction (directional, as measured: closest to the directional $R_{rs}$ of GRS), `Rrs_insitu_fQ` (f/Q, Morel et al. 2002), `Rrs_insitu_IOP` (Lee et al. 2011), AOT(550), wind, geometry |
 | pairing in time | nearest measurement within 3 h, the nearest Level 2.0 one if any, else the nearest Level 1.5 one |
 | pairing in wavelength | nearest AERONET-OC band within 15 nm ({func}`~grstbx.validation.band_pairs`), e.g. 665 -> 667, 783 -> 779 nm |
@@ -129,22 +130,22 @@ grstbx-validation dashboard grs_3.1.1.csv [grs_3.2.0.csv ...] --show   # web app
 ```
 
 The sidebar selects the matchups: stations, bands, normalisation of the in situ $R_{rs}$, AERONET-OC level,
-platforms, period, GRS versions (when several tables are given, to compare versions) and the quality criteria
-(lag, valid fraction, CV, AOT, sunglint); the selected matchups can be downloaded as CSV. The views follow the
-selection:
+platforms, aerosol models of GRS, period, GRS versions (when several tables are given, to compare versions) and
+the quality criteria (lag, valid fraction, CV, AOT, sunglint); the display (colour of the points, colormap,
+opacity, logarithmic axes); the selected matchups can be downloaded as CSV. The views follow the selection:
 
 | tab | content |
 |---|---|
 | Overview | map of the stations (size and colour: images with matchups), statistics by band and by station |
-| Scatter | GRS against AERONET-OC per band, or all the bands together: error bars (standard deviation of the window), 1:1 and regression lines, statistics, colour by band, station, lag, AOT, sunglint, level, platform or version, hover with the station, date, lag and quality of the window, logarithmic axes |
-| Statistics | tables by band, by station and by station and band; heat map of a statistic by station and band |
-| Errors | residuals (GRS - AERONET-OC) and relative residuals by band, by station, and their distributions |
+| Scatter | GRS against AERONET-OC per band (square panels in a grid, same colours in all of them), or all the bands together: error bars (standard deviation of the window), 1:1 and regression lines, statistics, colour by band, station, lag, AOT, sunglint, level, platform, version or aerosol model, hover with the station, date, lag and quality of the window, logarithmic axes |
+| Statistics | tables by band, by station, by station and band and by aerosol model and band; heat map of a statistic by station and band |
+| Errors | residuals (GRS - AERONET-OC) and relative residuals by band, by station, by aerosol model and band, and their distributions |
 | Spectra | the matchups in a table; spectrum of the selected one (GRS median +- standard deviation, AERONET-OC) with the quicklooks of its L2A product (L1C RGB, L2A RGB, sunglint) |
 | Time series | residuals in time, per band |
 | Drivers | residuals against AOT (GRS or AERONET-OC), sunglint, sun and view zenith, relative azimuth, wind, lag, valid fraction and CV of the window, cloud cover, in situ $R_{rs}$ or date |
 
-The figures below show the first AAOT matchups of January 2017 (two images, Level 2.0 and 1.5, with relaxed
-criteria), an illustration of the views rather than a validation result.
+The figures below show the AAOT matchups of GRS 3.1.1 (382 Sentinel-2 images of 2015 to 2025, Level 2.0, default
+criteria), with the colours of the points chosen by aerosol model of GRS and the default colormap (`earth`).
 
 ```{figure} aeronet_oc_validation/dashboard_overview.png
 :alt: dashboard of the matchups, Overview tab
@@ -153,14 +154,15 @@ Overview: selection and quality criteria in the sidebar, map of the stations, st
 ```
 
 ```{figure} aeronet_oc_validation/dashboard_scatter.png
-:alt: scatter plot of GRS against AERONET-OC Rrs, all bands
+:alt: scatter plots of GRS against AERONET-OC Rrs per band
 
-Scatter, all the bands: 1:1 line (dashed), regression line (red) and statistics.
+Scatter, per band: square panels with the same colours, 1:1 line (dashed), regression line (red) and
+statistics; colour: aerosol model selected by GRS.
 ```
 
 ```{figure} aeronet_oc_validation/dashboard_spectra.png
 :alt: spectrum of a matchup with the quicklooks of the L2A product
 
-Spectra: GRS median and standard deviation of the ring around the station, AERONET-OC measurement 16 min
-before the overpass, quicklooks of the L2A product.
+Spectra: GRS median and standard deviation of the ring around the station, AERONET-OC measurement 11 min
+before the overpass, quicklooks of the L2A product (L1C RGB, L2A RGB, sunglint).
 ```

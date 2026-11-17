@@ -45,6 +45,14 @@ def test_extract_window_platform_and_mask():
     assert empty['n_valid'] == 0 and np.isnan(empty['Rrs_sat_560'])
 
 
+def test_aerosol_model():
+    assert val.aerosol_model({'opac_model': 'WASO_rh0'}) == ('WASO_rh0', '{"WASO_rh0": 1.0}')
+    model, mix = val.aerosol_model({'opac_model': 'WASO_rh0',
+                                    'aerosol_combination': '{"MACL_rh70": 0.1, "WASO_rh0": 0.9}'})
+    assert model == '0.90 WASO_rh0 + 0.10 MACL_rh70' and json.loads(mix) == {'MACL_rh70': 0.1, 'WASO_rh0': 0.9}
+    assert val.aerosol_model({}) == ('', '')
+
+
 def test_band_pairs():
     pairs = val.band_pairs([412, 443, 490, 555, 667, 779, 870, 1020])
     assert pairs == {443: 443, 490: 490, 560: 555, 665: 667, 783: 779, 865: 870}
@@ -92,11 +100,19 @@ def test_matchup_table_quality_metrics(tmp_path):
     l2a = val.l2a_path(subset, '3.1.1', tmp_path)
     assert l2a.parts[-6:-2] == ('SITE', '2024', '07', '01') and l2a.name.endswith('_SITE_V3.1.1.nc')
     assert 'MSIL2AGRS' in l2a.name
-    extractions = pd.DataFrame([{'l2a': str(l2a), 'version': '3.1.1', **val.extract_window(l2a_product())}])
+    # extraction from the file: version and aerosol model read from the attributes
+    product = l2a_product()
+    product.attrs['opac_model'] = 'COAV_rh70'
+    l2a.parent.mkdir(parents=True)
+    product.to_netcdf(l2a)
+    extractions = val.extract_l2a([l2a], workers=1)
+    assert extractions.aerosol_model.iloc[0] == 'COAV_rh70' and extractions.version.iloc[0] == '3.1.1'
     table = val.matchup_table(items, extractions, version='3.1.1', root=tmp_path, insitu_path=insitu)
     assert list(table.wl) == [443, 490, 560, 665, 865]
     assert list(table.wl_insitu) == [443, 490, 560, 667, 865]
     assert (table.lag_min == 10).all() and (table.level == 'lev20').all()
+    assert (table.aerosol_model == 'COAV_rh70').all()
+    assert val.add_aerosol_model(table.drop(columns=['aerosol_model'])).aerosol_model.eq('COAV_rh70').all()
     assert table.Rrs_insitu_fQ.iloc[0] == pytest.approx(0.009)
     assert table.Rrs_insitu.iloc[0] == pytest.approx(0.010)
     assert table.residual.iloc[0] == pytest.approx(table.Rrs_sat.iloc[0] - table.Rrs_insitu.iloc[0])
@@ -164,7 +180,8 @@ def synthetic_table(n=40):
                          'Rrs_insitu': x, 'Rrs_insitu_fQ': 0.9 * x, 'level': 'lev20' if i % 3 else 'lev15',
                          'lag_min': 10. * (i % 7), 'n_valid': 150, 'frac_valid': 0.9, 'cv560': 0.05,
                          'aot550_sat': 0.1, 'BRDFg': 0.001, 'platform': 'sentinel-2a', 'version': '3.1.1',
-                         'lon': 12.5 + (i % 2), 'lat': 45.3, 'sza': 40., 'site': 'A'})
+                         'lon': 12.5 + (i % 2), 'lat': 45.3, 'sza': 40., 'site': 'A',
+                         'aerosol_model': 'WASO_rh0' if i % 4 else 'COAV_rh70'})
     return pd.DataFrame(rows)
 
 
@@ -184,6 +201,25 @@ def test_dashboard_views():
     board.w_color.value = 'station'
     board.w_log.value = True
     assert board.view_scatter() is not None
+    board.w_color.value = 'aerosol_model'
+    assert board.view_scatter() is not None and board.view_statistics() is not None
+    # colormaps and opacity; square frames of the same size in the grid of the bands, same colours in all panels
+    import holoviews as hv
+    from grstbx.validation_app import FRAME, _palette
+    board.w_scatter_mode.value, board.w_log.value = 'per band', False
+    for color, cmap in [('station', 'earth'), ('aot550_sat', 'earth gradient'), ('station', 'Set1'),
+                        ('aot550_sat', 'turbo')]:
+        board.w_color.value, board.w_cmap.value, board.w_alpha.value = color, cmap, 0.5
+        grid = hv.render(board.view_scatter().object)
+        figs = [child[0] for child in grid.children]
+        for fig in figs:
+            assert fig.height - fig.min_border_top - fig.min_border_bottom == FRAME
+            assert fig.width - fig.min_border_left - fig.min_border_right == FRAME
+        assert board.view_timeseries() is not None and board.view_drivers() is not None
+    palette = _palette(board.selection().station, 'earth')
+    assert len(set(palette.values())) == len(palette)
+    board.w_aerosols.value = ['COAV_rh70']
+    assert set(board.selection().aerosol_model) == {'COAV_rh70'}
     board.w_stations.value = []
     assert board.selection().empty and board.view_scatter() is not None and board.view_errors() is not None
     assert board.inline() is not None and board.template() is not None

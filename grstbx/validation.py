@@ -290,18 +290,66 @@ def extract_window(ds, window='ring', size=(4, 7), platform_nir=8e-4, bands=S2_B
     return out
 
 
+def aerosol_model(attrs):
+    """
+    Aerosol model of a GRS L2A product, from its attributes: the OPAC model selected by GRS (``opac_model``),
+    or the mixture of the LUT models (``aerosol_combination``: JSON {model: weight, AOT fraction at 550 nm}),
+    written ``'0.90 WASO_rh0 + 0.10 MACL_rh70'`` (largest weight first).
+
+    :return: (aerosol_model, aerosol_combination): two strings, empty if unknown
+    """
+    mixture = attrs.get('aerosol_combination')
+    if mixture:
+        try:
+            weights = {k: float(v) for k, v in json.loads(mixture).items() if float(v) > 0}
+        except (TypeError, ValueError):
+            weights = {}
+        if len(weights) > 1:
+            total = sum(weights.values())
+            label = ' + '.join(f'{w / total:.2f} {m}' for m, w in sorted(weights.items(), key=lambda kv: -kv[1]))
+            return label, json.dumps(weights)
+        if weights:
+            return next(iter(weights)), json.dumps(weights)
+    model = str(attrs.get('opac_model') or '')
+    return model, json.dumps({model: 1.0}) if model else ''
+
+
+def add_aerosol_model(table, workers=8):
+    """
+    Add the columns ``aerosol_model`` and ``aerosol_combination`` (see :func:`aerosol_model`) to a matchup
+    table made before they existed, from the attributes of its L2A products (no extraction).
+    """
+    def one(path):
+        try:
+            with xr.open_dataset(path) as ds:
+                return path, *aerosol_model(ds.attrs)
+        except Exception:
+            return path, '', ''
+
+    paths = table.l2a.dropna().unique()
+    with ThreadPoolExecutor(max(1, workers)) as pool:
+        found = {p: (m, c) for p, m, c in pool.map(one, paths)}
+    table = table.copy()
+    table['aerosol_model'] = table.l2a.map(lambda p: found.get(p, ('', ''))[0])
+    table['aerosol_combination'] = table.l2a.map(lambda p: found.get(p, ('', ''))[1])
+    return table
+
+
 def extract_l2a(paths, window='ring', size=(4, 7), platform_nir=8e-4, workers=4):
     """
     :func:`extract_window` for a list of L2A products (NetCDF files), read in parallel.
 
-    :return: DataFrame, one row per product: l2a, version, cloud_cover and the statistics
+    :return: DataFrame, one row per product: l2a, version, aerosol_model, aerosol_combination (see
+             :func:`aerosol_model`) and the statistics
     """
     def one(path):
         try:
             with xr.open_dataset(path) as ds:
                 version = str(ds.attrs.get('version', ''))
+                model, mixture = aerosol_model(ds.attrs)
                 ds = ds[[v for v in ('Rrs', 'mask', 'aot550', 'BRDFg', 'wind', 'sza', 'vza', 'raa') if v in ds]].load()
-            return {'l2a': str(path), 'version': version, **extract_window(ds, window, size, platform_nir)}
+            return {'l2a': str(path), 'version': version, 'aerosol_model': model, 'aerosol_combination': mixture,
+                    **extract_window(ds, window, size, platform_nir)}
         except Exception as exc:
             return {'l2a': str(path), 'error': f'{type(exc).__name__}: {exc}'}
 
@@ -415,7 +463,8 @@ def matchup_table(items, extractions=None, version=None, root=DATA_ROOT, insitu_
     :param extractions: table of :func:`extract_l2a` (default: extracted from the L2A products of the items)
     :param version: GRS version of the L2A products (default: the installed grs)
     :return: DataFrame (long format): station, image, l2a, time, platform, tile, cloud_cover, version, the
-             extraction statistics, site, level, time_insitu, lag_min, wl, wl_insitu, Rrs_sat, Rrs_sat_mean,
+             extraction statistics, aerosol_model, aerosol_combination, site, level, time_insitu, lag_min, wl,
+             wl_insitu, Rrs_sat, Rrs_sat_mean,
              Rrs_sat_std, Rrs_insitu (directional), Rrs_insitu_fQ, Rrs_insitu_IOP, residual (sat - in situ),
              lon, lat
     """

@@ -70,6 +70,9 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ### Fixed
 
+- Dashboard of the matchups with pandas >= 3: the text columns (station, level, aerosol model...) have the `str`
+  dtype instead of `object`, and were taken for numbers when colouring the points (`ValueError: could not convert
+  string to float`); categories now detected from a non-numeric dtype.
 - Dashboard of the matchups: the axes of the views are not linked any more (the in situ Rrs `x` of the scatter
   plots took the range of the easting `x` of the map, and the ranges were not refreshed when the in situ
   normalisation changed); the scatter plot of all the bands keeps its square size instead of the page width.

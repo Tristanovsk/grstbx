@@ -142,6 +142,11 @@ def _equal_zoom(plot, element):
 
 
 BORDER = dict(hooks=[_borders()])
+
+
+def _categorical(series):
+    """Column of categories (text): object dtype with pandas 2, str dtype with pandas >= 3."""
+    return not pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_bool_dtype(series)
 HOVER = ['station', 'date', 'wl', 'level', 'lag_min', 'n_valid', 'frac_valid', 'cv560', 'aot550_sat', 'BRDFg',
          'aerosol_model']
 
@@ -203,7 +208,7 @@ def _points(df, x, vdims, color, cmap='auto', alpha=0.8, clim=None, palette=None
     style = dict(size=size, alpha=alpha, tools=['hover'], line_color=PALETTE['ink'], line_width=0.3,
                  muted_alpha=0.05)
     vdims = list(dict.fromkeys(v for v in vdims if v in df))
-    if df[color].dtype == object:
+    if _categorical(df[color]):
         palette = palette or _palette(df[color], cmap)
         layers = {str(c): hv.Scatter(g, x, vdims, label=str(c)).opts(color=palette.get(c, 'grey'), **style)
                   for c, g in df.groupby(color, sort=True)}
@@ -351,7 +356,7 @@ class MatchupDashboard:
     # --------------------------------------------------------------------------------------------------------
     def _color_scale(self, df, color):
         """Palette (categories) or limits (numbers) of the colours, from all the matchups of the view."""
-        if df[color].dtype == object:
+        if _categorical(df[color]):
             return dict(palette=_palette(df[color], self.w_cmap.value))
         return dict(clim=(float(df[color].min()), float(df[color].max())) if df[color].notna().any() else None)
 
@@ -398,7 +403,7 @@ class MatchupDashboard:
         ncols = min(3, len(groups))
         nrows = -(-len(groups) // ncols)
         scale = self._color_scale(df, color)
-        categorical = df[color].dtype == object
+        categorical = _categorical(df[color])
         plots = []
         for i, (wl, group) in enumerate(groups):
             row, col = divmod(i, ncols)

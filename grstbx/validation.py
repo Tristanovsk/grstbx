@@ -1,7 +1,7 @@
 """
 Validation of the GRS L2A remote sensing reflectance with AERONET-OC, on the Sentinel-2 L1C subsets around the
 AERONET-OC stations (static STAC catalogue of the bucket ``s3://aeronet-oc``, made by
-``notebook/validation_image_subset/aeronet_oc_s2_subsets.py``).
+``aeronet_oc_s2_subsets.py`` of the tutorial *Validation with AERONET-OC*).
 
 The chain:
 

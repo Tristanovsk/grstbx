@@ -10,7 +10,7 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 - `grstbx.validation` and the command `grstbx-validation`: validation of the GRS L2A Rrs with AERONET-OC on the
   Sentinel-2 L1C subsets of 5 km x 5 km around the AERONET-OC stations (static STAC catalogue of the bucket
-  `aeronet-oc`, made by `notebook/validation_image_subset/aeronet_oc_s2_subsets.py`): subsets of the catalogue
+  `aeronet-oc`, made by `aeronet_oc_s2_subsets.py` of the AERONET-OC tutorial): subsets of the catalogue
   (`read_items`), GRS on the subsets, one process per image, L2A products with their STAC Item in the tree of the
   bucket (`process_subsets`, `grstbx-validation grs`), statistics of the water pixels of a ring (or box) around the
   station without the platform (`extract_window`, `extract_l2a`), AERONET-OC measurements of the in situ validation
@@ -61,8 +61,11 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 - Dashboard of the matchups: the axes of the views are not linked any more (the in situ Rrs `x` of the scatter
   plots took the range of the easting `x` of the map, and the ranges were not refreshed when the in situ
   normalisation changed); the scatter plot of all the bands keeps its square size instead of the page width.
-- Notebooks `notebook/validation_image_subset`: the dataset of subsets (`aeronet_oc_s2_l1c_subsets.ipynb`) and the
-  validation with the dashboard (`grs_aeronet_oc_validation.ipynb`).
+- Notebooks of the AERONET-OC validation in the documentation (`docs/source/tutorials/aeronet_oc_validation/`): the
+  dataset of subsets (`aeronet_oc_s2_l1c_subsets.ipynb`, script `aeronet_oc_s2_subsets.py`, with
+  `fill_cams_surface_pressure.py`) and the validation with the dashboard (`grs_aeronet_oc_validation.ipynb`).
+- Repository: the working folder `notebook/` is no longer tracked (ignored); the notebooks published are those of
+  the documentation, `docs/source/`.
 
 ## [2.7.0] - 2026-11-16
 

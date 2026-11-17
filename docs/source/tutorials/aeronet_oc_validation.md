@@ -33,14 +33,16 @@ grstbx-validation matchups -o /data/satellite/validation/matchups/grs_3.1.1.csv
 grstbx-validation dashboard /data/satellite/validation/matchups/grs_3.1.1.csv --show
 ```
 
-The notebooks of the chain are in
-[`notebook/validation_image_subset`](https://github.com/Tristanovsk/grstbx/tree/main/notebook/validation_image_subset):
-`aeronet_oc_s2_l1c_subsets.ipynb` (the dataset) and `grs_aeronet_oc_validation.ipynb` (GRS, matchups, statistics
-and dashboard). The data are not distributed with grstbx.
+The notebooks of the chain are {doc}`aeronet_oc_validation/aeronet_oc_s2_l1c_subsets` (the dataset) and
+{doc}`aeronet_oc_validation/grs_aeronet_oc_validation` (GRS, matchups, statistics and dashboard), with the
+scripts {download}`aeronet_oc_s2_subsets.py <aeronet_oc_validation/aeronet_oc_s2_subsets.py>` and
+{download}`fill_cams_surface_pressure.py <aeronet_oc_validation/fill_cams_surface_pressure.py>`. The data are
+not distributed with grstbx.
 
 ## Dataset of Sentinel-2 subsets
 
-The script `notebook/validation_image_subset/aeronet_oc_s2_subsets.py` makes the dataset:
+The script {download}`aeronet_oc_s2_subsets.py <aeronet_oc_validation/aeronet_oc_s2_subsets.py>` makes the
+dataset:
 
 | item | content |
 |---|---|
@@ -81,7 +83,7 @@ failure leaves a `<name>.err` file (retried with `retry_failed=True`), an image 
 GRS reads the surface pressure `sp` of the CAMS files, which the CAMS global forecasts of the ADS do not provide
 from January 2015 to May 2016 (only the mean sea level pressure `msl`): GRS fails on the images of this period
 (`.err` file: `'Dataset' object has no attribute 'sp'`). The script
-`notebook/validation_image_subset/fill_cams_surface_pressure.py` completes the monthly files of this period with
+{download}`fill_cams_surface_pressure.py <aeronet_oc_validation/fill_cams_surface_pressure.py>` completes the monthly files of this period with
 `sp` derived from their `msl` and 2 m temperature with the barometric formula, and the effective orography of
 the CAMS model estimated from the forecasts of June 2016 to May 2017 (the original files are kept in
 `original_without_sp/`). Compared with the `sp` of the CAMS forecasts of December 2016 and March 2017 (not used
@@ -165,4 +167,11 @@ statistics; colour: aerosol model selected by GRS.
 
 Spectra: GRS median and standard deviation of the ring around the station, AERONET-OC measurement 11 min
 before the overpass, quicklooks of the L2A product (L1C RGB, L2A RGB, sunglint).
+```
+
+```{toctree}
+:maxdepth: 1
+
+aeronet_oc_validation/aeronet_oc_s2_l1c_subsets
+aeronet_oc_validation/grs_aeronet_oc_validation
 ```

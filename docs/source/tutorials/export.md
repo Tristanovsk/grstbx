@@ -1,6 +1,6 @@
 # Export
 
-The notebooks below export the images of an area of interest and a date range to a shared folder
+The notebook below exports the images of an area of interest and a date range to a shared folder
 (Google Drive), for people who do not have access to the storage of the products:
 
 - area: point and box size, bounding box or vector file;
@@ -32,17 +32,14 @@ fmt = 'nc'                       # 'nc' or 'zarr.zip' (L2A and L2B)
 drive_remote, drive_folder = 'mag_watqual:', 'grstbx_exports'
 ```
 
-The first notebook reads the local `grstbx-s3` bucket (see {doc}`s3_stac`), with the Loire estuary
-(tile 30TWT) as example. The second one reads the TREX datalake of CNES
-(`/work/datalake/watcal/Sentinel-2/{L1C,L2A,L2B}/<tile>/YYYY/MM/DD/`, see {doc}`batch`), with Lake
-Balaton (six tiles over UTM zones 33 and 34, L2A and L2B) as example: the export runs on the compute
-nodes (SLURM job array, one task per year, written by the notebook) and the upload from a login node,
-through the CNES proxy. The notebooks are rendered without outputs; rclone needs a Google Drive remote
-(`rclone config`).
+The notebook reads the local `grstbx-s3` bucket (see {doc}`s3_stac`), with the Loire estuary (tile 30TWT) as
+example. It is rendered without outputs; rclone needs a Google Drive remote (`rclone config`).
+
+The same export from the TREX datalake of CNES, run on the compute nodes as a SLURM job array with the upload
+from a login node, is in the HPC section: {doc}`../hpc/cnes_trex/grstbx_trex_export_gdrive`.
 
 ```{toctree}
 :maxdepth: 1
 
 export/grstbx_s3_export_gdrive
-export/grstbx_trex_export_gdrive
 ```

@@ -50,6 +50,11 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   which has no identity` (no clear water pixel: all cloudy or outside the swath) gets the marker
   `<name>_no_water.txt` (status `no_water`, not run again) instead of an `.err` file (status `failed`), as in the
   TREX batch notebook.
+- Documentation: the tutorials grouped by topic, from the exploration of the products to the research (Getting
+  started: explore the products; Data and processing; Validation; Research and case studies), and a section HPC
+  with the CNES TREX notebooks (batch L1C → L2A → L2B from the datalake with GRS 2.2 and 3.x, export to Google
+  Drive; SLURM job arrays flagged by `GRS_BATCH_JOB` / `EXPORT_BATCH_JOB`, as JupyterHub of TREX also runs in a
+  SLURM job).
 
 ### Fixed
 

@@ -73,21 +73,42 @@ or, without notebook, the web dashboard (see :doc:`tutorials/dashboard`):
 
 .. toctree::
    :maxdepth: 2
-   :caption: Tutorials
+   :caption: Getting started: explore the products
+
+   tutorials/l2a_image
+   tutorials/l2b_datacube
+   tutorials/dashboard
+   tutorials/hgrs_products
+   tutorials/utilities
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Data and processing
 
    tutorials/download
    tutorials/batch
-   tutorials/l2a_image
-   tutorials/dashboard
    tutorials/s3_stac
-   tutorials/l2b_datacube
    tutorials/subset_export
    tutorials/export
-   tutorials/utilities
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Validation
+
    tutorials/validation
    tutorials/aeronet_oc_validation
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Research and case studies
+
    tutorials/case_studies
-   tutorials/hgrs_products
+
+.. toctree::
+   :maxdepth: 2
+   :caption: HPC
+
+   hpc/cnes_trex
 
 .. toctree::
    :maxdepth: 2

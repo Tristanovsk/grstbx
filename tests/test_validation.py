@@ -101,6 +101,19 @@ def test_matchup_table_quality_metrics(tmp_path):
     assert table.Rrs_insitu.iloc[0] == pytest.approx(0.010)
     assert table.residual.iloc[0] == pytest.approx(table.Rrs_sat.iloc[0] - table.Rrs_insitu.iloc[0])
     assert val.quality(table).all()
+    # per record, the nearest in situ band with a value: 555 nm when 560 nm is empty (other site of the station)
+    ins = xr.open_dataset(insitu).load()
+    wl = np.array([443., 490., 555., 560., 667., 865.])
+    for var in ('Rrs', 'Rrs_fQ'):
+        values = np.insert(ins[var].values, 2, ins[var].values[:, 2], axis=1)
+        values[2, 3] = np.nan          # 560 nm missing in the matched record (+10 min) only
+        ins = ins.drop_vars(var).assign({var: (('obs', 'wl2'), values)})
+    ins = ins.drop_vars('wl').rename({'wl2': 'wl'}).assign_coords(wl=wl)
+    ins.to_netcdf(tmp_path / 'aeronet_oc_555.nc')
+    table2 = val.matchup_table(items, extractions, version='3.1.1', root=tmp_path,
+                               insitu_path=tmp_path / 'aeronet_oc_555.nc')
+    assert list(table2.wl_insitu) == [443, 490, 555, 667, 865] and table2.wl_insitu.dtype.kind == 'i'
+    assert table2.Rrs_insitu.notna().all()
     assert not val.quality(table, max_lag_min=5).any()
     assert not val.quality(table, levels=('lev15',)).any()
     metrics = val.metrics_table(table, by='wl', min_n=1)

@@ -450,17 +450,27 @@ def matchup_table(items, extractions=None, version=None, root=DATA_ROOT, insitu_
         merged = pd.concat([group, near], axis=1)
         merged = merged[merged.time_insitu.notna()]
         wl_insitu = sorted({int(c.split('_')[-1]) for c in insitu if re.fullmatch(r'Rrs_\d+', c)})
-        for wl, wl_in in band_pairs(wl_insitu, tolerance=tolerance).items():
+        for wl in band_pairs(wl_insitu, tolerance=tolerance):
             if f'Rrs_sat_{wl}' not in merged:
                 continue
             part = merged[[c for c in merged if not re.match(r'Rrs(_sat(_mean|_std)?|_fQ|_IOP)?_\d+$', c)]].copy()
-            part['wl'], part['wl_insitu'] = wl, wl_in
+            part['wl'] = wl
             part['Rrs_sat'] = merged[f'Rrs_sat_{wl}']
             part['Rrs_sat_mean'] = merged[f'Rrs_sat_mean_{wl}']
             part['Rrs_sat_std'] = merged[f'Rrs_sat_std_{wl}']
-            for var, col in [('Rrs', 'Rrs_insitu'), ('Rrs_fQ', 'Rrs_insitu_fQ'), ('Rrs_IOP', 'Rrs_insitu_IOP')]:
-                values = merged[f'{var}_{wl_in}'] if f'{var}_{wl_in}' in merged else np.nan
-                part[col] = pd.to_numeric(values, errors='coerce') if np.ndim(values) else np.nan
+            # per record, the nearest in situ band with a value (the sites of a station, or one site over time,
+            # may have different bands: e.g. 560 nm at AAOT, 551 or 555 nm at Venise)
+            part['wl_insitu'] = np.nan
+            for col in ['Rrs_insitu', 'Rrs_insitu_fQ', 'Rrs_insitu_IOP']:
+                part[col] = np.nan
+            for wl_in in sorted((w for w in wl_insitu if abs(w - wl) <= tolerance), key=lambda w: abs(w - wl)):
+                values = pd.to_numeric(merged[f'Rrs_{wl_in}'], errors='coerce')
+                use = part.wl_insitu.isna() & values.notna()
+                part.loc[use, 'wl_insitu'] = wl_in
+                for var, col in [('Rrs', 'Rrs_insitu'), ('Rrs_fQ', 'Rrs_insitu_fQ'), ('Rrs_IOP', 'Rrs_insitu_IOP')]:
+                    if f'{var}_{wl_in}' in merged:
+                        part.loc[use, col] = pd.to_numeric(merged.loc[use, f'{var}_{wl_in}'], errors='coerce')
+            part = part[part.wl_insitu.notna()].astype({'wl_insitu': int})
             rows.append(part)
     if not rows:
         return pd.DataFrame()

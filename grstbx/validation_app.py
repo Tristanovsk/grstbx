@@ -173,7 +173,8 @@ class MatchupDashboard:
         df = self.selection()
         return pn.pane.Markdown(
             f"**{df.image.nunique()}** images, **{len(df)}** matchups (image x band), "
-            f"**{df.station.nunique()}** stations, {df.time.min():%Y-%m-%d} to {df.time.max():%Y-%m-%d}"
+            f"**{df.station.nunique()}** station{'s' if df.station.nunique() > 1 else ''}, "
+            f"{df.time.min():%Y-%m-%d} to {df.time.max():%Y-%m-%d}"
             if len(df) else '**No matchup** with these criteria', margin=(0, 10))
 
     def view_map(self, *_):
@@ -186,10 +187,13 @@ class MatchupDashboard:
         x, y = lon_lat_to_easting_northing(all_st.lon.values, all_st.lat.values)
         points = pd.DataFrame({'x': x, 'y': y, 'station': all_st.index, 'images': n.values.astype(int),
                                'size': 6 + 3 * np.sqrt(n.values)})
+        # extent of the stations, at least 600 km wide (a single station: the map around it)
+        pad = max(3e5, 0.1 * max(np.ptp(x), np.ptp(y)))
+        xlim, ylim = (x.min() - pad, x.max() + pad), (y.min() - pad, y.max() + pad)
         return (basemap_tiles(self.basemap) * hv.Points(points, ['x', 'y'], ['station', 'images', 'size']).opts(
             size='size', color='images', cmap='viridis', colorbar=True, tools=['hover'], line_color='black',
-            clabel='images with matchups')).opts(height=420, responsive=True, xaxis=None, yaxis=None,
-                                                  title='Stations (size, colour: images with matchups)')
+            clabel='images with matchups')).opts(height=420, responsive=True, xaxis=None, yaxis=None, xlim=xlim,
+                                                  ylim=ylim, title='Stations (size, colour: images with matchups)')
 
     def view_overall(self, *_):
         df = self.selection()
@@ -300,7 +304,9 @@ class MatchupDashboard:
             spread = hv.Spread(sel.assign(e=sel.Rrs_sat_std.fillna(0)), 'wl', ['Rrs_sat', 'e'],
                                label='GRS +- std').opts(color='#1f77b4', alpha=0.2)
             ins = hv.Scatter(sel, 'wl_insitu', 'x', label='AERONET-OC').opts(color='black', size=8, marker='diamond')
+            wls = pd.concat([sel.wl, sel.wl_insitu])
             plot = (spread * sat * ins).opts(
+                xlim=(wls.min() - 20, wls.max() + 20),
                 title=f'{row.station} {row.date} (lag {row.lag_min:.0f} min, {row.level})', height=380,
                 responsive=True, xlabel='wavelength (nm)', ylabel='Rrs (sr-1)', legend_position='top_right',
                 show_grid=True)

@@ -85,6 +85,7 @@ or, without notebook, the web dashboard (see :doc:`tutorials/dashboard`):
    tutorials/export
    tutorials/utilities
    tutorials/validation
+   tutorials/aeronet_oc_validation
    tutorials/case_studies
    tutorials/hgrs_products
 

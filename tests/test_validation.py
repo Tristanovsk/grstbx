@@ -76,6 +76,10 @@ def test_read_aeronet_oc_and_nearest(tmp_path):
     assert near.time_insitu.iloc[0] == pd.Timestamp('2024-07-01T10:10') and near.level.iloc[0] == 'lev20'
     assert pd.isna(near.time_insitu.iloc[1])
     assert val.read_aeronet_oc('SITE', path, levels=(2.0,)).level.eq('lev20').all()
+    # two sites of one station measuring at the same time: no error, the Level 2.0 record taken
+    twin = pd.concat([ins.iloc[[1]].assign(level='lev20', site='TWIN'), ins])
+    near = val._nearest(twin, [pd.Timestamp('2024-07-01T09:40')], '1h')
+    assert near.site.iloc[0] == 'TWIN' and near.level.iloc[0] == 'lev20'
 
 
 def test_matchup_table_quality_metrics(tmp_path):

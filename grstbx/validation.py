@@ -370,6 +370,10 @@ def _nearest(insitu, times, max_lag):
     """Nearest in situ record of each time within max_lag (NaN row if none), Level 2.0 first."""
     out = pd.DataFrame(index=range(len(times)), columns=['time_insitu'] + list(insitu.columns))
     times = pd.DatetimeIndex(times)
+    # records at the same time (sites of one station, e.g. AAOT and Venise): one kept, Level 2.0 first
+    order = np.lexsort((insitu.level.ne('lev20').values, insitu.index.values))
+    insitu = insitu.iloc[order]
+    insitu = insitu[~insitu.index.duplicated(keep='first')]
     for subset in ([insitu[insitu.level == 'lev20'], insitu] if (insitu.level == 'lev20').any() else [insitu]):
         if subset.empty:
             continue

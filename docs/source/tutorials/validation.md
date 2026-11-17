@@ -1,5 +1,8 @@
 # Validation with in situ data
 
+The validation of the GRS L2A products with the AERONET-OC stations, on a dataset of Sentinel-2 subsets and with a
+dashboard of the matchups, is described in {doc}`aeronet_oc_validation`.
+
 These notebooks compare GRS products with in situ measurements in the Berre lagoon (France), where the
 HYPERNETS station `BEFR` is installed. Both build a multi-temporal datacube of the products over a box
 centred on the station ({class}`~grstbx.driver.L2grs`), compute the statistics of the valid pixels of the

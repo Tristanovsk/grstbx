@@ -224,3 +224,82 @@ def test_dashboard_views():
     assert board.selection().empty and board.view_scatter() is not None and board.view_errors() is not None
     assert board.inline() is not None and board.template() is not None
     assert board._csv().getvalue().startswith('station,')
+
+
+def gaussian_srf(bands=(443, 490, 560, 665, 865), fwhm=20.):
+    wl_hr = np.arange(400, 1000)
+    sigma = fwhm / 2.355
+    values = np.exp(-0.5 * ((wl_hr[None] - np.array(bands)[:, None]) / sigma) ** 2)
+    return xr.DataArray(values, dims=('wl', 'wl_hr'), coords={'wl': list(bands), 'wl_hr': wl_hr})
+
+
+def hypernets_file(path, site='BEFR', t0='2024-07-01T10:00'):
+    times = pd.to_datetime(t0) + pd.to_timedelta([-90, -20, 10, 40], 'min')
+    wl = np.arange(350., 1101.)
+    rrs = np.tile(0.01 + 1e-5 * (wl - 350), (4, 1)).astype('float32')     # linear: band value = Rrs(centre)
+    rrs[:, wl > 900] = np.nan                                               # spectra stop at 900 nm
+    ds = xr.Dataset({'subsource': ('obs', [f'{site}_H_HYPSTAR_v1.2_zenodo'] * 3 + ['OTHR_H_HYPSTAR_v1.2_zenodo']),
+                     'time': ('obs', times), 'qc_flag': ('obs', np.array([0, 1, 0, 0], dtype='int8')),
+                     'sza': ('obs', np.full(4, 30.)), 'vza': ('obs', np.full(4, 40.)), 'raa': ('obs', np.full(4, 135.)),
+                     'wind_speed': ('obs', np.full(4, 3.)), 'Rrs': (('obs', 'wl'), rrs)},
+                    coords={'wl': wl})
+    ds.to_netcdf(path)
+    return path
+
+
+def test_convolve_srf_and_read_hypernets(tmp_path):
+    srf = val.band_srf(gaussian_srf(bands=(443, 560, 865, 945)))
+    assert np.allclose(srf.sum('wl_hr'), 1)
+    path = hypernets_file(tmp_path / 'hypernets.nc')
+    dir_norm = xr.DataArray(np.full((3, 2), 1.1), dims=('sza', 'wl'), coords={'sza': [10, 30, 60], 'wl': [350, 1100]})
+    ins = val.read_hypernets('BEFR', path, srf=srf, dir_norm=dir_norm)
+    assert len(ins) == 2 and set(ins.site) == {'BEFR'} and set(ins.level) == {'qc0'}    # qc_flag 1, other site out
+    assert ins.Rrs_560.iloc[0] == pytest.approx(0.01 + 1e-5 * 210, rel=1e-4)
+    assert ins.Rrs_nadir_560.iloc[0] == pytest.approx(1.1 * ins.Rrs_560.iloc[0])
+    assert 'Rrs_945' not in ins or ins.Rrs_945.isna().all()                   # band beyond the in situ spectra
+    assert len(val.read_hypernets('BEFR', path, srf=srf, qc_flags=(0, 1))) == 3
+    with pytest.raises(ValueError):
+        val.read_hypernets('BEFR', path)
+
+
+def test_matchup_table_hypernets_reader(tmp_path):
+    import functools
+
+    insitu = hypernets_file(tmp_path / 'hypernets.nc')
+    subset = tmp_path / 'sentinel-2' / 'l1c' / 'BEFR' / '2024' / '07' / '01' / \
+        'S2A_MSIL1C_20240701T100000_N0510_R108_T31TFJ_20240701T120000_BEFR.nc'
+    items = pd.DataFrame([{'id': subset.stem, 'time': pd.Timestamp('2024-07-01T10:00'), 'station': 'BEFR',
+                           'sites': ['BEFR'], 'lon': 5.1, 'lat': 43.4, 'tile': '31TFJ', 'platform': 'sentinel-2a',
+                           'cloud_cover': 5., 'subset': str(subset)}])
+    l2a = val.l2a_path(subset, '3.1.1', tmp_path)
+    l2a.parent.mkdir(parents=True)
+    l2a_product().to_netcdf(l2a)
+    extractions = val.extract_l2a([l2a], workers=1)
+    dir_norm = xr.DataArray(np.full((2, 2), 0.95), dims=('sza', 'wl'), coords={'sza': [10, 60], 'wl': [350, 1100]})
+    reader = functools.partial(val.read_hypernets, path=insitu, srf=gaussian_srf(), dir_norm=dir_norm)
+    table = val.matchup_table(items, extractions, version='3.1.1', root=tmp_path, reader=reader)
+    assert list(table.wl) == [443, 490, 560, 665, 865] and (table.wl == table.wl_insitu).all()
+    assert (table.lag_min == 10).all() and (table.level == 'qc0').all()
+    assert np.allclose(table.Rrs_insitu_nadir, 0.95 * table.Rrs_insitu)
+    assert 'Rrs_insitu_fQ' not in table
+    assert not val.quality(table).any()                 # default levels: AERONET-OC
+    assert val.quality(table, levels=None).all() and val.quality(table, levels=('qc0',)).all()
+
+
+def test_dashboard_hypernets_labels():
+    pytest.importorskip('panel')
+    from grstbx.validation_app import MatchupDashboard
+
+    table = synthetic_table().drop(columns='Rrs_insitu_fQ').assign(level='qc0')
+    table['Rrs_insitu_nadir'] = 0.95 * table.Rrs_insitu
+    insitu = {'HYPERNETS (as measured)': 'Rrs_insitu', 'HYPERNETS at nadir': 'Rrs_insitu_nadir',
+              'f/Q': 'Rrs_insitu_fQ'}
+    board = MatchupDashboard(table, insitu=insitu, network='HYPERNETS')
+    assert list(board.w_insitu.options) == ['HYPERNETS (as measured)', 'HYPERNETS at nadir']
+    assert board.w_levels.options == ['qc0'] and board.w_levels.value == ['qc0']
+    assert len(board.selection()) > 0
+    board.w_insitu.value = 'Rrs_insitu_nadir'
+    assert np.allclose(board.selection().x, board.selection().Rrs_insitu_nadir)
+    for view in (board.view_scatter, board.view_errors, board.view_spectra):
+        assert view() is not None
+

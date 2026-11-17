@@ -188,12 +188,13 @@ validation tutorial).
    grstbx.matchup.matchup_metrics
    grstbx.matchup.plot_matchup
 
-Validation with AERONET-OC
---------------------------
+Validation with AERONET-OC and HYPERNETS
+----------------------------------------
 
-GRS on the Sentinel-2 subsets around the AERONET-OC stations (STAC catalogue of the bucket ``aeronet-oc``),
-matchup table, quality criteria and statistics (:mod:`grstbx.validation`, command line ``grstbx-validation``),
-and dashboard of the matchups (:mod:`grstbx.validation_app`).
+GRS on the Sentinel-2 subsets around the AERONET-OC stations (STAC catalogue of the bucket ``aeronet-oc``) or
+the HYPERNETS stations, matchup table with the in situ data (AERONET-OC, or HYPERNETS convolved with the
+spectral response functions of the bands), quality criteria and statistics (:mod:`grstbx.validation`, command
+line ``grstbx-validation``), and dashboard of the matchups (:mod:`grstbx.validation_app`).
 
 .. autosummary::
    :toctree: generated
@@ -208,6 +209,9 @@ and dashboard of the matchups (:mod:`grstbx.validation_app`).
    grstbx.validation.extract_window
    grstbx.validation.extract_l2a
    grstbx.validation.read_aeronet_oc
+   grstbx.validation.read_hypernets
+   grstbx.validation.band_srf
+   grstbx.validation.convolve_srf
    grstbx.validation.band_pairs
    grstbx.validation.matchup_table
    grstbx.validation.quality

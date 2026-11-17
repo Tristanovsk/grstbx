@@ -37,6 +37,15 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   of the points chosen in the sidebar, same range on both axes kept by the box zoom; web style after the Bokeh
   demos, with an earth palette (gold, cream, brick red, sage, olive): warm page, plots on a cream background with
   faint grid lines, serif titles, terracotta widgets, gold download button.
+- Validation with HYPERNETS (WATERHYPERNET): `validation.read_hypernets` reads the HYPERNETS measurements of the in
+  situ validation database (QC-approved, `qc_flag == 0`), convolved with the spectral response functions of the
+  Sentinel-2 bands (`band_srf`, `convolve_srf`; SRF of the GRSdriver L1C products), optionally normalised to nadir
+  viewing (`Rrs_nadir_<wl>`), in the format of `read_aeronet_oc`; `matchup_table(..., reader=...)` takes any such
+  in situ reader (default: AERONET-OC), its normalisations giving the columns `Rrs_insitu_<norm>`;
+  `quality(..., levels=None)` keeps all the in situ levels; the dashboard takes the in situ choices and the network
+  name (`dashboard(table, insitu={...}, network='HYPERNETS')`), its levels from the table. Tutorial "L2A validation:
+  remote-sensing reflectance against HYPERNETS" redone with this chain: GRS 3.1.1 on Sentinel-2 subsets of 5 km
+  centred on the BEFR and MAFR stations instead of the datacube of the full tiles.
 
 ### Fixed
 

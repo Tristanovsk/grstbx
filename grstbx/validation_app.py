@@ -227,9 +227,13 @@ class MatchupDashboard:
     :param table: table of :func:`grstbx.validation.matchup_table` (several GRS versions can be concatenated)
     :param title: title of the page
     :param basemap: basemap of the map of the stations (:data:`grstbx.visual.BASEMAPS`)
+    :param insitu: in situ Rrs to choose from, {label: column} (default: :data:`INSITU`, AERONET-OC); the
+                   columns missing from the table are left out
+    :param network: name of the in situ network in the labels of the widgets
     """
 
-    def __init__(self, table, title='GRS L2A vs AERONET-OC', basemap='OpenStreetMap'):
+    def __init__(self, table, title='GRS L2A vs AERONET-OC', basemap='OpenStreetMap', insitu=None,
+                 network='AERONET-OC'):
         hv.extension('bokeh', logo=False)
         pn.extension('tabulator', sizing_mode='stretch_width', notifications=True)
         self.title = title
@@ -247,9 +251,14 @@ class MatchupDashboard:
         self.w_stations = w.MultiChoice(name='Stations', options=stations, value=stations)
         self.w_bands = w.CheckButtonGroup(name='Bands (nm)', options=bands, value=bands, button_type='primary',
                                           button_style='outline')
-        self.w_insitu = w.Select(name='In situ Rrs', options=INSITU, value='Rrs_insitu')
-        self.w_levels = w.CheckButtonGroup(name='AERONET-OC level', options=['lev20', 'lev15'],
-                                           value=list(QC['levels'][:1]), button_type='primary', button_style='outline')
+        insitu = {k: v for k, v in (insitu or INSITU).items() if v in table and table[v].notna().any()}
+        self.w_insitu = w.Select(name='In situ Rrs', options=insitu or {'in situ': 'Rrs_insitu'},
+                                 value='Rrs_insitu')
+        levels = sorted(df.level.unique())
+        self.network = network
+        self.w_levels = w.CheckButtonGroup(name=f'{network} level', options=levels,
+                                           value=[lv for lv in QC['levels'][:1] if lv in levels] or levels,
+                                           button_type='primary', button_style='outline')
         self.w_platforms = w.CheckButtonGroup(name='Platforms', options=platforms, value=platforms,
                                               button_type='primary', button_style='outline')
         self.w_aerosols = w.MultiChoice(name='Aerosol models of GRS', options=aerosols, value=aerosols)
@@ -347,7 +356,7 @@ class MatchupDashboard:
         return dict(clim=(float(df[color].min()), float(df[color].max())) if df[color].notna().any() else None)
 
     def _scatter(self, df, title, color, size=FRAME, legend=True, xlabel=True, ylabel=True, scale=None):
-        """Scatter plot GRS vs AERONET-OC in a square frame of ``size`` px, same limits on both axes."""
+        """Scatter plot GRS vs the in situ Rrs in a square frame of ``size`` px, same limits on both axes."""
         scale = scale or self._color_scale(df, color) if not df.empty else {}
         frame = _square(size, xlabel, ylabel, colorbar=legend and 'clim' in scale)
         if df.empty:
@@ -370,7 +379,7 @@ class MatchupDashboard:
             layers *= hv.Text(hi * 0.97 if not log else hi * 0.8, lo + 0.03 * (hi - lo) if not log else lo * 1.3,
                               _stats_text(m), halign='right', valign='bottom', fontsize=8)
         return layers.opts(title=title, xlim=(lo, hi), ylim=(lo, hi), logx=log, logy=log,
-                           xlabel='Rrs AERONET-OC (sr-1)' if xlabel else '', ylabel='Rrs GRS (sr-1)' if ylabel else '',
+                           xlabel=f'Rrs {self.network} (sr-1)' if xlabel else '', ylabel='Rrs GRS (sr-1)' if ylabel else '',
                            show_legend=legend, legend_position='top_left', toolbar='above',
                            fontsize={'title': 10, 'labels': 9, 'ticks': 8, 'legend': 8}, **frame)
 
@@ -425,7 +434,7 @@ class MatchupDashboard:
         df = self.selection()
         if df.empty:
             return _md('No matchup')
-        opts = dict(tools=['hover'], height=350, responsive=True, ylabel='Rrs GRS - AERONET-OC (sr-1)',
+        opts = dict(tools=['hover'], height=350, responsive=True, ylabel=f'Rrs GRS - {self.network} (sr-1)',
                     whisker_color=PALETTE['ink'], box_line_color=PALETTE['ink'], outlier_color=PALETTE['ink'],
                     **STYLE)
         by_band = hv.BoxWhisker(df, 'wl', 'res').opts(title='Residuals by band', xlabel='band (nm)',
@@ -434,7 +443,7 @@ class MatchupDashboard:
                                                              box_fill_color=PALETTE['gold'], **opts)
         rel = df[df.x > 0].assign(rel=lambda d: 100 * d.res / d.x)
         by_band_rel = hv.BoxWhisker(rel, 'wl', 'rel').opts(
-            title='Relative residuals by band', xlabel='band (nm)', ylabel='(GRS - AERONET-OC) / AERONET-OC (%)',
+            title='Relative residuals by band', xlabel='band (nm)', ylabel=f'(GRS - {self.network}) / {self.network} (%)',
             box_fill_color=PALETTE['olive'], whisker_color=PALETTE['ink'], box_line_color=PALETTE['ink'],
             outlier_color=PALETTE['ink'], tools=['hover'], height=350, responsive=True, **STYLE)
         hists = []
@@ -444,7 +453,7 @@ class MatchupDashboard:
             hists.append(hv.Histogram((edges, counts), label=f'{wl} nm').opts(
                 fill_color=colors[wl], line_color=colors[wl], alpha=0.45))
         hist = hv.Overlay(hists).opts(title='Distribution of the residuals', height=350, responsive=True,
-                                      xlabel='Rrs GRS - AERONET-OC (sr-1)', legend_position='right', **STYLE)
+                                      xlabel=f'Rrs GRS - {self.network} (sr-1)', legend_position='right', **STYLE)
         by_aerosol = hv.BoxWhisker(df, ['aerosol_model', 'wl'], 'res').opts(
             title='Residuals by aerosol model of GRS and band', xrotation=45, box_fill_color=PALETTE['accent'],
             box_alpha=0.6,
@@ -473,7 +482,7 @@ class MatchupDashboard:
             sat = hv.Curve(sel, 'wl', 'Rrs_sat', label='GRS (median)').opts(color=PALETTE['red'], line_width=2)
             spread = hv.Spread(sel.assign(e=sel.Rrs_sat_std.fillna(0)), 'wl', ['Rrs_sat', 'e'],
                                label='GRS +- std').opts(color=PALETTE['gold'], alpha=0.35)
-            ins = hv.Scatter(sel, 'wl_insitu', 'x', label='AERONET-OC').opts(color=PALETTE['olive'], size=9,
+            ins = hv.Scatter(sel, 'wl_insitu', 'x', label=self.network).opts(color=PALETTE['olive'], size=9,
                                                                          marker='diamond')
             wls = pd.concat([sel.wl, sel.wl_insitu])
             plot = (spread * sat * ins).opts(
@@ -500,7 +509,7 @@ class MatchupDashboard:
                                   alpha=self.w_alpha.value,
                                   palette=palette, legend=i == 0, size=5)
                           * hv.HLine(0).opts(color=PALETTE['ink'], line_width=0.8)).opts(
-                height=220, responsive=True, title=f'{wl} nm', ylabel='GRS - AERONET-OC', xlabel='',
+                height=220, responsive=True, title=f'{wl} nm', ylabel=f'GRS - {self.network}', xlabel='',
                 show_legend=i == 0, legend_position='top_left', **BORDER))
         return _hv(hv.Layout(plots).cols(1).opts(shared_axes=False, merge_tools=True))
 
@@ -519,7 +528,7 @@ class MatchupDashboard:
                                   palette=palette, legend=i == 0, size=5)
                           * hv.HLine(0).opts(color=PALETTE['ink'], line_width=0.8)).opts(
                 width=FRAME + 120, height=FRAME, title=f'{wl} nm',
-                ylabel='GRS - AERONET-OC' if i % ncols == 0 else '',
+                ylabel=f'GRS - {self.network}' if i % ncols == 0 else '',
                 xlabel=label if i + ncols >= len(groups) else '', show_legend=i == 0, legend_position='top_left',
                 **BORDER))
         return _hv(hv.Layout(plots).cols(ncols).opts(shared_axes=False, merge_tools=True), fixed=True)
@@ -532,7 +541,7 @@ class MatchupDashboard:
             self.w_stations,
             _md('Bands (nm)', margin=(0, 10)), self.w_bands,
             self.w_insitu,
-            _md('AERONET-OC level', margin=(0, 10)), self.w_levels,
+            _md(f'{self.network} level', margin=(0, 10)), self.w_levels,
             *([_md('Platforms', margin=(0, 10)), self.w_platforms]
               if len(self.w_platforms.options) > 1 else []),
             *([self.w_aerosols] if len(self.w_aerosols.options) > 1 else []),

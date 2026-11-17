@@ -49,6 +49,8 @@ from .matchup import matchup_metrics
 
 #: harmonised AERONET-OC dataset of the in situ validation database (``GRSTBX_AERONET_OC`` to change it)
 AERONET_OC = os.environ.get('GRSTBX_AERONET_OC', '/data/insitu/validation_db/harmonised/aeronet_oc.nc')
+#: harmonised HYPERNETS dataset of the in situ validation database (``GRSTBX_HYPERNETS`` to change it)
+HYPERNETS = os.environ.get('GRSTBX_HYPERNETS', '/data/insitu/validation_db/harmonised/hypernets.nc')
 #: content of the bucket of the subsets: catalogue ``stac/``, subsets ``sentinel-2/l1c``, L2A ``sentinel-2/l2a``
 DATA_ROOT = os.environ.get('GRSTBX_VALIDATION_ROOT', '/data/satellite/validation')
 #: URL of the bucket in the assets of the Items -> local folder
@@ -414,6 +416,85 @@ def read_aeronet_oc(sites, path=AERONET_OC, levels=(2.0, 1.5), start=None, end=N
     return df.set_index('time').sort_index()
 
 
+def band_srf(srf, platform=None):
+    """
+    Spectral response functions of the Sentinel-2 bands, normalised to a unit integral on a 1 nm grid.
+
+    :param srf: DataArray (wl, wl_hr) of the SRF (variable ``SRF`` of the GRSdriver L1C products and subsets), or
+                the path of such a product
+    :return: DataArray (wl, wl_hr)
+    """
+    if not isinstance(srf, xr.DataArray):
+        with xr.open_dataset(srf) as ds:
+            srf = ds['SRF'].load()
+    srf = srf.fillna(0).clip(min=0)
+    return srf / srf.sum('wl_hr')
+
+
+def convolve_srf(rrs, srf, bands=S2_BANDS):
+    """
+    Hyperspectral Rrs convolved with the spectral response functions of the Sentinel-2 bands.
+
+    :param rrs: DataArray (..., wl) on a regular grid (nm)
+    :param srf: SRF of :func:`band_srf`
+    :return: DataArray (..., wl) at the nominal wavelengths of ``bands``; NaN where the in situ spectrum does not
+             cover 99 % of the response of the band
+    """
+    srf = srf.sel(wl=[wl for wl in bands if wl in srf.wl.values])
+    srf = srf.rename(wl='band', wl_hr='wl').interp(wl=rrs.wl.values).fillna(0)
+    srf = srf / srf.sum('wl')
+    valid = rrs.notnull()
+    out = (rrs.fillna(0) * srf).sum('wl') / (valid * srf).sum('wl')
+    coverage = (valid * srf).sum('wl')
+    return out.where(coverage >= 0.99).rename(band='wl')
+
+
+def read_hypernets(sites, path=HYPERNETS, srf=None, start=None, end=None, qc_flags=(0,), dir_norm=None,
+                   bands=S2_BANDS):
+    """
+    HYPERNETS (WATERHYPERNET) measurements of sites from the harmonised dataset of the in situ validation database,
+    convolved with the spectral response functions of the Sentinel-2 bands, in the format of
+    :func:`read_aeronet_oc` (to be used as the ``reader`` of :func:`matchup_table`).
+
+    :param sites: HYPERNETS sites (first part of ``subsource``), e.g. ``['BEFR', 'MAFR']``
+    :param srf: SRF of :func:`band_srf` (or the path of an L1C product or subset); one SRF for all the images
+                (the bands of S2A, S2B and S2C differ by less than 1 nm, except 783 nm)
+    :param qc_flags: values of ``qc_flag`` kept (0: QC-approved products)
+    :param dir_norm: optional factors (DataArray (sza, wl)) converting the measured Rrs to nadir viewing;
+                     adds ``Rrs_nadir_<wl>``
+    :return: DataFrame indexed by time: site, level (``qc<qc_flag>``), sza_insitu, vza_insitu, raa_insitu,
+             wind_insitu, aot550_insitu (NaN), ``Rrs_<wl>`` (as measured) and ``Rrs_nadir_<wl>`` at the nominal
+             wavelengths of the Sentinel-2 bands
+    """
+    if srf is None:
+        raise ValueError('srf: SRF of the Sentinel-2 bands (band_srf) needed for the hyperspectral in situ data')
+    if not isinstance(srf, xr.DataArray) or 'wl_hr' not in srf.dims or abs(float(srf.sum('wl_hr')[0]) - 1) > 1e-6:
+        srf = band_srf(srf)
+    sites = [sites] if isinstance(sites, str) else list(sites)
+    with xr.open_dataset(path) as ds:
+        site = np.array([str(s).split('_')[0] for s in ds.subsource.values])
+        keep = np.isin(site, sites) & np.isin(ds.qc_flag.values, qc_flags)
+        if start is not None:
+            keep &= ds.time.values >= np.datetime64(pd.Timestamp(start))
+        if end is not None:
+            keep &= ds.time.values <= np.datetime64(pd.Timestamp(end))
+        idx = np.flatnonzero(keep)
+        sub = ds[['time', 'sza', 'vza', 'raa', 'wind_speed', 'qc_flag', 'Rrs']].isel(obs=idx).load()
+    df = pd.DataFrame({'time': sub.time.values, 'site': site[idx],
+                       'level': [f'qc{q}' for q in sub.qc_flag.values],
+                       'sza_insitu': sub.sza.values, 'vza_insitu': sub.vza.values, 'raa_insitu': sub.raa.values,
+                       'wind_insitu': sub.wind_speed.values, 'aot550_insitu': np.nan})
+    variables = {'Rrs': sub.Rrs}
+    if dir_norm is not None:
+        factor = dir_norm.interp(wl=sub.wl.values).interp(sza=sub.sza)
+        variables['Rrs_nadir'] = factor * sub.Rrs
+    for var, rrs in variables.items():
+        conv = convolve_srf(rrs, srf, bands).transpose('obs', 'wl')
+        for k, wl in enumerate(conv.wl.values):
+            df[f'{var}_{int(wl)}'] = conv.values[:, k]
+    return df.set_index('time').sort_index()
+
+
 def _nearest(insitu, times, max_lag):
     """Nearest in situ record of each time within max_lag (NaN row if none), Level 2.0 first."""
     out = pd.DataFrame(index=range(len(times)), columns=['time_insitu'] + list(insitu.columns))
@@ -451,7 +532,8 @@ def band_pairs(insitu_wl, bands=S2_BANDS, tolerance=15):
 
 
 def matchup_table(items, extractions=None, version=None, root=DATA_ROOT, insitu_path=AERONET_OC, max_lag='3h',
-                  tolerance=15, window='ring', size=(4, 7), platform_nir=8e-4, workers=4, verbose=True):
+                  tolerance=15, window='ring', size=(4, 7), platform_nir=8e-4, workers=4, reader=None,
+                  verbose=True):
     """
     Matchup table: one row per image and Sentinel-2 band, with the satellite statistics of the window around the
     station and the nearest AERONET-OC measurement within ``max_lag`` (the nearest Level 2.0 one if any, else
@@ -462,6 +544,10 @@ def matchup_table(items, extractions=None, version=None, root=DATA_ROOT, insitu_
     :param items: table of :func:`read_items`
     :param extractions: table of :func:`extract_l2a` (default: extracted from the L2A products of the items)
     :param version: GRS version of the L2A products (default: the installed grs)
+    :param reader: in situ data of the sites of a station, ``reader(sites, start=..., end=...)`` -> DataFrame in
+                   the format of :func:`read_aeronet_oc` (``Rrs_<wl>`` and the normalised ``Rrs_<norm>_<wl>``,
+                   in the columns ``Rrs_insitu`` and ``Rrs_insitu_<norm>`` of the table); default: AERONET-OC of
+                   ``insitu_path``, e.g. ``functools.partial(read_hypernets, srf=...)`` for HYPERNETS
     :return: DataFrame (long format): station, image, l2a, time, platform, tile, cloud_cover, version, the
              extraction statistics, aerosol_model, aerosol_combination, site, level, time_insitu, lag_min, wl,
              wl_insitu, Rrs_sat, Rrs_sat_mean,
@@ -490,8 +576,8 @@ def matchup_table(items, extractions=None, version=None, root=DATA_ROOT, insitu_
     rows = []
     for station, group in sat.groupby('station'):
         sites = group.sites.iloc[0]
-        insitu = read_aeronet_oc(sites, insitu_path, start=group.time.min() - pd.Timedelta(max_lag),
-                                 end=group.time.max() + pd.Timedelta(max_lag))
+        period = dict(start=group.time.min() - pd.Timedelta(max_lag), end=group.time.max() + pd.Timedelta(max_lag))
+        insitu = reader(sites, **period) if reader else read_aeronet_oc(sites, insitu_path, **period)
         if insitu.empty:
             continue
         near = _nearest(insitu, group.time, max_lag)
@@ -499,10 +585,13 @@ def matchup_table(items, extractions=None, version=None, root=DATA_ROOT, insitu_
         merged = pd.concat([group, near], axis=1)
         merged = merged[merged.time_insitu.notna()]
         wl_insitu = sorted({int(c.split('_')[-1]) for c in insitu if re.fullmatch(r'Rrs_\d+', c)})
+        # in situ Rrs: as measured (Rrs_<wl>) and normalised (Rrs_<norm>_<wl>) -> Rrs_insitu, Rrs_insitu_<norm>
+        norms = sorted({m.group(1) for c in insitu if (m := re.fullmatch(r'Rrs_([A-Za-z]\w*?)_\d+', c))})
+        columns = [('Rrs', 'Rrs_insitu')] + [(f'Rrs_{n}', f'Rrs_insitu_{n}') for n in norms]
         for wl in band_pairs(wl_insitu, tolerance=tolerance):
             if f'Rrs_sat_{wl}' not in merged:
                 continue
-            part = merged[[c for c in merged if not re.match(r'Rrs(_sat(_mean|_std)?|_fQ|_IOP)?_\d+$', c)]].copy()
+            part = merged[[c for c in merged if not re.match(r'Rrs(_[A-Za-z]\w*?)?_\d+$', c)]].copy()
             part['wl'] = wl
             part['Rrs_sat'] = merged[f'Rrs_sat_{wl}']
             part['Rrs_sat_mean'] = merged[f'Rrs_sat_mean_{wl}']
@@ -510,13 +599,13 @@ def matchup_table(items, extractions=None, version=None, root=DATA_ROOT, insitu_
             # per record, the nearest in situ band with a value (the sites of a station, or one site over time,
             # may have different bands: e.g. 560 nm at AAOT, 551 or 555 nm at Venise)
             part['wl_insitu'] = np.nan
-            for col in ['Rrs_insitu', 'Rrs_insitu_fQ', 'Rrs_insitu_IOP']:
+            for _, col in columns:
                 part[col] = np.nan
             for wl_in in sorted((w for w in wl_insitu if abs(w - wl) <= tolerance), key=lambda w: abs(w - wl)):
                 values = pd.to_numeric(merged[f'Rrs_{wl_in}'], errors='coerce')
                 use = part.wl_insitu.isna() & values.notna()
                 part.loc[use, 'wl_insitu'] = wl_in
-                for var, col in [('Rrs', 'Rrs_insitu'), ('Rrs_fQ', 'Rrs_insitu_fQ'), ('Rrs_IOP', 'Rrs_insitu_IOP')]:
+                for var, col in columns:
                     if f'{var}_{wl_in}' in merged:
                         part.loc[use, col] = pd.to_numeric(merged.loc[use, f'{var}_{wl_in}'], errors='coerce')
             part = part[part.wl_insitu.notna()].astype({'wl_insitu': int})
@@ -543,12 +632,12 @@ def quality(table, max_lag_min=QC['max_lag_min'], min_valid=QC['min_valid'], max
     Matchups meeting the quality criteria: in situ measurement within ``max_lag_min`` minutes (Zibordi et al.
     2009: 1 h) and of the given levels, at least ``min_valid`` of the window valid, coefficient of variation of
     Rrs(560) in the window below ``max_cv`` (Bailey and Werdell 2006), optionally AOT(550) of GRS below
-    ``max_aot`` and sunglint (BRDFg) below ``max_glint``.
+    ``max_aot`` and sunglint (BRDFg) below ``max_glint``. ``levels=None``: all the in situ levels.
 
     :return: boolean Series aligned with the table
     """
     ok = ((table.lag_min.abs() <= max_lag_min) & (table.frac_valid >= min_valid) & (table.cv560 <= max_cv)
-          & table.level.isin(levels) & (table.n_valid >= min_n_valid)
+          & (table.level.isin(levels) if levels is not None else True) & (table.n_valid >= min_n_valid)
           & np.isfinite(table.Rrs_sat) & np.isfinite(table.Rrs_insitu))
     if max_aot is not None:
         ok &= table.aot550_sat <= max_aot

@@ -14,6 +14,12 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   out of memory) is recorded as `L2A failed` / `L2B failed` with its exit code, its partial outputs removed, and
   the batch goes on. `Batch.run(plan, workers=N)`: N images at a time. A subclass of `Batch` defined in a notebook
   is sent to the children as `Batch`. `isolate=False`: in the process of the batch, as before.
+- `L2grs.get_l2a_datacube(subset=...)`: the flag statistics computed first, the images with too many nodata pixels
+  dropped without being read, the others read once into the datacube, without an intermediate copy of each subset
+  (`load=False`: lazy datacube). 3 dates over 60 km of a tile 31TEJ (cube of 1.6 GB): peak memory 4.1-4.3 ->
+  3.2-3.6 GB.
+- Flag statistics (`L2grs.get_flag_stats`, `get_l2a_datacube`): bits counted chunk by chunk and the counts added,
+  instead of loading the full bitmask of each image: 3 full tiles, peak memory 0.59 -> 0.31 GB.
 
 ## [2.8.0] - 2026-11-17
 

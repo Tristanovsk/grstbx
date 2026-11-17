@@ -6,6 +6,89 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-11-17
+
+Validation of the GRS L2A remote sensing reflectance with AERONET-OC and HYPERNETS on Sentinel-2 subsets of 5 km
+around the stations (`grstbx.validation`, command `grstbx-validation`), with the aerosol model of GRS and a
+dashboard of the matchups; products decoded in float32 instead of float64 (half the memory) and faster import;
+documentation reorganised by topic, with an HPC section (CNES TREX) and the validation tutorials.
+
+### Added
+
+- `grstbx.validation` and the command `grstbx-validation`: validation of the GRS L2A Rrs with AERONET-OC on the
+  Sentinel-2 L1C subsets of 5 km x 5 km around the AERONET-OC stations (static STAC catalogue of the bucket
+  `aeronet-oc`, made by `aeronet_oc_s2_subsets.py` of the AERONET-OC tutorial): subsets of the catalogue
+  (`read_items`), GRS on the subsets, one process per image, L2A products with their STAC Item in the tree of the
+  bucket (`process_subsets`, `grstbx-validation grs`), statistics of the water pixels of a ring (or box) around the
+  station without the platform (`extract_window`, `extract_l2a`), AERONET-OC measurements of the in situ validation
+  database with the three normalisations (`read_aeronet_oc`), matchup table, one row per image and band, nearest
+  Level 2.0 measurement first and nearest band within 15 nm (`matchup_table`, `grstbx-validation matchups`), quality
+  criteria kept as columns (`quality`: lag, valid fraction, CV(560), level, AOT, sunglint) and statistics by group
+  (`metrics_table`).
+- `grstbx.validation_app`: dashboard of the matchups (panel, holoviews, bokeh), in a notebook
+  (`validation.dashboard(table)`) or as a web application (`grstbx-validation dashboard <tables> --show`, several
+  tables to compare GRS versions): criteria and selections changed interactively, map of the stations, scatter
+  plots per band or all bands (1:1 and regression lines, statistics, hover), statistics by band, station and both
+  with a heat map, distributions of the residuals, spectra of a matchup with the quicklooks of the L2A product,
+  residuals in time and against their drivers (AOT, sunglint, geometry, wind, lag, homogeneity), download of the
+  selected matchups.
+- `matchup_metrics`: MAE, MedAPE and the log-space RMSE, bias and MAE (`rmse_log`, `bias_log`, `mae_log`), as in
+  satmatchup and the ACIX intercomparisons.
+- Aerosol model of GRS in the matchup table (`aerosol_model`: the OPAC model selected by GRS, or the mixture of the
+  LUT models `'0.90 WASO_rh0 + 0.10 MACL_rh70'`; `aerosol_combination`: the weights, JSON), read from the attributes
+  of the L2A products (`validation.aerosol_model`; `validation.add_aerosol_model` for the tables made before), and in
+  the dashboard: colour of the scatter plots, selection, statistics and residuals by aerosol model and band.
+- Dashboard of the matchups: square scatter plots (frame of the same size in all the panels whatever the axis
+  labels, legend or colour bar) in a tight grid (axis labels on the outer panels, one legend or one colour bar per
+  row, shared toolbar, colours of the categories and colour scale the same in all the panels), colormap and opacity
+  of the points chosen in the sidebar, same range on both axes kept by the box zoom; web style after the Bokeh
+  demos, with an earth palette (gold, cream, brick red, sage, olive): warm page, plots on a cream background with
+  faint grid lines, serif titles, terracotta widgets, gold download button.
+- Validation with HYPERNETS (WATERHYPERNET): `validation.read_hypernets` reads the HYPERNETS measurements of the in
+  situ validation database (QC-approved, `qc_flag == 0`), convolved with the spectral response functions of the
+  Sentinel-2 bands (`band_srf`, `convolve_srf`; SRF of the GRSdriver L1C products), optionally normalised to nadir
+  viewing (`Rrs_nadir_<wl>`), in the format of `read_aeronet_oc`; `matchup_table(..., reader=...)` takes any such
+  in situ reader (default: AERONET-OC), its normalisations giving the columns `Rrs_insitu_<norm>`;
+  `quality(..., levels=None)` keeps all the in situ levels; the dashboard takes the in situ choices and the network
+  name (`dashboard(table, insitu={...}, network='HYPERNETS')`), its levels from the table. Tutorial "L2A validation:
+  remote-sensing reflectance against HYPERNETS" redone with this chain: GRS 3.1.1 on Sentinel-2 subsets of 5 km
+  centred on the BEFR and MAFR stations instead of the datacube of the full tiles.
+- `validation.run_grs`: an image on which GRS stops with `ValueError: zero-size array to reduction operation fmin
+  which has no identity` (no clear water pixel: all cloudy or outside the swath) gets the marker
+  `<name>_no_water.txt` (status `no_water`, not run again) instead of an `.err` file (status `failed`), as in the
+  TREX batch notebook.
+- Documentation: the tutorials grouped by topic, from the exploration of the products to the research (Getting
+  started: explore the products; Data and processing; Validation; Research and case studies), and a section HPC
+  with the CNES TREX notebooks (batch L1C → L2A → L2B from the datalake with GRS 2.2 and 3.x, export to Google
+  Drive; SLURM job arrays flagged by `GRS_BATCH_JOB` / `EXPORT_BATCH_JOB`, as JupyterHub of TREX also runs in a
+  SLURM job).
+
+### Changed
+
+- Products decoded in float32 instead of float64: the GRS products store their reflectances, AOT, sunglint and
+  angles as int16 with a float64 `scale_factor`, which xarray decoded to float64. `driver.to_float32` casts them
+  lazily, keeping their encoding (the exports still write int16); applied by default by `open_zarr_image`, `L2grs`
+  (L2A and L2B, NetCDF and Zarr), `open_hgrs_l2a`, the dashboard and `validation.extract_l2a` (`float32=False`:
+  float64 as before). Same values to 1e-7 relative, half the memory: on a full Sentinel-2 tile at 20 m, peak memory
+  5.5 -> 3.3 GB for the Rrs of an L2A Zarr product, 9.1 -> 6.3 GB for an L2B NetCDF product; about 15 % less CPU.
+- `import grstbx` in about 1 s instead of 2.5 s: rioxarray (with rasterio and dask.array) is imported on the first
+  use of the `.rio` accessor (lazy accessor of `grstbx._rio`, replaced by the one of rioxarray), and dask and
+  `rasterio.features` inside the functions that use them; faster command lines and batch processes.
+
+### Fixed
+
+- Dashboard of the matchups with pandas >= 3: the text columns (station, level, aerosol model...) have the `str`
+  dtype instead of `object`, and were taken for numbers when colouring the points (`ValueError: could not convert
+  string to float`); categories now detected from a non-numeric dtype.
+- Dashboard of the matchups: the axes of the views are not linked any more (the in situ Rrs `x` of the scatter
+  plots took the range of the easting `x` of the map, and the ranges were not refreshed when the in situ
+  normalisation changed); the scatter plot of all the bands keeps its square size instead of the page width.
+- Notebooks of the AERONET-OC validation in the documentation (`docs/source/tutorials/aeronet_oc_validation/`): the
+  dataset of subsets (`aeronet_oc_s2_l1c_subsets.ipynb`, script `aeronet_oc_s2_subsets.py`, with
+  `fill_cams_surface_pressure.py`) and the validation with the dashboard (`grs_aeronet_oc_validation.ipynb`).
+- Repository: the working folder `notebook/` is no longer tracked (ignored); the notebooks published are those of
+  the documentation, `docs/source/`.
+
 ## [2.7.0] - 2026-11-16
 
 Products in an S3 bucket (local bucket served by `grstbx-s3-bucket`, batches reading and writing buckets, static
@@ -399,7 +482,8 @@ Tools for L2B handling.
 Fix for reprojection in any system, especially useful for reprojection in pseudo-Mercator (EPSG:3857) for
 visualization with web mapping tools (e.g. OpenStreetMap, Google Maps).
 
-[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.8.0...HEAD
+[2.8.0]: https://github.com/Tristanovsk/grstbx/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/Tristanovsk/grstbx/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/Tristanovsk/grstbx/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/Tristanovsk/grstbx/compare/v2.4.0...v2.5.0

@@ -7,14 +7,43 @@ PRISMA).
 import os
 import logging
 
-import dask
 import numpy as np
 import pandas as pd
 import xarray as xr
-import rioxarray as rxr  # activate the rio accessor
 from affine import Affine
 
+from . import _rio
+
+_rio.register()       # .rio accessor: rioxarray imported on its first use (import of grstbx 1.6 s faster)
 opj = os.path.join
+
+
+def to_float32(ds):
+    """
+    Floating-point variables of ``ds`` in float32, lazily.
+
+    The GRS products store their reflectances, AOT, sunglint and angles as int16 with a float64
+    ``scale_factor``, which xarray decodes to float64: 8 bytes per value for 16 bits of information. In float32
+    (4 bytes, 7 significant digits) the decoded values are the same to 1e-7 relative, and the datacubes, the
+    layers of the viewers and the exports take half the memory. The encoding of the variables (packing) is kept.
+
+    :param ds: xarray.Dataset or DataArray (None: None)
+    :return: same type, float64 variables cast to float32 (coordinates unchanged)
+    """
+    if ds is None:
+        return None
+    if isinstance(ds, xr.DataArray):
+        if ds.dtype != np.float64:
+            return ds
+        out = ds.astype(np.float32)
+        out.encoding = dict(ds.encoding)
+        return out
+    cast = {}
+    for name, var in ds.data_vars.items():
+        if var.dtype == np.float64:
+            cast[name] = var.astype(np.float32)
+            cast[name].encoding = dict(var.encoding)
+    return ds.assign(cast) if cast else ds
 
 
 def is_zarr(path):
@@ -59,7 +88,7 @@ def _levels(root):
     return sorted((name for name, _ in root.groups() if name.isdigit()), key=int)
 
 
-def open_zarr_image(path, level=0, chunks={}, root=None):
+def open_zarr_image(path, level=0, chunks={}, root=None, float32=True):
     """
     Open a Zarr image, either single-resolution or multiscale (pyramid).
 
@@ -80,6 +109,7 @@ def open_zarr_image(path, level=0, chunks={}, root=None):
     :param chunks: dask chunks passed to ``xarray.open_zarr`` (default: chunks of the store)
     :param root: root group of the store, already open (``zarr.open_group(path, mode='r')``), to open
                  several levels without reading and parsing the metadata of the store again
+    :param float32: decoded floating-point variables in float32 instead of float64 (see :func:`to_float32`)
     :return: xarray.Dataset
     """
     import zarr
@@ -89,7 +119,8 @@ def open_zarr_image(path, level=0, chunks={}, root=None):
     root = zarr.open_group(path, mode='r') if root is None else root
     levels = _levels(root)
     if not levels:
-        return xr.open_zarr(path, decode_coords='all', chunks=chunks)
+        ds = xr.open_zarr(path, decode_coords='all', chunks=chunks)
+        return to_float32(ds) if float32 else ds
 
     try:
         group = levels[level]
@@ -99,7 +130,7 @@ def open_zarr_image(path, level=0, chunks={}, root=None):
     ds = xr.open_dataset(path, engine='zarr', store=ZarrStore(root[group]), decode_coords='all', chunks=chunks)
     root_attrs = {k: v for k, v in root.attrs.items() if k != 'multiscales'}
     ds.attrs = {**root_attrs, **ds.attrs, 'pyramid_level': int(group)}
-    return ds
+    return to_float32(ds) if float32 else ds
 
 
 def open_zarr_ancillary(path, group='ancillary'):
@@ -173,7 +204,7 @@ def open_hgrs_l2a(path, chunks={}):
         product = xr.merge([product.drop_vars(bands), Rrs.sortby('wl')], combine_attrs='override')
     if not ancillary.data_vars:
         ancillary = None
-    return product, ancillary
+    return to_float32(product), to_float32(ancillary)
 
 
 class L2grs():
@@ -195,9 +226,11 @@ class L2grs():
     The images are read in parallel by dask when the datacube is built (flag statistics, subsets).
     """
 
-    def __init__(self, files, level=0):
+    def __init__(self, files, level=0, float32=True):
         self.files = files
         self.level = level
+        # decoded floating-point variables in float32 instead of float64 (half the memory, see to_float32)
+        self.float32 = float32
         # dask chunk sizes used when opening images (None: chunks of the files)
         self.xchunk = None
         self.ychunk = None
@@ -215,6 +248,8 @@ class L2grs():
             return None
         except (ImportError, ValueError):
             pass
+        import dask
+
         if dask.config.get('scheduler', None) is not None:
             return None
         return None if all(is_zarr(f) for f in self.files) else 'synchronous'
@@ -246,9 +281,10 @@ class L2grs():
                  'ancillary' group
         """
 
+        cast = to_float32 if self.float32 else (lambda ds: ds)
         if is_zarr(l2a_path):
-            return (open_zarr_image(l2a_path, level=self.level if level is None else level),
-                    open_zarr_ancillary(l2a_path) if ancillary else None)
+            return (open_zarr_image(l2a_path, level=self.level if level is None else level, float32=self.float32),
+                    cast(open_zarr_ancillary(l2a_path)) if ancillary else None)
 
         basename = os.path.basename(l2a_path.rstrip('/'))
         main_file = opj(l2a_path, basename + '.nc')
@@ -257,10 +293,10 @@ class L2grs():
         raster = xr.open_dataset(main_file,
                                  decode_coords='all',
                                  chunks=self._chunks)
-        ancillary = xr.open_dataset(ancillary_file, decode_coords='all') if ancillary else None
+        ancillary = cast(xr.open_dataset(ancillary_file, decode_coords='all')) if ancillary else None
 
         if raster.attrs.get('metadata_profile') != 'beam':
-            return raster, ancillary
+            return cast(raster), ancillary
 
         # reshape into datacube:
         wls = raster.wl.values
@@ -273,7 +309,7 @@ class L2grs():
         Rrs = raster[Rrs_vars].to_array(dim='wl', name='Rrs').chunk({'wl': -1, **self._chunks})
         Rrs = Rrs.assign_coords({'wl': wls})
         raster = raster.drop_vars(Rrs_vars)
-        return xr.merge([raster, Rrs]), ancillary
+        return cast(xr.merge([raster, Rrs])), ancillary
 
     def load_l2b_image(self, l2b_path, level=None):
         """
@@ -285,9 +321,10 @@ class L2grs():
         :return: xarray.Dataset
         """
         if is_zarr(l2b_path):
-            return open_zarr_image(l2b_path, level=self.level if level is None else level)
+            return open_zarr_image(l2b_path, level=self.level if level is None else level, float32=self.float32)
         chunks = {dim: size for dim, size in self._chunks.items() if dim != 'wl'}
-        return xr.open_dataset(l2b_path, decode_coords='all', chunks=chunks)
+        ds = xr.open_dataset(l2b_path, decode_coords='all', chunks=chunks)
+        return to_float32(ds) if self.float32 else ds
 
     def subset_xy(self, ds, bbox, load=True):
         """
@@ -334,6 +371,8 @@ class L2grs():
                           single thread for netCDF files (HDF5 reads are serialized), dask default
                           for Zarr stores or when a dask.distributed client is active
         """
+
+        import dask
 
         # open all the images lazily
         products = []
@@ -408,6 +447,8 @@ class L2grs():
                           needed saves memory and time with the large L2B products
         :param scheduler: dask scheduler used to read the images, see ``get_l2a_datacube``
         """
+        import dask
+
         # open all the images lazily
         products = []
         for file in self.files:
@@ -467,6 +508,8 @@ class L2grs():
 
     @staticmethod
     def _flag_stats(raster):
+        import dask
+
         # delayed version of get_flag_stats: one numpy task per image (small dask graph), so that
         # the statistics of several images can be computed together with dask.compute
         spatial_dims = [dim for dim in raster.dims if dim != 'time']
@@ -548,7 +591,9 @@ class L2grs():
                                   decode_coords='all')
 
         # set CRS
-        epsg = rxr.crs.CRS.from_wkt(product.crs.wkt).to_epsg()
+        from rioxarray.crs import CRS
+
+        epsg = CRS.from_wkt(product.crs.wkt).to_epsg()
         self.epsg = epsg
         product.rio.write_crs(epsg, inplace=True)
 

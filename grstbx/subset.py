@@ -29,8 +29,7 @@ import functools
 import numpy as np
 import xarray as xr
 import geopandas as gpd
-import rioxarray  # activate the rio accessor
-from rasterio.features import geometry_mask
+from . import _rio  # noqa: F401, .rio accessor (rioxarray imported on its first use, by driver)
 
 from .driver import L2grs, is_zarr, is_hgrs, open_hgrs_l2a
 
@@ -93,6 +92,8 @@ def crop_l2a(product, aoi, ancillary=None, mask_outside=True):
     subset = product.rio.clip_box(minx, miny, maxx, maxy)
 
     if mask_outside:
+        from rasterio.features import geometry_mask
+
         inside = ~geometry_mask(aoi.geometry, out_shape=(subset.sizes['y'], subset.sizes['x']),
                                 transform=subset.rio.transform(recalc=True))
         inside = xr.DataArray(inside, dims=('y', 'x'), coords={'y': subset.y, 'x': subset.x})

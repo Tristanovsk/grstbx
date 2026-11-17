@@ -19,13 +19,18 @@ def matchup_metrics(x, y):
     - mape: mean absolute percentage error (%),
     - eps: median symmetric accuracy (%) and beta: signed symmetric percentage bias (%)
       (Morley et al., 2018; Eqs. 8-9 in Pahlevan et al., 2020), computed on the
-      strictly positive pairs.
+      strictly positive pairs,
+    - mae: mean absolute difference; medape: median absolute percentage error (%, the "MAPE" of the
+      atmospheric correction intercomparisons ACIX);
+    - rmse_log (RMSE of log10 y - log10 x), bias_log and mae_log (10 ** mean of log10 y - log10 x and of its
+      absolute value: multiplicative bias and error), on the strictly positive pairs.
 
     The pairs with a non-finite value are discarded.
 
     :param x: in situ values (array-like)
     :param y: satellite values (array-like), same length as ``x``
-    :return: dict with the keys 'N', 'slope', 'intercept', 'r', 'rmse', 'bias', 'mape', 'eps', 'beta'
+    :return: dict with the keys 'N', 'slope', 'intercept', 'r', 'rmse', 'bias', 'mape', 'eps', 'beta', 'mae',
+             'medape', 'rmse_log', 'bias_log', 'mae_log'
     """
     from scipy import stats
 
@@ -44,7 +49,12 @@ def matchup_metrics(x, y):
             'bias': np.mean(y - x),
             'mape': 100 * np.mean(np.abs(y - x) / np.abs(x)),
             'eps': 100 * (10 ** np.median(np.abs(log_ratio)) - 1),
-            'beta': 100 * np.sign(med) * (10 ** np.abs(med) - 1)}
+            'beta': 100 * np.sign(med) * (10 ** np.abs(med) - 1),
+            'mae': np.mean(np.abs(y - x)),
+            'medape': 100 * np.median(np.abs(y - x) / np.abs(x)),
+            'rmse_log': np.sqrt(np.mean(log_ratio ** 2)),
+            'bias_log': 10 ** np.mean(log_ratio),
+            'mae_log': 10 ** np.mean(np.abs(log_ratio))}
 
 
 def plot_matchup(ax, x, y, vmin, vmax, fmt='.4f', xerr=None, yerr=None, **kwargs):

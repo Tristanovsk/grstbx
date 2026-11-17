@@ -39,7 +39,7 @@ import pandas as pd
 import panel as pn
 import xarray as xr
 
-from .driver import is_hgrs, is_zarr
+from .driver import is_hgrs, is_zarr, to_float32
 
 logger = logging.getLogger(__name__)
 
@@ -566,12 +566,13 @@ def _open_level(path, level=0, root=None):
         # remote NetCDF file: read through fsspec, the netCDF4 library has its own access to the buckets
         import fsspec
 
-        return xr.open_dataset(fsspec.open(path).open(), engine='h5netcdf', decode_coords='all', chunks={})
+        return to_float32(xr.open_dataset(fsspec.open(path).open(), engine='h5netcdf', decode_coords='all',
+                                          chunks={}))
     if is_hgrs(path):
         return open_hgrs_l2a(path)[0]
     if os.path.isdir(path):
         return open_l2a(path)[0]
-    return xr.open_dataset(path, decode_coords='all', chunks={})
+    return to_float32(xr.open_dataset(path, decode_coords='all', chunks={}))
 
 
 def _is_l2a(ds):
@@ -967,7 +968,7 @@ def open_products(paths, mask_invalid=True, min_size=512, tile=None, start=None,
 
     # NetCDF datacube: one file with a time dimension
     if len(items) == 1 and not is_zarr(items[0]) and os.path.isfile(items[0]) and not is_hgrs(items[0]):
-        cube = xr.open_dataset(items[0], decode_coords='all', chunks={})
+        cube = to_float32(xr.open_dataset(items[0], decode_coords='all', chunks={}))
         if 'time' in cube.dims and cube.sizes['time'] > 1:
             cube = cube.sortby('time')
             kind = 'L2A' if _is_l2a(cube) else 'L2B'

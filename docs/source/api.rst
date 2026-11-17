@@ -45,6 +45,7 @@ Loading images and datacubes
    grstbx.driver.is_zarr
    grstbx.driver.open_hgrs_l2a
    grstbx.driver.is_hgrs
+   grstbx.driver.to_float32
 
 Cropping and export
 -------------------
@@ -187,6 +188,45 @@ validation tutorial).
    grstbx.matchup.get_matchups
    grstbx.matchup.matchup_metrics
    grstbx.matchup.plot_matchup
+
+Validation with AERONET-OC and HYPERNETS
+----------------------------------------
+
+GRS on the Sentinel-2 subsets around the AERONET-OC stations (STAC catalogue of the bucket ``aeronet-oc``) or
+the HYPERNETS stations, matchup table with the in situ data (AERONET-OC, or HYPERNETS convolved with the
+spectral response functions of the bands), quality criteria and statistics (:mod:`grstbx.validation`, command
+line ``grstbx-validation``), and dashboard of the matchups (:mod:`grstbx.validation_app`).
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   grstbx.validation.read_items
+   grstbx.validation.process_subsets
+   grstbx.validation.run_grs
+   grstbx.validation.l2a_path
+   grstbx.validation.cams_file
+   grstbx.validation.window_mask
+   grstbx.validation.extract_window
+   grstbx.validation.extract_l2a
+   grstbx.validation.read_aeronet_oc
+   grstbx.validation.read_hypernets
+   grstbx.validation.band_srf
+   grstbx.validation.convolve_srf
+   grstbx.validation.band_pairs
+   grstbx.validation.matchup_table
+   grstbx.validation.quality
+   grstbx.validation.metrics_table
+   grstbx.validation.save_table
+   grstbx.validation.read_table
+   grstbx.validation.dashboard
+
+.. autosummary::
+   :toctree: generated
+   :template: autosummary/class.rst
+   :nosignatures:
+
+   grstbx.validation_app.MatchupDashboard
 
 Masking
 -------

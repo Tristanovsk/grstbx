@@ -303,3 +303,30 @@ def test_dashboard_hypernets_labels():
     for view in (board.view_scatter, board.view_errors, board.view_spectra):
         assert view() is not None
 
+
+def test_run_grs_fmin_error_is_no_water(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    class Process:
+        no_water = False
+
+        def execute(self, *args, **kwargs):
+            raise ValueError(self.message)
+
+    fake = types.ModuleType('grs')
+    fake.Process = Process
+    monkeypatch.setitem(sys.modules, 'grs', fake)
+    out = tmp_path / 'l2a' / 'x' / 'x.nc'
+    Process.message = 'zero-size array to reduction operation fmin which has no identity'
+    (out.parent).mkdir(parents=True)
+    (tmp_path / 'l2a' / 'x' / 'x.err').write_text('old failure')
+    assert val.run_grs('subset.nc', 'cams.nc', out) == 'no_water'
+    assert val.l2a_state(out) == 'no_water' and not (out.parent / 'x.err').exists()
+    assert 'fmin' in json.loads((out.parent / 'x_no_water.txt').read_text())['error']
+    # any other error: .err file and raised again
+    out2 = tmp_path / 'l2a' / 'y' / 'y.nc'
+    Process.message = 'something else'
+    with pytest.raises(ValueError):
+        val.run_grs('subset.nc', 'cams.nc', out2)
+    assert val.l2a_state(out2) == 'failed'

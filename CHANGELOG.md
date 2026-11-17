@@ -46,6 +46,10 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   name (`dashboard(table, insitu={...}, network='HYPERNETS')`), its levels from the table. Tutorial "L2A validation:
   remote-sensing reflectance against HYPERNETS" redone with this chain: GRS 3.1.1 on Sentinel-2 subsets of 5 km
   centred on the BEFR and MAFR stations instead of the datacube of the full tiles.
+- `validation.run_grs`: an image on which GRS stops with `ValueError: zero-size array to reduction operation fmin
+  which has no identity` (no clear water pixel: all cloudy or outside the swath) gets the marker
+  `<name>_no_water.txt` (status `no_water`, not run again) instead of an `.err` file (status `failed`), as in the
+  TREX batch notebook.
 
 ### Fixed
 

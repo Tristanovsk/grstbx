@@ -61,6 +61,9 @@ CAMS_DIR = os.environ.get('GRSTBX_CAMS_DIR', '/data/cams/world')
 INSITU_VARIABLES = ('Rrs', 'Rrs_fQ', 'Rrs_IOP')
 #: Sentinel-2 bands of the matchups (nm, ``wl`` coordinate of the GRS L2A products)
 S2_BANDS = (443, 490, 560, 665, 705, 740, 783, 842, 865)
+#: GRS stops with ``ValueError: zero-size array to reduction operation fmin which has no identity`` on some images
+#: without clear water pixel (all cloudy or outside the swath) instead of flagging them ``no_water``
+FMIN_ERROR = ('fmin', 'no identity')
 #: default quality criteria of the matchups (see :func:`quality`)
 QC = {'max_lag_min': 60, 'min_valid': 0.5, 'max_cv': 0.2, 'levels': ('lev20', 'lev15')}
 
@@ -156,7 +159,8 @@ def run_grs(subset, cams, out, options=None):
     """
     GRS on one subset, in this process: L2A product ``out`` (NetCDF, with its ancillary file and the
     quicklooks of GRS) and its STAC Item (:func:`grstbx.batch.write_l2a_item`), written last. An image without
-    enough water gets the marker ``<name>_no_water.txt``; a failure writes ``<name>.err`` and is raised again.
+    enough water gets the marker ``<name>_no_water.txt``, also when GRS stops on it with the ``fmin`` error
+    (:data:`FMIN_ERROR`, no clear water pixel); another failure writes ``<name>.err`` and is raised again.
 
     :return: ``'done'`` or ``'no_water'``
     """
@@ -178,6 +182,12 @@ def run_grs(subset, cams, out, options=None):
         Path(stem + '.err').unlink(missing_ok=True)
         return 'done'
     except Exception as exc:
+        if isinstance(exc, ValueError) and all(k in str(exc) for k in FMIN_ERROR):
+            Path(stem + '_no_water.txt').write_text(json.dumps(
+                {'image': str(subset), 'reason': 'no clear water pixel: GRS stopped with the fmin error',
+                 'error': f'{type(exc).__name__}: {exc}'}, indent=1))
+            Path(stem + '.err').unlink(missing_ok=True)
+            return 'no_water'
         Path(stem + '.err').write_text(f'{type(exc).__name__}: {exc}\n\n{traceback.format_exc()}')
         raise
 

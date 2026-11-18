@@ -6,6 +6,13 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-11-18
+
+Performance: each image of a batch processed in its own child process (memory given back after each image,
+killed images recorded as failures, `Batch.run(workers=N)`); subset datacube read once and flag statistics counted
+chunk by chunk (less memory); in situ files of the validation read once per process; several subsets per GRS
+process in the validation (half the CPU per subset).
+
 ### Changed
 
 - `batch.Batch`: each image is processed in its own child process (`isolate=True`, default; started with
@@ -506,7 +513,8 @@ Tools for L2B handling.
 Fix for reprojection in any system, especially useful for reprojection in pseudo-Mercator (EPSG:3857) for
 visualization with web mapping tools (e.g. OpenStreetMap, Google Maps).
 
-[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.8.0...HEAD
+[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.9.0...HEAD
+[2.9.0]: https://github.com/Tristanovsk/grstbx/compare/v2.8.0...v2.9.0
 [2.8.0]: https://github.com/Tristanovsk/grstbx/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/Tristanovsk/grstbx/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/Tristanovsk/grstbx/compare/v2.5.0...v2.6.0

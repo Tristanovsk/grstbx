@@ -30,11 +30,13 @@ v2.7.0: products in S3 buckets (grstbx-s3-bucket, batches on buckets, static STA
 v2.8.0: validation of GRS L2A with AERONET-OC and HYPERNETS on Sentinel-2 subsets (grstbx.validation,
         grstbx-validation) and dashboard of the matchups; products decoded in float32 (half the memory), faster
         import; documentation reorganised by topic, with an HPC section (CNES TREX)
+v2.9.0: batch images processed in child processes (memory released, killed images recorded), parallel workers;
+        less memory for datacubes and flag statistics; faster validation (in situ cache, subsets batched per GRS process)
         (full history: CHANGELOG.md)
 
 '''
 
-__version__ = '2.8.0'
+__version__ = '2.9.0'
 
 from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels, open_hgrs_l2a, is_hgrs
 #from .driver_v1 import l2grs_v1

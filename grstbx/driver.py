@@ -353,7 +353,8 @@ class L2grs():
                          nodata_thresh=0.5,
                          epsg_out=3857,
                          FLAG_NAME='flags',
-                         scheduler=None):
+                         scheduler=None,
+                         load=True):
         """
         Load all L2A ``self.files`` into ``self.datacube`` (concatenated along 'time').
 
@@ -370,6 +371,12 @@ class L2grs():
         :param scheduler: dask scheduler used to read the images (subsets, flags); default:
                           single thread for netCDF files (HDF5 reads are serialized), dask default
                           for Zarr stores or when a dask.distributed client is active
+        :param load: with a ``subset``, load the datacube in memory (False: keep it lazy, e.g. for a long
+                     time series to write to disk); without subset, the datacube is always lazy
+
+        With a ``subset`` (and no reprojection), the flag statistics are computed first, from the bitmask
+        only, the images with too many nodata pixels are dropped without being read, and the others are read
+        once, directly into the datacube (no intermediate copy of each subset).
         """
 
         import dask
@@ -389,12 +396,11 @@ class L2grs():
                 product = self.subset_xy(product, subset, load=False)
             products.append(product)
 
-        # read the subsets of all the images in parallel
-        if subset is not None:
-            logging.info('loading the subsets')
-            products = list(dask.compute(*products, scheduler=self._scheduler(scheduler)))
-
         if reproject:
+            # the reprojection needs the images in memory: the subsets of all the images read in parallel
+            if subset is not None:
+                logging.info('loading the subsets')
+                products = list(dask.compute(*products, scheduler=self._scheduler(scheduler)))
             logging.info('reprojecting...')
             products = [product.rio.reproject(epsg_out) for product in products]
             self.epsg = products[0].rio.crs.to_epsg()
@@ -420,6 +426,10 @@ class L2grs():
         # keep only one date for dem
         if 'dem' in product:
             product['dem'] = product.dem.isel(time=0)
+        if subset is not None and load and not reproject:
+            # the kept subsets read once, in parallel, into the arrays of the datacube
+            logging.info('loading the subsets')
+            product = product.load(scheduler=self._scheduler(scheduler))
 
         self._finalize_datacube(product)
 
@@ -508,10 +518,12 @@ class L2grs():
 
     @staticmethod
     def _flag_stats(raster):
+        # delayed version of get_flag_stats, so that the statistics of several images can be computed together
+        # with dask.compute: the bits are counted chunk by chunk (a few distinct values per chunk, counted with a
+        # hash table) and the counts added, so that the memory needed is that of a chunk, not of the image
         import dask
+        import dask.array as da
 
-        # delayed version of get_flag_stats: one numpy task per image (small dask graph), so that
-        # the statistics of several images can be computed together with dask.compute
         spatial_dims = [dim for dim in raster.dims if dim != 'time']
         raster = raster.transpose('time', *spatial_dims)
         names = raster.attrs['flag_names']
@@ -519,23 +531,33 @@ class L2grs():
             names = names.split(' ')
         bits = [(bit, name) for bit, name in enumerate(names) if name not in ('None', '')]
         times = raster.time.values
+        floating = np.issubdtype(raster.dtype, np.floating)
 
-        def stats(values):
-            values = np.asarray(values)
-            fractions = {'flag_' + name: [] for _, name in bits}
-            for image in values:
-                if np.issubdtype(image.dtype, np.floating):
-                    image = image[np.isfinite(image)]
-                # a bitmask has few distinct values: count them (hash table), then the bits
-                counts = pd.Series(image.ravel()).value_counts()
+        def count(block):
+            # (time, bits + 1): number of pixels with each bit raised, and number of pixels, per date
+            block = np.asarray(block)
+            out = np.zeros((block.shape[0], len(bits) + 1))
+            for k, image in enumerate(block):
+                image = image[np.isfinite(image)] if floating else image.ravel()
+                counts = pd.Series(image).value_counts()
                 values, counts = counts.index.values.astype(np.int64), counts.values
-                for bit, name in bits:
-                    fractions['flag_' + name].append(
-                        counts[(values >> bit) & 1 == 1].sum() / image.size if image.size else np.nan)
-            return xr.Dataset({var: ('time', np.array(val, dtype=float)) for var, val in fractions.items()},
+                for j, (bit, _) in enumerate(bits):
+                    out[k, j] = counts[(values >> bit) & 1 == 1].sum()
+                out[k, -1] = image.size
+            return out
+
+        def to_dataset(counts):
+            with np.errstate(invalid='ignore', divide='ignore'):
+                fractions = counts[:, :-1] / counts[:, -1:]
+            return xr.Dataset({'flag_' + name: ('time', fractions[:, j]) for j, (_, name) in enumerate(bits)},
                               coords={'time': times})
 
-        return dask.delayed(stats)(raster.data)
+        data = raster.data
+        if not isinstance(data, da.Array):
+            return dask.delayed(to_dataset)(dask.delayed(count)(data))
+        blocks = data.to_delayed()             # (time chunks, y chunks, x chunks)
+        per_time = [dask.delayed(sum)([dask.delayed(count)(block) for block in row.ravel()]) for row in blocks]
+        return dask.delayed(to_dataset)(dask.delayed(np.concatenate)(per_time, axis=0))
 
     def reshape_raster(self, bands=['Rrs_B1', 'Rrs_B2', 'Rrs_B3', 'Rrs_B4',
                                     'Rrs_B5', 'Rrs_B6', 'Rrs_B7', 'Rrs_B8',

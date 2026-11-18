@@ -6,6 +6,37 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-11-18
+
+Performance: each image of a batch processed in its own child process (memory given back after each image,
+killed images recorded as failures, `Batch.run(workers=N)`); subset datacube read once and flag statistics counted
+chunk by chunk (less memory); in situ files of the validation read once per process; several subsets per GRS
+process in the validation (half the CPU per subset).
+
+### Changed
+
+- `batch.Batch`: each image is processed in its own child process (`isolate=True`, default; started with
+  `python -m grstbx.batch`): all the memory of the image is given back to the system when it ends, so that the
+  memory does not grow along a long batch, and an image whose process is killed (e.g. by the system when it runs
+  out of memory) is recorded as `L2A failed` / `L2B failed` with its exit code, its partial outputs removed, and
+  the batch goes on. `Batch.run(plan, workers=N)`: N images at a time. A subclass of `Batch` defined in a notebook
+  is sent to the children as `Batch`. `isolate=False`: in the process of the batch, as before.
+- `L2grs.get_l2a_datacube(subset=...)`: the flag statistics computed first, the images with too many nodata pixels
+  dropped without being read, the others read once into the datacube, without an intermediate copy of each subset
+  (`load=False`: lazy datacube). 3 dates over 60 km of a tile 31TEJ (cube of 1.6 GB): peak memory 4.1-4.3 ->
+  3.2-3.6 GB.
+- Flag statistics (`L2grs.get_flag_stats`, `get_l2a_datacube`): bits counted chunk by chunk and the counts added,
+  instead of loading the full bitmask of each image: 3 full tiles, peak memory 0.59 -> 0.31 GB.
+- In situ data of the validation (`validation.read_aeronet_oc`, `read_hypernets`): only the variables used are read
+  (the 10 text variables of the harmonised AERONET-OC file took about 50 s to decode at each opening), once per
+  process and file version, and the stations taken from memory: about 1 min for the first station, 0.1-0.2 s for
+  the next ones, instead of about 1 min for each station of a matchup table.
+- `validation.process_subsets(..., images_per_process=20)`: several subsets processed by each GRS process
+  (`grstbx-validation grs-batch`), grs imported once per process instead of once per subset, the memory released
+  at the end of each process; the images left by a process that died run again one per process, so that a crash
+  only fails its image (as `process_subset.py --batch` of the GRS validation). `grstbx-validation grs
+  --images-per-process`. 6 HYPERNETS subsets, 1 worker: CPU 169 -> 82 s per subset.
+
 ## [2.8.0] - 2026-11-17
 
 Validation of the GRS L2A remote sensing reflectance with AERONET-OC and HYPERNETS on Sentinel-2 subsets of 5 km
@@ -482,7 +513,8 @@ Tools for L2B handling.
 Fix for reprojection in any system, especially useful for reprojection in pseudo-Mercator (EPSG:3857) for
 visualization with web mapping tools (e.g. OpenStreetMap, Google Maps).
 
-[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.8.0...HEAD
+[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.9.0...HEAD
+[2.9.0]: https://github.com/Tristanovsk/grstbx/compare/v2.8.0...v2.9.0
 [2.8.0]: https://github.com/Tristanovsk/grstbx/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/Tristanovsk/grstbx/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/Tristanovsk/grstbx/compare/v2.5.0...v2.6.0

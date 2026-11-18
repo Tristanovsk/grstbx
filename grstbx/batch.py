@@ -45,6 +45,9 @@ import shutil
 import socket
 import logging
 import platform
+import pickle
+import subprocess
+import sys
 import tempfile
 import threading
 import contextlib
@@ -839,6 +842,28 @@ def _l2a_marker(l2a):
     return opj(zarr_store(l2a), '0', 'mask', 'zarr.json')
 
 
+def _child_main(payload):
+    """
+    Child process of one image (:meth:`Batch.process` with ``isolate=True``): ``python -m grstbx.batch <payload>``.
+    `payload`: pickle file of (batch, row, logging level, console logging); the record of the image is written to
+    ``<payload>.out`` (pickle), last: no such file means that the child died.
+    """
+    with open(payload, 'rb') as f:
+        run, row, log_level, log_console = pickle.load(f)
+    root = logging.getLogger()
+    root.setLevel(log_level)
+    if log_console and not root.handlers:
+        logging.basicConfig(level=log_level, format='%(asctime)s %(levelname)s %(message)s')
+    try:          # first process killed if the machine runs out of memory (Linux), not the parent batch
+        Path('/proc/self/oom_score_adj').write_text('1000')
+    except OSError:
+        pass
+    record = run._process(row)
+    with open(payload + '.part', 'wb') as f:
+        pickle.dump(record, f)
+    os.replace(payload + '.part', payload + '.out')
+
+
 class Batch:
     """
     Batch processing, image by image, from Level-1 images to GRS L2A products and, if `l2b_dir` is
@@ -892,6 +917,12 @@ class Batch:
                      time (default: a temporary folder; a full Sentinel-2 tile needs a few GB)
     :param storage_options: options of the fsspec file system of the URLs (default: credentials and
                             endpoint from the environment, e.g. ``AWS_PROFILE``)
+    :param isolate: process each image in its own child process (default): all its memory is given back to
+                    the system at the end of the image, so that the memory does not grow along a long batch,
+                    and a crash of GRS or GRSl2bgen (e.g. killed when the machine runs out of memory) is
+                    recorded as a failure of the image instead of stopping the batch. False: in this process,
+                    as before (needed to replace ``run_grs`` or ``run_grsl2bgen`` in this process, e.g. in
+                    tests)
     """
 
     def __init__(self, l2a_dir=None, l2b_dir=None, cams_file_template=None, dem_file_template=None,
@@ -899,7 +930,7 @@ class Batch:
                  scale_aot=1, levname='L2AGRS', suffix=None, l2b_ext='.nc', pyramid=False, stac=True,
                  l2a_stac=False, persist_input=False, level=0, keep_l2a=True, overwrite_l2a=False,
                  overwrite_l2b=False, profile_dir=None, memory_interval=0.5, version=None, work_dir=None,
-                 storage_options=None):
+                 storage_options=None, isolate=True):
         self.l2a_dir, self.l2b_dir = l2a_dir, l2b_dir
         self.cams_file_template, self.dem_file_template = cams_file_template, dem_file_template
         self.resolution, self.aot_resolution = resolution, aot_resolution
@@ -914,6 +945,7 @@ class Batch:
         self.profile_dir, self.memory_interval = profile_dir, memory_interval
         self._version, self._suffix, self._l2a_ext = version, suffix, l2a_ext
         self._work_dir, self.storage_options = work_dir, storage_options
+        self.isolate = isolate
 
     @property
     def work_dir(self):
@@ -1069,7 +1101,12 @@ class Batch:
         Steps of one image of a plan: L2A (GRS) if ``run_l2a``, else the existing L2A product is reused,
         then L2B (GRSl2bgen) if ``run_l2b``. A failing step is logged, its partial output removed, and the
         L2B step is not run after a failed L2A step. The profile of the image is written whatever the
-        outcome.
+        outcome, except when its process is killed.
+
+        With ``isolate`` (default), the steps run in a child process, started for this image and ended with
+        it: its memory is given back to the system. A child killed (e.g. by the system when it runs out of
+        memory) gives the status ``L2A failed`` or ``L2B failed`` with its exit code; the partial outputs are
+        removed.
 
         :param row: row of a plan (pandas.Series)
         :return: record of the summary: ``tile``, ``name``, ``status`` (``done``, ``skipped``,
@@ -1077,14 +1114,95 @@ class Batch:
                  (``done``, ``reused``, ``no_water`` or empty), ``error``, ``duration_s``. ``no_water``: GRS
                  found no water in the image (now, or in a previous run: marker :func:`no_water_marker`)
         """
-        record = dict(tile=row['tile'], name=row['name'], status='done', l2a='', l2b='', error='',
-                      duration_s=0.)
+        record = self._precheck(row)
+        if record is not None:
+            return record
+        if not self.isolate:
+            return self._process(row)
+        return self._collect(row, *self._start(row))
+
+    @staticmethod
+    def _record(row):
+        return dict(tile=row['tile'], name=row['name'], status='done', l2a='', l2b='', error='', duration_s=0.)
+
+    def _precheck(self, row):
+        """Record of an image without step to run (done, without CAMS file, too cloudy), else None."""
+        record = self._record(row)
         if not (row['run_l2a'] or row['run_l2b']):
             return record | dict(status='no_water' if row.get('no_water', False) else 'skipped')
         if row['run_l2a'] and not row['cams_ok']:
             return record | dict(status='no_cams', error=f"missing {row['cams_file']}")
         if row['run_l2a'] and row['cloudy']:
             return record | dict(status='cloudy')
+        return None
+
+    def _for_child(self):
+        """This batch as sent to a child process: a subclass defined in a notebook or script (``__main__``), which
+        the child cannot import, is sent as its nearest importable base class, with the same attributes (the
+        child only runs the steps of :meth:`_process`)."""
+        cls = next(c for c in type(self).__mro__ if c.__module__ != '__main__')
+        if cls is type(self):
+            return self
+        clone = cls.__new__(cls)
+        clone.__dict__.update(self.__dict__)
+        return clone
+
+    def _start(self, row):
+        """Child process of one image (``python -m grstbx.batch``, see :func:`_child_main`): (process, payload,
+        start time). The child gets the import path (``sys.path``) of this process."""
+        if any(isinstance(row.get(key), str) and is_url(row.get(key)) for key in ('path', 'l2a', 'l2b')):
+            self.work_dir          # created here, so that the children and the clean-up share it
+        fd, payload = tempfile.mkstemp(prefix=f"grstbx_{row['name'][:60]}_", suffix='.pkl')
+        root = logging.getLogger()
+        with os.fdopen(fd, 'wb') as f:
+            pickle.dump((self._for_child(), row, root.level, bool(root.handlers)), f)
+        env = os.environ | {'PYTHONPATH': os.pathsep.join(p for p in sys.path if p)}
+        child = subprocess.Popen([sys.executable, '-m', 'grstbx.batch', payload], env=env)
+        return child, payload, time.perf_counter()
+
+    def _collect(self, row, child, payload, t0):
+        """Record written by the child process of an image, once it has ended (:meth:`_killed` if it died)."""
+        child.wait()
+        record = None
+        with contextlib.suppress(OSError, EOFError, pickle.UnpicklingError):
+            with open(payload + '.out', 'rb') as f:
+                record = pickle.load(f)
+        for path in (payload, payload + '.out', payload + '.part'):
+            with contextlib.suppress(OSError):
+                os.remove(path)
+        return record if record is not None else self._killed(row, child.returncode, t0)
+
+    def _killed(self, row, exitcode, t0):
+        """Record of an image whose child process died, after the removal of its partial outputs."""
+        so = self.storage_options
+        l2a_ok = not row['run_l2a'] or self._l2a_complete(row['l2a']) or exists(no_water_marker(row['l2a']), so)
+        step = 'L2B' if l2a_ok else 'L2A'
+        reason = f'process killed by signal {-exitcode}' if exitcode and exitcode < 0 else \
+            f'process ended with exit code {exitcode}'
+        if exitcode == -9:
+            reason += ' (SIGKILL, e.g. out of memory)'
+        with contextlib.suppress(Exception):
+            if step == 'L2A':
+                remove_output(os.path.dirname(row['l2a']), so)
+            elif row['run_l2b']:
+                remove_output(item_path(row['l2b']), so)
+                remove_output(row['l2b'], so)
+            for kind, key in (('L1', 'path'), ('L2A', 'l2a'), ('L2B', 'l2b')):
+                path = row.get(key)
+                if isinstance(path, str) and is_url(path):
+                    local = self._local(path, kind)
+                    remove_output(local if kind == 'L1' else os.path.dirname(local))
+        logging.error(f"{row['name']}: {step} {reason}")
+        return self._record(row) | dict(status=f'{step} failed', error=reason,
+                                        l2a=('done' if row['run_l2a'] else 'reused') if step == 'L2B' else '',
+                                        duration_s=round(time.perf_counter() - t0, 1))
+
+    def _process(self, row):
+        """Steps of one image (see :meth:`process`), in this process."""
+        record = self._precheck(row)
+        if record is not None:
+            return record
+        record = self._record(row)
 
         so = self.storage_options
         profiler = Profiler(row['name'], interval=self.memory_interval)
@@ -1153,20 +1271,52 @@ class Batch:
             record['duration_s'] = round(time.perf_counter() - profiler.t0, 1)
         return record
 
-    def run(self, plan, verbose=True):
+    def run(self, plan, verbose=True, workers=1):
         """
-        Process the images of a plan, one after the other.
+        Process the images of a plan, one after the other, or `workers` at a time.
 
         :param plan: table of :meth:`plan_level1` or :meth:`plan_l2a`
-        :param verbose: print a line per image (status, name, duration)
-        :return: summary table, one row per image (index: date)
+        :param verbose: print a line per image (status, name, duration), in the order they end
+        :param workers: images processed at the same time, each in its own process (``isolate``); a full
+                        Sentinel-2 tile at 20 m takes about 30 GB with GRS 2.2 and 10 GB with GRS 3.x: check
+                        the profiles before raising it
+        :return: summary table, one row per image (index: date), in the order of the plan
         """
-        records = []
-        for i, (date, row) in enumerate(plan.iterrows(), start=1):
-            record = self.process(row)
-            records.append(dict(date=date) | record)
+        rows = list(plan.iterrows())
+        records, done = [None] * len(rows), 0
+
+        def report(i, record):
+            nonlocal done
+            done += 1
+            records[i] = dict(date=rows[i][0]) | record
             if verbose:
-                print(f"[{i}/{len(plan)}] {record['status']:10s} {row['name']} ({record['duration_s']:.0f} s)")
+                print(f"[{done}/{len(rows)}] {record['status']:10s} {rows[i][1]['name']} "
+                      f"({record['duration_s']:.0f} s)", flush=True)
+
+        if not self.isolate or workers <= 1:
+            for i, (_, row) in enumerate(rows):
+                report(i, self.process(row))
+        else:
+            todo, running = iter(range(len(rows))), []
+            while True:
+                while len(running) < workers:
+                    i = next(todo, None)
+                    if i is None:
+                        break
+                    record = self._precheck(rows[i][1])
+                    if record is not None:
+                        report(i, record)
+                        continue
+                    running.append((i, *self._start(rows[i][1])))
+                if not running:
+                    break
+                ended = [job for job in running if job[1].poll() is not None]
+                if not ended:
+                    time.sleep(0.2)
+                for job in ended:
+                    running.remove(job)
+                    i, child, payload, t0 = job
+                    report(i, self._collect(rows[i][1], child, payload, t0))
         columns = ['date', 'tile', 'name', 'status', 'l2a', 'l2b', 'error', 'duration_s']
         return pd.DataFrame(records, columns=columns).set_index('date')
 
@@ -1245,3 +1395,7 @@ class Batch:
             mkdir = f'mkdir -p {os.path.dirname(stem)}; ' if stem else ''
             commands.append(f"{guard}{{ {mkdir}{'; '.join(steps)}; }}")
         return commands
+
+
+if __name__ == '__main__':          # child process of one image of a batch (Batch.process, isolate=True)
+    _child_main(sys.argv[1])

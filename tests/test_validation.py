@@ -1,4 +1,7 @@
 import json
+import os
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -330,3 +333,63 @@ def test_run_grs_fmin_error_is_no_water(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         val.run_grs('subset.nc', 'cams.nc', out2)
     assert val.l2a_state(out2) == 'failed'
+
+
+FAKE_GRS = '''
+import os, signal
+from pathlib import Path
+import numpy as np
+import xarray as xr
+__version__ = '3.1.1'
+
+
+class Process:
+    no_water = False
+
+    def execute(self, subset, cams_file=None, resolution=20, **options):
+        Path(os.environ['FAKE_PIDS']).open('a').write(f'{Path(subset).stem} {os.getpid()}\\n')
+        if 'KILL' in subset:
+            os.kill(os.getpid(), signal.SIGKILL)       # as by the system when it runs out of memory
+        if 'FAIL' in subset:
+            raise RuntimeError('GRS failed')
+
+    def write_output(self):
+        n = 21
+        ds = xr.Dataset({'Rrs': (('wl', 'y', 'x'), np.full((2, n, n), 0.01)),
+                         'mask': (('y', 'x'), np.zeros((n, n), 'uint8'))},
+                        coords={'wl': [560, 865], 'y': 4800000. - 20 * np.arange(n), 'x': 600000. + 20 * np.arange(n)})
+        ds.rio.write_crs(32632).assign_attrs(version=__version__, acquisition_date='2024-07-01T10:00:00Z').to_netcdf(self.odir)
+'''
+
+
+def test_process_subsets_batched(tmp_path, monkeypatch):
+    """Subsets processed several per process; the images of a killed process run again one per process."""
+    pkg = tmp_path / 'fake_pkgs' / 'grs'
+    pkg.mkdir(parents=True)
+    (pkg / '__init__.py').write_text(FAKE_GRS)
+    monkeypatch.setenv('PYTHONPATH', os.pathsep.join([str(tmp_path / 'fake_pkgs')] + sys.path))
+    monkeypatch.setenv('FAKE_PIDS', str(tmp_path / 'pids.txt'))
+    cams = tmp_path / 'cams'
+    cams.mkdir()
+    (cams / 'cams_forecast_2024-07.nc').write_text('')
+    rows = []
+    for k, tag in enumerate(['A', 'B', 'KILL', 'C', 'FAIL']):
+        subset = tmp_path / 'sentinel-2' / 'l1c' / 'SITE' / '2024' / '07' / f'0{k + 1}' / \
+            f'S2A_MSIL1C_2024070{k + 1}T100000_N0510_R022_T32TQR_2024070{k + 1}T120000_{tag}_SITE.nc'
+        rows.append({'subset': str(subset), 'time': pd.Timestamp(f'2024-07-0{k + 1}T10:00')})
+    runs = val.process_subsets(pd.DataFrame(rows), version='3.1.1', root=tmp_path, cams_dir=cams, workers=1,
+                               images_per_process=2, verbose=False)
+    assert runs.state.tolist() == ['done', 'done', 'failed', 'done', 'failed']
+    assert 'status -9' in Path(runs.l2a[2][:-3] + '.err').read_text()          # killed, alone, by SIGKILL
+    assert 'GRS failed' in Path(runs.l2a[4][:-3] + '.err').read_text()
+    pids = {}
+    for line in (tmp_path / 'pids.txt').read_text().split('\n'):
+        if line:
+            name, pid = line.split()
+            pids.setdefault(name.split('_')[-2], []).append(pid)
+    assert pids['A'] == pids['B']                       # same process for the images of a batch
+    assert pids['C'][0] not in pids['KILL']             # left by the killed process: run alone
+    assert len(pids['KILL']) == 2                       # in its batch, then alone
+    # nothing left to run
+    again = val.process_subsets(pd.DataFrame(rows), version='3.1.1', root=tmp_path, cams_dir=cams, verbose=False)
+    assert again.state.tolist() == ['done', 'done', 'failed', 'done', 'failed']

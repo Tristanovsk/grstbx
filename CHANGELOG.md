@@ -20,6 +20,15 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
   3.2-3.6 GB.
 - Flag statistics (`L2grs.get_flag_stats`, `get_l2a_datacube`): bits counted chunk by chunk and the counts added,
   instead of loading the full bitmask of each image: 3 full tiles, peak memory 0.59 -> 0.31 GB.
+- In situ data of the validation (`validation.read_aeronet_oc`, `read_hypernets`): only the variables used are read
+  (the 10 text variables of the harmonised AERONET-OC file took about 50 s to decode at each opening), once per
+  process and file version, and the stations taken from memory: about 1 min for the first station, 0.1-0.2 s for
+  the next ones, instead of about 1 min for each station of a matchup table.
+- `validation.process_subsets(..., images_per_process=20)`: several subsets processed by each GRS process
+  (`grstbx-validation grs-batch`), grs imported once per process instead of once per subset, the memory released
+  at the end of each process; the images left by a process that died run again one per process, so that a crash
+  only fails its image (as `process_subset.py --batch` of the GRS validation). `grstbx-validation grs
+  --images-per-process`. 6 HYPERNETS subsets, 1 worker: CPU 169 -> 82 s per subset.
 
 ## [2.8.0] - 2026-11-17
 

@@ -30,7 +30,10 @@ Example
 """
 
 import argparse
+import contextlib
 import datetime
+import gc
+import tempfile
 import json
 import os
 import re
@@ -39,6 +42,7 @@ import sys
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -194,11 +198,15 @@ def run_grs(subset, cams, out, options=None):
 
 
 def process_subsets(items, version=None, root=DATA_ROOT, cams_dir=CAMS_DIR, workers=2, options=None,
-                    retry_failed=False, python=None, verbose=True):
+                    retry_failed=False, python=None, verbose=True, images_per_process=20):
     """
-    GRS on the subsets of a table of :func:`read_items` that have no L2A product yet, ``workers`` images at a
-    time, one process per image (``grstbx-validation grs-one``): the memory is released after each image, and
-    a crash does not stop the others. The images without CAMS file are skipped.
+    GRS on the subsets of a table of :func:`read_items` that have no L2A product yet, ``workers`` processes at a
+    time, each processing ``images_per_process`` images one after the other (``grstbx-validation grs-batch``):
+    grs is imported once per process instead of once per image (a subset takes a few seconds to process, about
+    as long as the imports), and the memory is released at the end of each process. The images left by a process
+    that died (e.g. killed when the machine runs out of memory) are run again one per process
+    (``grstbx-validation grs-one``), so that a crash only fails its image. The images without CAMS file are
+    skipped.
 
     :param items: table of :func:`read_items`
     :param version: GRS version of the L2A names (default: the version of the installed grs)
@@ -206,6 +214,7 @@ def process_subsets(items, version=None, root=DATA_ROOT, cams_dir=CAMS_DIR, work
     :param retry_failed: run again the images that failed (``.err`` file)
     :param python: Python interpreter of the processes (default: this one); the environment (``PYTHONPATH``)
                    is passed on
+    :param images_per_process: images processed by each process (1: one process per image)
     :return: table: subset, l2a, cams, state (``done``, ``no_water``, ``failed``, ``no_cams``), seconds
     """
     if version is None:
@@ -236,15 +245,50 @@ def process_subsets(items, version=None, root=DATA_ROOT, cams_dir=CAMS_DIR, work
         result = subprocess.run(cmd, capture_output=True, text=True)
         state = l2a_state(row.l2a)
         if result.returncode and state == 'to_run':          # killed (e.g. memory): keep the trace
+            Path(row.l2a).parent.mkdir(parents=True, exist_ok=True)
             Path(str(row.l2a)[:-3] + '.err').write_text(f'status {result.returncode}\n{result.stderr[-3000:]}')
             state = 'failed'
-        return i, state, time.time() - t0
+        return [(i, state, time.time() - t0)]
 
+    def batch(indexes):
+        """Images of one process (grs-batch), then the ones it left (died) one per process."""
+        if len(indexes) == 1:
+            return one(indexes[0])
+        jobs = [{'subset': runs.loc[i, 'subset'], 'cams': runs.loc[i, 'cams'], 'out': runs.loc[i, 'l2a']}
+                for i in indexes]
+        fd, jobs_file = tempfile.mkstemp(prefix='grstbx_grs_batch_', suffix='.json')
+        with os.fdopen(fd, 'w') as f:
+            json.dump(jobs, f)
+        try:
+            result = subprocess.run([python, '-m', 'grstbx.validation', 'grs-batch', jobs_file,
+                                     '--options', json.dumps(options or {})], capture_output=True, text=True)
+        finally:
+            os.remove(jobs_file)
+        reported = {}
+        for line in result.stdout.splitlines():
+            if line.startswith('{"l2a"'):
+                with contextlib.suppress(ValueError):
+                    record = json.loads(line)
+                    reported[record['l2a']] = (record['state'], record['seconds'])
+        out = []
+        for i in indexes:
+            if runs.loc[i, 'l2a'] in reported:
+                out.append((i, *reported[runs.loc[i, 'l2a']]))
+            else:                            # not reached, or being processed when the process died
+                out.extend(one(i))
+        return out
+
+    size = max(1, int(images_per_process))
+    batches = [list(todo[k:k + size]) for k in range(0, len(todo), size)]
+    k = 0
     with ThreadPoolExecutor(max(1, workers)) as pool:
-        for k, (i, state, seconds) in enumerate(pool.map(one, todo), 1):
-            runs.loc[i, ['state', 'seconds']] = state, seconds
-            if verbose:
-                print(f'[{k}/{len(todo)}] {state:8s} {Path(runs.loc[i, "l2a"]).name} ({seconds:.0f} s)', flush=True)
+        for results in pool.map(batch, batches):
+            for i, state, seconds in results:
+                k += 1
+                runs.loc[i, ['state', 'seconds']] = state, seconds
+                if verbose:
+                    print(f'[{k}/{len(todo)}] {state:8s} {Path(runs.loc[i, "l2a"]).name} ({seconds:.0f} s)',
+                          flush=True)
     return runs
 
 
@@ -391,6 +435,31 @@ def _aot550(df):
     return a1 * (550 / w1) ** -alpha
 
 
+def _insitu_variables(path, variables, prefixes=()):
+    """
+    Variables of an in situ dataset of the validation database (one ``obs`` dimension), loaded in memory once per
+    process and file version: the other variables are not read (the text variables of the harmonised AERONET-OC
+    file took 50 s to decode at each opening), and the stations of a matchup table are taken from memory.
+
+    :param variables: names of the variables (absent ones ignored)
+    :param prefixes: prefixes of other variables to load (e.g. ``'src_aot_'``)
+    :return: xarray.Dataset (do not modify it: it is shared by the calls)
+    """
+    path = os.path.abspath(str(path))
+    return _load_insitu(path, os.path.getmtime(path), tuple(variables), tuple(prefixes))
+
+
+@lru_cache(maxsize=4)
+def _load_insitu(path, mtime, variables, prefixes):
+    import netCDF4
+
+    with netCDF4.Dataset(path) as nc:
+        names = list(nc.variables)
+    keep = set(variables) | {v for v in names if v.startswith(prefixes)} if prefixes else set(variables)
+    with xr.open_dataset(path, drop_variables=[v for v in names if v not in keep]) as ds:
+        return ds.load()
+
+
 def read_aeronet_oc(sites, path=AERONET_OC, levels=(2.0, 1.5), start=None, end=None):
     """
     AERONET-OC measurements of sites from the harmonised dataset of the in situ validation database.
@@ -403,13 +472,14 @@ def read_aeronet_oc(sites, path=AERONET_OC, levels=(2.0, 1.5), start=None, end=N
              wavelengths with data (nominal wavelength, nm)
     """
     sites = [sites] if isinstance(sites, str) else list(sites)
-    with xr.open_dataset(path) as ds:
-        keep = np.isin(ds.subsource.values, sites) & np.isin(ds.qc_level.values, levels)
-        if start is not None:
-            keep &= ds.time.values >= np.datetime64(pd.Timestamp(start))
-        if end is not None:
-            keep &= ds.time.values <= np.datetime64(pd.Timestamp(end))
-        sub = ds.isel(obs=np.flatnonzero(keep)).load()
+    ds = _insitu_variables(path, ('time', 'subsource', 'qc_level', 'sza', 'vza', 'raa', 'wind_speed', 'wl')
+                           + INSITU_VARIABLES, prefixes=('src_aot_',))
+    keep = np.isin(ds.subsource.values, sites) & np.isin(ds.qc_level.values, levels)
+    if start is not None:
+        keep &= ds.time.values >= np.datetime64(pd.Timestamp(start))
+    if end is not None:
+        keep &= ds.time.values <= np.datetime64(pd.Timestamp(end))
+    sub = ds.isel(obs=np.flatnonzero(keep))
     scalars = ['time', 'subsource', 'qc_level', 'sza', 'vza', 'raa', 'wind_speed'] + \
               [v for v in sub.data_vars if v.startswith('src_aot_')]
     df = sub[[v for v in scalars if v in sub]].to_dataframe().reset_index(drop=True)
@@ -483,15 +553,15 @@ def read_hypernets(sites, path=HYPERNETS, srf=None, start=None, end=None, qc_fla
     if not isinstance(srf, xr.DataArray) or 'wl_hr' not in srf.dims or abs(float(srf.sum('wl_hr')[0]) - 1) > 1e-6:
         srf = band_srf(srf)
     sites = [sites] if isinstance(sites, str) else list(sites)
-    with xr.open_dataset(path) as ds:
-        site = np.array([str(s).split('_')[0] for s in ds.subsource.values])
-        keep = np.isin(site, sites) & np.isin(ds.qc_flag.values, qc_flags)
-        if start is not None:
-            keep &= ds.time.values >= np.datetime64(pd.Timestamp(start))
-        if end is not None:
-            keep &= ds.time.values <= np.datetime64(pd.Timestamp(end))
-        idx = np.flatnonzero(keep)
-        sub = ds[['time', 'sza', 'vza', 'raa', 'wind_speed', 'qc_flag', 'Rrs']].isel(obs=idx).load()
+    ds = _insitu_variables(path, ('time', 'subsource', 'sza', 'vza', 'raa', 'wind_speed', 'qc_flag', 'Rrs', 'wl'))
+    site = np.array([str(s).split('_')[0] for s in ds.subsource.values])
+    keep = np.isin(site, sites) & np.isin(ds.qc_flag.values, qc_flags)
+    if start is not None:
+        keep &= ds.time.values >= np.datetime64(pd.Timestamp(start))
+    if end is not None:
+        keep &= ds.time.values <= np.datetime64(pd.Timestamp(end))
+    idx = np.flatnonzero(keep)
+    sub = ds[['time', 'sza', 'vza', 'raa', 'wind_speed', 'qc_flag', 'Rrs']].isel(obs=idx)
     df = pd.DataFrame({'time': sub.time.values, 'site': site[idx],
                        'level': [f'qc{q}' for q in sub.qc_flag.values],
                        'sza_insitu': sub.sza.values, 'vza_insitu': sub.vza.values, 'raa_insitu': sub.raa.values,
@@ -726,6 +796,7 @@ def main(argv=None):
         grstbx-validation matchups -o matchups.csv [--stations ...]   matchup table
         grstbx-validation dashboard matchups.csv [--port 5007]        dashboard (web application)
         grstbx-validation grs-one <subset.nc> <cams.nc> <l2a.nc>      GRS on one subset (used by grs)
+        grstbx-validation grs-batch <jobs.json>                     GRS on several subsets (used by grs)
     """
     ap = argparse.ArgumentParser(prog='grstbx-validation', description=main.__doc__.strip().split('\n')[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -739,6 +810,7 @@ def main(argv=None):
         p.add_argument('--workers', type=int, default=2)
     sub.choices['grs'].add_argument('--options', default='{}', help='options of grs.Process.execute (JSON)')
     sub.choices['grs'].add_argument('--retry-failed', action='store_true')
+    sub.choices['grs'].add_argument('--images-per-process', type=int, default=20)
     sub.choices['matchups'].add_argument('-o', '--output', required=True, help='.csv or .parquet')
     sub.choices['matchups'].add_argument('--max-lag', default='3h')
     sub.choices['matchups'].add_argument('--insitu', default=AERONET_OC)
@@ -752,13 +824,32 @@ def main(argv=None):
     p.add_argument('cams')
     p.add_argument('out')
     p.add_argument('--options', default='{}')
+    p = sub.add_parser('grs-batch')
+    p.add_argument('jobs', help='JSON list of {"subset", "cams", "out"}')
+    p.add_argument('--options', default='{}')
     a = ap.parse_args(argv)
 
-    if a.step == 'grs-one':
+    if a.step in ('grs-one', 'grs-batch'):
         try:                         # first process killed if the machine runs out of memory
             Path('/proc/self/oom_score_adj').write_text('1000')
         except OSError:
             pass
+    if a.step == 'grs-batch':
+        # the images one after the other in this process; one JSON line per image on stdout (read by
+        # process_subsets); the images already done (by a previous attempt) are skipped
+        options = json.loads(a.options)
+        for job in json.loads(Path(a.jobs).read_text()):
+            state, t0 = l2a_state(job['out']), time.time()
+            if state not in ('done', 'no_water'):
+                try:
+                    state = run_grs(job['subset'], job['cams'], job['out'], options)
+                except Exception:
+                    state = 'failed'         # .err file written by run_grs
+            print(json.dumps({'l2a': job['out'], 'state': state, 'seconds': round(time.time() - t0, 1)}),
+                  flush=True)
+            gc.collect()                     # the products of the previous image released before the next one
+        return 0
+    if a.step == 'grs-one':
         try:
             state = run_grs(a.subset, a.cams, a.out, json.loads(a.options))
         except Exception as exc:
@@ -775,7 +866,7 @@ def main(argv=None):
     items = read_items(Path(a.root) / 'stac', stations=a.stations, start=a.start, end=a.end, root=a.root)
     if a.step == 'grs':
         runs = process_subsets(items, root=a.root, workers=a.workers, options=json.loads(a.options),
-                               retry_failed=a.retry_failed)
+                               retry_failed=a.retry_failed, images_per_process=a.images_per_process)
         print(runs.state.value_counts().to_dict())
         return 0
     table = matchup_table(items, root=a.root, insitu_path=a.insitu, max_lag=a.max_lag, workers=a.workers)

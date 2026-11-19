@@ -9,7 +9,7 @@ TREX guide of the L1C-L2B chain (Overleaf *L1C-L2B processing chain on TREX*):
 - the products are written to `/work/datalake/watcal/Sentinel-2/{L1C,L2A,L2B}/<tile>/YYYY/MM/DD/`, with the
   daily CAMS files and the COP-DEM GLO-30 tiles of `/work/datalake`;
 - the notebooks run interactively (JupyterHub of TREX) or as a **SLURM job array** written by the notebook
-  itself and run by IPython on the compute nodes (one task per tile and month for the batch, per year for the
+  itself and run by python on the compute nodes (one task per tile and month for the batch, per year for the
   export). The scripts set `GRS_BATCH_JOB=1` / `EXPORT_BATCH_JOB=1`, so that the notebook knows it runs as a
   batch task: JupyterHub of TREX also runs the Jupyter server in a SLURM job, so `SLURM_JOB_ID` cannot tell.
 

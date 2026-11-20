@@ -6,6 +6,24 @@ the versions follow [Semantic Versioning](https://semver.org); each version is p
 
 ## [Unreleased]
 
+## [2.9.1] - 2026-11-20
+
+Fix of the CAMS surface pressure of the AERONET-OC validation tutorial and update of the CNES TREX batch notebooks.
+
+### Fixed
+
+- `fill_cams_surface_pressure.py` (AERONET-OC validation tutorial): the months whose CAMS files have the surface
+  pressure for part of their times only (2016-06: from 2016-06-21 09:00) keep the delivered values and get the
+  missing times derived (`--months 2016-06`); GRS stopped on the subsets of 2016-06-01..21 ("no valid value to
+  compute the transmittance", 19 subsets).
+
+### Documentation
+
+- CNES TREX datalake batch notebooks: several images at a time (`GRS_WORKERS`, default 2 for GRS 3.x, 1 for
+  GRS 2.2), each staging its L1C in a thread and processed in a child process of `Batch.process`, SLURM tasks
+  sized with it; settings in one cell (tiles, dates, OT account, role, SLURM account, environment); records of the
+  runs kept out of the product folders; login errors explained.
+
 ## [2.9.0] - 2026-11-18
 
 Performance: each image of a batch processed in its own child process (memory given back after each image,
@@ -513,7 +531,8 @@ Tools for L2B handling.
 Fix for reprojection in any system, especially useful for reprojection in pseudo-Mercator (EPSG:3857) for
 visualization with web mapping tools (e.g. OpenStreetMap, Google Maps).
 
-[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.9.0...HEAD
+[Unreleased]: https://github.com/Tristanovsk/grstbx/compare/v2.9.1...HEAD
+[2.9.1]: https://github.com/Tristanovsk/grstbx/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/Tristanovsk/grstbx/compare/v2.8.0...v2.9.0
 [2.8.0]: https://github.com/Tristanovsk/grstbx/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/Tristanovsk/grstbx/compare/v2.6.0...v2.7.0

@@ -10,10 +10,13 @@ formula inverted, h = Rd Tm / g * ln(msl / sp) (two fixed-point iterations for T
 
     python fill_cams_surface_pressure.py validate     # h from 2016-06..2016-08, sp of 2016-12 and 2017-03 compared
     python fill_cams_surface_pressure.py fill         # h from 2016-06..2017-05, sp added to the files without it
+    python fill_cams_surface_pressure.py fill --months 2016-06    # missing times of a month with sp filled
 
 ``fill`` moves each original file to ``<cams_dir>/original_without_sp/`` and writes the file with ``sp``
 (int16 packed as the other variables, attributes saying how it was derived) to its place, through a temporary file.
-GRS reads ``sp`` (``grs.cams``), the reason of this fix.
+In a month with ``sp`` for part of its times (2016-06: ``sp`` delivered from 2016-06-21 09:00 only), the delivered
+values are kept and only the missing times derived. GRS reads ``sp`` (``grs.cams``), the reason of this fix: it
+stops on a subset whose time has no ``sp`` (``no valid value to compute the transmittance``).
 """
 import argparse
 import glob
@@ -111,10 +114,18 @@ def fill(only=None):
             shutil.move(path(month), src)
         with xr.open_dataset(src) as ds:
             sp = derive_sp(ds.msl.load(), ds.t2m.load(), h).astype('float32')
+            derived = 'derived from msl and t2m with the barometric formula and the effective orography of the CAMS ' \
+                      'model estimated from the forecasts 2016-06 to 2017-05 (fill_cams_surface_pressure.py, grstbx)'
+            if 'sp' in ds.data_vars:               # sp for part of the times: kept, the missing times derived
+                given = ds.sp.load().astype('float32')
+                missing_times = given.isnull().all(('latitude', 'longitude'))
+                sp = given.fillna(sp)
+                comment = (f'delivered by the ADS for {int((~missing_times).sum())} times; the '
+                           f'{int(missing_times.sum())} times without it {derived}')
+            else:
+                comment = f'not delivered by the ADS for this period: {derived}'
             sp.attrs = {'units': 'Pa', 'long_name': 'Surface pressure', 'standard_name': 'surface_air_pressure',
-                        'comment': 'not delivered by the ADS for this period: derived from msl and t2m with the '
-                                   'barometric formula and the effective orography of the CAMS model estimated from '
-                                   'the forecasts 2016-06 to 2017-05 (fill_cams_surface_pressure.py, grstbx)'}
+                        'comment': comment}
             out = ds.assign(sp=sp)
             vmin, vmax = float(sp.min()), float(sp.max())
             scale = (vmax - vmin) / 65532          # packed values -32766..32766: -32767 is the fill value

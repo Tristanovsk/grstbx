@@ -32,11 +32,12 @@ v2.8.0: validation of GRS L2A with AERONET-OC and HYPERNETS on Sentinel-2 subset
         import; documentation reorganised by topic, with an HPC section (CNES TREX)
 v2.9.0: batch images processed in child processes (memory released, killed images recorded), parallel workers;
         less memory for datacubes and flag statistics; faster validation (in situ cache, subsets batched per GRS process)
+v2.9.1: CAMS surface pressure of the validation tutorial filled in partly delivered months; TREX batch notebooks
         (full history: CHANGELOG.md)
 
 '''
 
-__version__ = '2.9.0'
+__version__ = '2.9.1'
 
 from .driver import L2grs, open_zarr_image, open_zarr_ancillary, zarr_levels, open_hgrs_l2a, is_hgrs
 #from .driver_v1 import l2grs_v1

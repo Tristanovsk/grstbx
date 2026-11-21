@@ -33,8 +33,10 @@ viewer.visu()
 ```
 
 The image is the PRISMA acquisition of 2026-02-06 over three islands of the South Atlantic coast of
-Brazil, with strong sunglint. The notebook is rendered with the outputs of its last run (the interactive
-viewer cells are not executed). The input data are not distributed with grstbx: set the paths of its
+Brazil, with strong sunglint. The L2A product was processed with hGRS 2.0.0; the
+[comparison of the hGRS versions](https://hgrs.readthedocs.io/en/latest/tutorials/prisma_version_comparison.html)
+(1.1.2, 1.2.0.dev0 and 2.0.0) on the same image is in the hGRS documentation. The notebook is rendered with
+the outputs of its last run (the interactive viewer cells are not executed). The input data are not distributed with grstbx: set the paths of its
 *Input files* cell to run it on your own data.
 
 ## EnMAP time series
